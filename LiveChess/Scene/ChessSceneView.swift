@@ -4,21 +4,28 @@ import TabletopKit
 
 /// SwiftUI host for the chess `TabletopGame`.
 ///
-/// Builds the table setup, instantiates 32 pieces in the standard starting
-/// position, and wires a `ChessRenderer` into the game so RealityKit
-/// entities track the abstract game state. Drives the game's clock from
-/// RealityKit's `SceneEvents.Update` stream.
+/// Builds the table setup with two seats and 32 pieces in the standard
+/// starting position, instantiates the `TabletopGame`, and wires a
+/// `ChessRenderer` so RealityKit entities track the abstract game state.
 @MainActor
 struct ChessSceneView: View {
 
     var body: some View {
         RealityView { content in
             let renderer = ChessRenderer()
-            let table = ChessTable()
+            let table = ChessTable(id: EquipmentIdentifier(1))
 
             var setup = TableSetup(tabletop: table)
 
-            var nextID = 1
+            // Seats first — TabletopKit asserts at least one seat exists in the
+            // setup before TabletopGame init can succeed.
+            let whiteSeat = ChessSeat(id: TableSeatIdentifier(1), side: .white)
+            let blackSeat = ChessSeat(id: TableSeatIdentifier(2), side: .black)
+            setup.add(seat: whiteSeat)
+            setup.add(seat: blackSeat)
+
+            // Pieces in the starting position.
+            var nextID = 100
             for square in Square.all {
                 guard let piece = Position.standardStart[square] else { continue }
                 let equipment = ChessPieceEquipment(
@@ -33,6 +40,7 @@ struct ChessSceneView: View {
             }
 
             let game = TabletopGame(tableSetup: setup)
+            game.claimSeat(whiteSeat)
             game.addRenderDelegate(renderer)
 
             content.add(renderer.rootEntity)
