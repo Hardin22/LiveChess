@@ -7,20 +7,15 @@
 
 import SwiftUI
 import RealityKit
-import RealityKitContent
 
+/// Hosts the chess scene inside the mixed-reality immersive space.
+///
+/// Currently a thin wrapper around `ChessSceneView`; future iterations will
+/// add a HUD attachment here without touching the scene content itself.
 struct ImmersiveView: View {
 
     var body: some View {
-        RealityView { content in
-            // Add the initial RealityKit content
-            if let immersiveContentEntity = try? await Entity(named: "Immersive", in: realityKitContentBundle) {
-                content.add(immersiveContentEntity)
-
-                // Put skybox here.  See example in World project available at
-                // https://developer.apple.com/
-            }
-        }
+        ChessSceneView()
     }
 }
 
