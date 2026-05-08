@@ -7,9 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		13600AD62FADDBAF0006758E /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 13600AD52FADDBAF0006758E /* RealityKitContent */; };
 		0AAA000000000000000E0001 /* ChessKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AAA000000000000000D0001 /* ChessKit */; };
 		0AAA000000000000000E0002 /* ChessKitEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 0AAA000000000000000D0002 /* ChessKitEngine */; };
+		13600AD62FADDBAF0006758E /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 13600AD52FADDBAF0006758E /* RealityKitContent */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -23,9 +23,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0AAA000000000000000F0001 /* chesskit-engine */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = "chesskit-engine"; sourceTree = "<group>"; };
 		13600AD02FADDBAF0006758E /* LiveChess.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LiveChess.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13600AD42FADDBAF0006758E /* RealityKitContent */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = RealityKitContent; sourceTree = "<group>"; };
-		0AAA000000000000000F0001 /* chesskit-engine */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = "chesskit-engine"; sourceTree = "<group>"; };
 		13600AE42FADDBB00006758E /* LiveChessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LiveChessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -261,7 +261,6 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -290,7 +289,6 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -509,10 +507,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		13600AD52FADDBAF0006758E /* RealityKitContent */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = RealityKitContent;
-		};
 		0AAA000000000000000D0001 /* ChessKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 0AAA000000000000000C0001 /* XCRemoteSwiftPackageReference "chesskit-swift" */;
@@ -521,6 +515,10 @@
 		0AAA000000000000000D0002 /* ChessKitEngine */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ChessKitEngine;
+		};
+		13600AD52FADDBAF0006758E /* RealityKitContent */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RealityKitContent;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
