@@ -1,0 +1,19 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager — user-specific state inside any package
+.swiftpm/
+.build/
+# Local vendored packages (Packages/) are committed; only their internal state is ignored above
+
+# Local tooling
+.DS_Store
+
+# CocoaPods (not used, but just in case)
+Pods/
