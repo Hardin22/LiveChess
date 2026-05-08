@@ -1,0 +1,10 @@
+.DS_Store
+
+# SPM
+.swiftpm
+.build
+Packages/
+
+# Xcode
+/*.xcodeproj
+xcuserdata/
