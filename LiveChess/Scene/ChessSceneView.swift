@@ -12,6 +12,11 @@ struct ChessSceneView: View {
 
     var body: some View {
         RealityView { content in
+            // Pre-load the 12 USDZ piece templates so registerPiece can clone
+            // them synchronously below; falls back to procedural placeholders
+            // for any model that isn't bundled.
+            await PieceMeshFactory.preload()
+
             let renderer = ChessRenderer()
             let table = ChessTable(id: EquipmentIdentifier(1))
 
