@@ -18,4 +18,7 @@ class AppModel {
         case open
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
+
+    /// Lobby choices the user makes before opening the board.
+    var matchSettings = MatchSettings()
 }

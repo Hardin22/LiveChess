@@ -6,21 +6,12 @@
 //
 
 import SwiftUI
-import RealityKit
-import RealityKitContent
 
+/// The window root. Currently just hosts `LobbyView`; will gain post-game
+/// summary / return-to-lobby logic when the game loop is wired up.
 struct ContentView: View {
-
     var body: some View {
-        VStack {
-            Model3D(named: "Scene", bundle: realityKitContentBundle)
-                .padding(.bottom, 50)
-
-            Text("Hello, world!")
-
-            ToggleImmersiveSpaceButton()
-        }
-        .padding()
+        LobbyView()
     }
 }
 
