@@ -1,6 +1,7 @@
 import SwiftUI
 import RealityKit
 import TabletopKit
+import Spatial
 
 /// SwiftUI host for the chess `TabletopGame`.
 ///
@@ -12,8 +13,8 @@ struct ChessSceneView: View {
 
     var body: some View {
         RealityView { content in
-            // Pre-load the 12 USDZ piece templates so registerPiece can clone
-            // them synchronously below; falls back to procedural placeholders
+            // Pre-load the 12 USDZ piece templates so the per-piece path can
+            // clone them synchronously; falls back to procedural placeholders
             // for any model that isn't bundled.
             await PieceMeshFactory.preload()
 
@@ -29,7 +30,9 @@ struct ChessSceneView: View {
             setup.add(seat: whiteSeat)
             setup.add(seat: blackSeat)
 
-            // Pieces in the starting position.
+            // Pieces in the starting position. Equipment is added to TabletopKit
+            // (so future actions/interactions know about them) AND to the
+            // renderer (which positions the visual at the correct square).
             var nextID = 100
             for square in Square.all {
                 guard let piece = Position.standardStart[square] else { continue }
@@ -40,13 +43,24 @@ struct ChessSceneView: View {
                     parentID: table.id
                 )
                 setup.add(equipment: equipment)
-                renderer.registerPiece(equipment)
+                renderer.placePiece(equipment, on: square)
                 nextID += 1
             }
 
             let game = TabletopGame(tableSetup: setup)
             game.claimSeat(whiteSeat)
             game.addRenderDelegate(renderer)
+            // Lift the table to a comfortable working height in front of the
+            // user — the simulator has no real-world surface to anchor against,
+            // so without this the board falls to the floor.
+            game.rootPose = Pose3D(
+                position: Point3D(
+                    x: 0,
+                    y: Double(SceneMetrics.defaultTableHeight),
+                    z: Double(SceneMetrics.defaultTableDepth)
+                ),
+                rotation: Rotation3D.identity
+            )
 
             content.add(renderer.rootEntity)
 

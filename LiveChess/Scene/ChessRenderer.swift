@@ -6,12 +6,14 @@ import simd
 
 /// Bridges TabletopKit's abstract game state to RealityKit entities.
 ///
-/// We own one parent `Entity` per piece (`pieceEntities`) plus the
-/// programmatic `BoardSurface` group as a child of `rootEntity`. On every
-/// frame, `onUpdate` reads each piece's pose from `TableVisualState` and
-/// applies it to the matching RealityKit entity. `updateRootPose` keeps
-/// the whole scene anchored to the world position TabletopKit picks for
-/// the table.
+/// `rootEntity` is the parent of the programmatic `BoardSurface` plus one
+/// child entity per piece (`pieceEntities`). For Phase 6 we position pieces
+/// **directly** in `placePiece(_:on:)` from the `Square`, rather than reading
+/// `TableVisualState.pose(matching:)`. TabletopKit doesn't populate visual
+/// poses for equipment that hasn't been interacted with yet, so leaning on
+/// it for static layout left every piece stacked at the table origin. The
+/// per-frame `onUpdate` keeps the visual in sync only for equipment that
+/// TabletopKit *does* report a pose for (post-interaction).
 @MainActor
 final class ChessRenderer: TabletopGame.RenderDelegate {
 
@@ -26,11 +28,17 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         self.rootEntity.addChild(boardEntity)
     }
 
-    func registerPiece(_ piece: ChessPieceEquipment) {
-        let entity = PieceMeshFactory.makeEntity(for: piece.piece)
-        entity.name = "Piece_\(piece.piece.color)_\(piece.piece.kind)_\(piece.id)"
+    /// Registers `equipment` with the renderer and positions its visual
+    /// directly above the centre of `square` on the board.
+    func placePiece(_ equipment: ChessPieceEquipment, on square: Square) {
+        let entity = PieceMeshFactory.makeEntity(for: equipment.piece)
+        entity.name = "Piece_\(equipment.piece.color)_\(equipment.piece.kind)_\(equipment.id)"
+        // Sit on the board surface (square top is just above frame top).
+        var pos = BoardSurface.position(for: square)
+        pos.y = SceneMetrics.squareThickness
+        entity.position = pos
         rootEntity.addChild(entity)
-        pieceEntities[piece.id] = entity
+        pieceEntities[equipment.id] = entity
     }
 
     // MARK: - TabletopGame.RenderDelegate
@@ -40,6 +48,9 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         snapshot: TableSnapshot,
         visualState: TableVisualState
     ) {
+        // Only sync entities for which TabletopKit reports a pose. This kicks
+        // in once a piece is actually moved through a TabletopAction, leaving
+        // initial-state placements (set in placePiece) untouched.
         for (id, entity) in pieceEntities {
             guard let pose = visualState.pose(matching: id) else { continue }
             entity.position = SIMD3<Float>(
