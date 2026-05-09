@@ -113,6 +113,19 @@ struct LobbyView: View {
             Text("Online — Lichess")
                 .font(.headline)
 
+            // Incoming challenges and active games surface above the mode
+            // picker so they're the first thing the user sees on cold
+            // start — these are the "someone wants to play with you"
+            // signals that should jump out.
+            if let lobby = lichessLobby {
+                if !lobby.incomingChallenges.isEmpty {
+                    incomingChallengesSection(lobby)
+                }
+                if !lobby.activeGames.isEmpty {
+                    activeGamesSection(lobby)
+                }
+            }
+
             if let action = lichessLobby?.pendingAction {
                 pendingActionRow(action)
             } else if let mode = onlineMode {
@@ -129,6 +142,189 @@ struct LobbyView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
+    }
+
+    @ViewBuilder
+    private func incomingChallengesSection(_ lobby: LichessLobbyController) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Sfide ricevute")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            ForEach(lobby.incomingChallenges, id: \.id) { challenge in
+                incomingChallengeRow(challenge, lobby: lobby)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func incomingChallengeRow(
+        _ challenge: LichessChallenge,
+        lobby: LichessLobbyController
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(.tint.opacity(0.18))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Text(String((challenge.challenger?.name ?? "?").prefix(1)).uppercased())
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tint)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        if let title = challenge.challenger?.title {
+                            Text(title)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.orange)
+                        }
+                        Text(challenge.challenger?.name ?? "Sconosciuto")
+                            .font(.callout.weight(.medium))
+                        if let rating = challenge.challenger?.rating {
+                            Text("(\(rating))")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(challengeDescription(challenge))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                Button {
+                    wireOnGameSessionReadyAndOpenImmersive(lobby)
+                    Task { await lobby.acceptIncoming(challenge.id) }
+                } label: {
+                    Label("Accetta", systemImage: "checkmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button(role: .destructive) {
+                    Task { await lobby.declineIncoming(challenge.id, reason: nil) }
+                } label: {
+                    Label("Rifiuta", systemImage: "xmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func activeGamesSection(_ lobby: LichessLobbyController) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Partite in corso")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(lobby.activeGames.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(lobby.activeGames, id: \.gameId) { game in
+                activeGameRow(game, lobby: lobby)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func activeGameRow(
+        _ game: LichessPlayingGame,
+        lobby: LichessLobbyController
+    ) -> some View {
+        Button {
+            wireOnGameSessionReadyAndOpenImmersive(lobby)
+            lobby.resumeActiveGame(game)
+        } label: {
+            HStack(spacing: 10) {
+                sideDot(game.color)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        if let title = game.opponent.title {
+                            Text(title)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.orange)
+                        }
+                        Text(opponentLabel(game))
+                            .font(.callout.weight(.medium))
+                        if let rating = game.opponent.rating {
+                            Text("(\(rating))")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(activeGameSubtitle(game))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if game.isMyTurn {
+                    Text("Tuo turno")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.green)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sideDot(_ color: LichessColor) -> some View {
+        Circle()
+            .fill(color == .white ? Color.white : Color.black)
+            .frame(width: 14, height: 14)
+            .overlay(Circle().stroke(.secondary.opacity(0.6), lineWidth: 0.5))
+    }
+
+    private func opponentLabel(_ game: LichessPlayingGame) -> String {
+        if let level = game.opponent.aiLevel {
+            return "Stockfish-Lichess L\(level)"
+        }
+        return game.opponent.username
+    }
+
+    private func challengeDescription(_ challenge: LichessChallenge) -> String {
+        let speedLabel: String = {
+            switch challenge.speed.lowercased() {
+            case "ultrabullet": return "UltraBullet"
+            case "bullet": return "Bullet"
+            case "blitz": return "Blitz"
+            case "rapid": return "Rapid"
+            case "classical": return "Classical"
+            case "correspondence": return "Corrispondenza"
+            default: return challenge.speed
+            }
+        }()
+        let timing = challenge.timeControl.show ?? speedLabel
+        let kind = challenge.rated ? "rated" : "casual"
+        return "\(speedLabel) · \(timing) · \(kind)"
+    }
+
+    private func activeGameSubtitle(_ game: LichessPlayingGame) -> String {
+        let speedLabel: String = {
+            switch game.speed.lowercased() {
+            case "ultrabullet": return "UltraBullet"
+            case "bullet": return "Bullet"
+            case "blitz": return "Blitz"
+            case "rapid": return "Rapid"
+            case "classical": return "Classical"
+            case "correspondence": return "Corrispondenza"
+            default: return game.speed
+            }
+        }()
+        let kind = game.rated ? "rated" : "casual"
+        return "\(speedLabel) · \(kind)"
     }
 
     /// Three side-by-side entry buttons that swap to the corresponding
@@ -488,6 +684,10 @@ struct LobbyView: View {
                 let lobby = LichessLobbyController(session: appModel.lichess)
                 lobby.startEventStreamIfNeeded()
                 lichessLobby = lobby
+                // Pull current active games so they appear immediately
+                // on cold start. The event stream will keep them in
+                // sync from here on.
+                Task { await lobby.refreshActiveGames() }
             }
         } else {
             if let lobby = lichessLobby {

@@ -26,6 +26,20 @@ final class LichessLobbyController {
     private(set) var pendingAction: PendingAction?
     private(set) var lastError: LichessError?
 
+    /// Challenges received from other Lichess users while this session
+    /// is active. The lobby UI shows each as a banner with Accept /
+    /// Decline buttons. Populated by `challenge` events on the global
+    /// stream; entries removed on `challengeCanceled` /
+    /// `challengeDeclined` (and on a successful local accept/decline).
+    private(set) var incomingChallenges: [LichessChallenge] = []
+
+    /// Games already in progress for the signed-in user. Refreshed via
+    /// `refreshActiveGames()` on lobby appearance + after every event-
+    /// stream reconnect (Lichess does not replay missed events, so a
+    /// missed `gameStart` would otherwise leave us blind to a game
+    /// started while we were offline).
+    private(set) var activeGames: [LichessPlayingGame] = []
+
     /// Fired on the main actor when a fully-constructed
     /// `LichessMatchSession` is ready to be rendered. The lobby host
     /// (typically `LobbyView`) sets `appModel.activeSession = .online(session)`
@@ -240,6 +254,87 @@ final class LichessLobbyController {
         try? await session.api.cancelChallenge(id)
     }
 
+    /// Accepts an incoming challenge from another user. Server then
+    /// emits a `gameStart` on the global stream, which spins up an
+    /// online match session normally.
+    func acceptIncoming(_ id: String) async {
+        do {
+            try await session.api.acceptChallenge(id)
+            incomingChallenges.removeAll { $0.id == id }
+        } catch let error as LichessError {
+            lastError = error
+        } catch {
+            lastError = .network(underlying: error)
+        }
+    }
+
+    /// Declines an incoming challenge with an optional reason. The
+    /// reason is shown to the challenger as context; `nil` falls back
+    /// to Lichess' "generic" decline message.
+    func declineIncoming(_ id: String, reason: LichessDeclineReason? = nil) async {
+        do {
+            try await session.api.declineChallenge(id, reason: reason)
+            incomingChallenges.removeAll { $0.id == id }
+        } catch let error as LichessError {
+            lastError = error
+        } catch {
+            lastError = .network(underlying: error)
+        }
+    }
+
+    /// Pulls the current `nowPlaying` list. Called on lobby appear and
+    /// after event-stream reconnects (where missed `gameStart` events
+    /// would otherwise leave the active list stale).
+    func refreshActiveGames() async {
+        do {
+            activeGames = try await session.api.accountPlaying()
+        } catch let error as LichessError {
+            lastError = error
+        } catch {
+            lastError = .network(underlying: error)
+        }
+    }
+
+    /// Resumes an in-progress game by opening its game stream and
+    /// surfacing the resulting `LichessMatchSession`. Driven by tap on
+    /// the "Partite in corso" list.
+    func resumeActiveGame(_ playing: LichessPlayingGame) {
+        guard let token = session.token else { return }
+
+        let humanColor: Side = playing.color == .white ? .white : .black
+        let opponent = LichessMatchSession.Opponent(
+            username: playing.opponent.username,
+            title: playing.opponent.title,
+            rating: playing.opponent.rating,
+            provisional: false,
+            aiLevel: playing.opponent.aiLevel
+        )
+        // We don't have ms-precision clock numbers here — `secondsLeft`
+        // is the only available figure. Fill both clocks with it as a
+        // first approximation; `gameFull` overwrites within
+        // milliseconds of the stream opening.
+        let initialMs = (playing.secondsLeft ?? 0) * 1000
+        let initialClock = LichessMatchSession.ClockState(
+            whiteMillis: initialMs,
+            blackMillis: initialMs,
+            whiteIncrementMillis: 0,
+            blackIncrementMillis: 0
+        )
+        let stream = LichessGameStream(gameID: playing.gameId, token: token)
+        let matchSession = LichessMatchSession(
+            gameID: playing.gameId,
+            humanColor: humanColor,
+            opponent: opponent,
+            isRated: playing.rated,
+            initialFen: playing.fen,
+            clock: initialClock,
+            api: session.api,
+            stream: stream,
+            rules: rules
+        )
+        onGameSessionReady?(matchSession)
+    }
+
     private func handleSeekFailure(_ error: LichessError) {
         seekTask = nil
         pendingAction = nil
@@ -264,21 +359,39 @@ final class LichessLobbyController {
             switch event {
             case .gameStart(let info):
                 handleGameStart(info)
-            case .gameFinish:
-                // Phase 11 folds gameFinish.ratingDiff into the active
-                // session here (so the post-game banner can show the
-                // Elo delta without a refetch).
-                break
-            case .challenge:
-                // Phase 10 wires the incoming-challenge banner here.
-                break
-            case .challengeCanceled, .challengeDeclined:
-                break
+            case .gameFinish(let info):
+                handleGameFinish(info)
+            case .challenge(let challenge):
+                // Lichess sometimes re-sends an existing challenge
+                // (e.g. after reconnect) — dedupe by id.
+                incomingChallenges.removeAll { $0.id == challenge.id }
+                incomingChallenges.append(challenge)
+            case .challengeCanceled(let challenge),
+                 .challengeDeclined(let challenge):
+                incomingChallenges.removeAll { $0.id == challenge.id }
             case .unknown:
                 break
             }
         }
     }
+
+    /// `gameFinish` event handler. If the event refers to the *currently
+    /// active* match session, fold the ratingDiff into its result so the
+    /// post-game banner can show the Elo delta. The match-stream's
+    /// terminal `gameState` set the rest of the result fields already.
+    private func handleGameFinish(_ info: LichessGameEventInfo) {
+        // The lobby host (LobbyView / scene host) is responsible for
+        // wiring `currentMatchSession` so the ratingDiff can be routed.
+        // For now we surface via `onGameFinishReceived` so listeners
+        // can opt in.
+        onGameFinishReceived?(info)
+    }
+
+    /// Fired on the main actor when a `gameFinish` event arrives. Set
+    /// by the scene host so the active `LichessMatchSession` can fold
+    /// `ratingDiff` into its result.
+    @ObservationIgnored
+    var onGameFinishReceived: (@MainActor (LichessGameEventInfo) -> Void)?
 
     /// Builds and surfaces a `LichessMatchSession` for a freshly-started
     /// online game. Used for both Quick Pair (after `runSeek` matched)
