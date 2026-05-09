@@ -157,36 +157,40 @@ struct ChessSceneView: View {
         guard let drag = pieceDrag, drag.entity === value.entity,
               let parent = value.entity.parent else { return }
 
-        // Tabletop "slide-along-the-board" drag, the canonical pattern Apple
-        // ships in TabletopKit and the visionOS tabletop samples
-        // (ChartingPawns, Solitaire). The piece is constrained to the X-Z
-        // plane at a fixed lift height — Y is pinned, never derived from the
-        // gesture. Moving the cursor up on screen, the hand up in real space,
-        // or the gaze around can't push the piece off the table. Long
-        // diagonals across the whole board work because only the lateral
-        // component of the drag is applied to the piece's position.
+        // Tabletop "look-and-slide" drag — the canonical pattern Apple uses
+        // in BotanistGame, ChartingPawns and the visionOS Solitaire sample.
+        // The piece's X-Z follows the **absolute** 3D location of the
+        // gesture (= the user's gaze on Vision Pro, the cursor in the
+        // simulator) projected onto the board plane. Y is pinned to a
+        // fixed lift height.
         //
-        // We compute X/Z by converting both the gesture's start and current
-        // 3D locations into the scene root's local frame and taking the
-        // delta there. That way if we ever rotate the root 180° (for the
-        // human-plays-Black orientation), the drag still aligns with the
-        // user's view of the board without changing the gesture math.
-        let startScene = value.convert(value.startLocation3D, from: .local, to: .scene)
+        // Why absolute and not delta: a delta-based drag accumulates the
+        // gesture's translation3D from the start point, which in the
+        // simulator saturates as the cursor approaches the edges of the
+        // screen — long diagonals (queen d1 → h5 from a low angle) become
+        // physically impossible because translation3D can't grow past
+        // what the cursor can travel. Tracking the absolute target each
+        // frame side-steps that: the piece moves to wherever you're
+        // currently looking on the board, no matter how far the gaze has
+        // travelled.
+        //
+        // X/Z are clamped slightly outside the playable area so the piece
+        // can still hover on the very edge squares (a/h files, ranks 1/8)
+        // even if the user's gaze drifts a bit past them.
         let nowScene = value.convert(value.location3D, from: .local, to: .scene)
-        let startLocal = parent.convert(
-            position: SIMD3<Float>(Float(startScene.x), Float(startScene.y), Float(startScene.z)),
-            from: nil
-        )
         let nowLocal = parent.convert(
             position: SIMD3<Float>(Float(nowScene.x), Float(nowScene.y), Float(nowScene.z)),
             from: nil
         )
+        let halfBoard = SceneMetrics.boardPlayableSide / 2
+        let edgeSlack: Float = 0.03   // 3 cm of overshoot tolerance
         let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
         value.entity.position = SIMD3<Float>(
-            drag.originLocalPosition.x + (nowLocal.x - startLocal.x),
+            max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, nowLocal.x)),
             liftedY,
-            drag.originLocalPosition.z + (nowLocal.z - startLocal.z)
+            max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, nowLocal.z))
         )
+        _ = drag    // keep `drag` referenced; legality look-up still uses it below
 
         // Live "current target" highlight: the legal square (if any) that the
         // piece's centre is currently above.
