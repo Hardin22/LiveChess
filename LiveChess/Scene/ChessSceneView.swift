@@ -97,20 +97,43 @@ struct ChessSceneView: View {
                 SceneMetrics.defaultTableHeight,
                 SceneMetrics.defaultTableDepth
             )
+            // Board orientation: rotate the whole root 180° around Y when
+            // the human is playing Black, so the user sits on Black's
+            // side and sees their own pieces at the bottom of the board.
+            // Without this, a Black-side game would look mirrored from
+            // the player's POV (kings/queens on the wrong files).
+            let needsBlackPerspective = humanSide == .black
+            if needsBlackPerspective {
+                renderer.rootEntity.transform.rotation = simd_quatf(
+                    angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+                )
+            }
             content.add(renderer.rootEntity)
 
             // Anchor the floating HUD to the right of the board, slightly
             // above the table surface, tilted up so it faces the user.
+            //
+            // When the root is rotated for Black, the HUD's local +x
+            // would land on the user's *left* in world space and the
+            // text would face away. Negate the local x and pre-multiply
+            // an extra π Y rotation so the world-space pose ends up
+            // identical to the White case — HUD on the user's right,
+            // text reading correctly toward them.
             if let hud = attachments.entity(for: "match-hud") {
-                hud.position = SIMD3<Float>(
-                    SceneMetrics.boardOuterSide / 2 + 0.10,
-                    0.18,
-                    0
-                )
-                hud.transform.rotation = simd_quatf(
+                let hudLocalX = SceneMetrics.boardOuterSide / 2 + 0.10
+                let baseTilt = simd_quatf(
                     angle: -.pi / 6,         // tilt back ~30° toward the user
                     axis: SIMD3<Float>(1, 0, 0)
                 )
+                if needsBlackPerspective {
+                    hud.position = SIMD3<Float>(-hudLocalX, 0.18, 0)
+                    hud.transform.rotation = simd_quatf(
+                        angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+                    ) * baseTilt
+                } else {
+                    hud.position = SIMD3<Float>(hudLocalX, 0.18, 0)
+                    hud.transform.rotation = baseTilt
+                }
                 renderer.rootEntity.addChild(hud)
             }
 

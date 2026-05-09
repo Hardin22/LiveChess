@@ -100,18 +100,32 @@ struct LobbyView: View {
             await appModel.lichess.bootstrap()
             ensureLichessLobby()
             // Cheap belt-and-braces refresh while the lobby is visible.
-            // Catches missed event-stream gaps that the in-stream
-            // reconnect callback can't reach (e.g. brief drops where
-            // the connection survived but events were quietly throttled).
-            // 30 s is well below Lichess' generic rate limit and fits
-            // comfortably under the user's typical lobby dwell time.
+            // Doubles as the auto-open fallback for matches that
+            // weren't routed via `gameStart` (event-stream gap, etc.) —
+            // see `LichessLobbyController.refreshActiveGames`.
+            // 5 s while seeking; 30 s otherwise (no rush to refresh
+            // when nothing is pending).
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                let interval: Duration =
+                    (lichessLobby?.pendingAction).flatMap {
+                        if case .seeking = $0 { return Duration.seconds(5) }
+                        return nil
+                    } ?? .seconds(30)
+                try? await Task.sleep(for: interval)
                 await lichessLobby?.refreshActiveGames()
             }
         }
         .onChange(of: appModel.lichess.isSignedIn) { _, _ in
             ensureLichessLobby()
+        }
+        .onChange(of: appModel.immersiveSpaceState) { _, newState in
+            // Once the immersive space is open the lobby's "Trovato!"
+            // indicator has done its job — clear it so the next time
+            // the user comes back from the immersive they see the
+            // mode picker, not a stale "opening match…" row.
+            if newState == .open {
+                lichessLobby?.clearPending()
+            }
         }
     }
 
@@ -459,13 +473,11 @@ struct LobbyView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            Picker("Livello", selection: $selectedAILevel) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 8), spacing: 6) {
                 ForEach(1...8, id: \.self) { level in
-                    Text("\(level)").tag(level)
+                    levelChip(level)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
         timePresets(allowed: .friendAllowed)
         colorPicker
@@ -492,14 +504,42 @@ struct LobbyView: View {
             Text("Colore")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker("Colore", selection: $selectedColor) {
-                Text("Bianco").tag(LichessChallengeColor.white)
-                Text("Nero").tag(LichessChallengeColor.black)
-                Text("Random").tag(LichessChallengeColor.random)
+            HStack(spacing: 8) {
+                colorChip(.white, label: "Bianco")
+                colorChip(.black, label: "Nero")
+                colorChip(.random, label: "Random")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
+    }
+
+    @ViewBuilder
+    private func levelChip(_ level: Int) -> some View {
+        let isSelected = level == selectedAILevel
+        Button {
+            selectedAILevel = level
+        } label: {
+            Text("\(level)")
+                .font(.callout.weight(isSelected ? .semibold : .regular))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        }
+        .buttonStyle(SelectionButtonStyle(isSelected: isSelected))
+        .hoverEffect()
+    }
+
+    @ViewBuilder
+    private func colorChip(_ color: LichessChallengeColor, label: String) -> some View {
+        let isSelected = color == selectedColor
+        Button {
+            selectedColor = color
+        } label: {
+            Text(label)
+                .font(.callout.weight(isSelected ? .semibold : .regular))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(SelectionButtonStyle(isSelected: isSelected))
+        .hoverEffect()
     }
 
     /// Reusable time-control button grid. Filters the master preset
@@ -519,41 +559,42 @@ struct LobbyView: View {
         }
     }
 
-    /// Single preset cell. Splits into two branches because Swift can't
-    /// unify `BorderedProminentButtonStyle` and `BorderedButtonStyle`
-    /// in a ternary on `.buttonStyle(...)`.
+    /// Single preset cell. Uses an explicit filled-capsule treatment for
+    /// the selected state because the system's `.borderedProminent` vs
+    /// `.bordered` distinction is too subtle on visionOS for a grid
+    /// where the selected option needs to be unmistakable.
     @ViewBuilder
     private func presetButton(_ preset: TimePreset) -> some View {
-        if preset.spec == selectedTimeControl {
-            Button {
-                selectedTimeControl = preset.spec
-            } label: {
-                Text(preset.label)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-        } else {
-            Button {
-                selectedTimeControl = preset.spec
-            } label: {
-                Text(preset.label)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+        let isSelected = preset.spec == selectedTimeControl
+        Button {
+            selectedTimeControl = preset.spec
+        } label: {
+            Text(preset.label)
+                .font(.callout.weight(isSelected ? .semibold : .regular))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 4)
         }
+        .buttonStyle(SelectionButtonStyle(isSelected: isSelected))
+        .hoverEffect()
     }
 
     @ViewBuilder
     private func pendingActionRow(_ action: LichessLobbyController.PendingAction) -> some View {
         HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
+            // Use a checkmark for the matched-state to give a clearer
+            // visual signal of "found, opening now" vs the spinner-only
+            // "still waiting" states.
+            if case .openingMatch = action {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
+            } else {
+                ProgressView().controlSize(.small)
+            }
             Text(label(for: action))
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             Spacer()
             switch action {
             case .seeking:
@@ -572,6 +613,7 @@ struct LobbyView: View {
                 EmptyView()
             }
         }
+        .padding(.vertical, 4)
     }
 
     /// Make sure the picker defaults match a sensible preset for the
@@ -630,6 +672,8 @@ struct LobbyView: View {
             return "In attesa che \(id) accetti…"
         case .seeking(_, let label):
             return "Cerco avversario \(label)…"
+        case .openingMatch(let opponent):
+            return "Trovato \(opponent)! Apertura scacchiera…"
         }
     }
 
@@ -964,6 +1008,36 @@ private struct TimePresetSet {
 
     /// Friend challenges + AI challenges — full set.
     static let friendAllowed = TimePresetSet(speeds: [.bullet, .blitz, .rapid, .classical, .correspondence])
+}
+
+// MARK: - Selection chip style
+
+/// Toggle-like chip used by the lobby's preset / colour / level
+/// selectors. Used in place of `.borderedProminent` vs `.bordered`
+/// because the system distinction is too subtle on visionOS for a
+/// dense grid where the active option needs to be unmissable.
+///
+/// Selected: filled accent background + white text + slight scale on
+/// press. Unselected: hollow tertiary background + primary text.
+private struct SelectionButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .background {
+                Capsule()
+                    .fill(isSelected ? Color.accentColor : Color.gray.opacity(0.18))
+            }
+            .overlay {
+                if !isSelected {
+                    Capsule()
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+                }
+            }
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
 }
 
 #Preview(windowStyle: .automatic) {

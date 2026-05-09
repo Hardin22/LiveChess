@@ -21,6 +21,12 @@ final class LichessLobbyController {
         case creatingUserChallenge(username: String)
         case waitingForOpponent(challengeID: String)
         case seeking(rated: Bool, label: String)
+        /// A partner has been matched (or our challenge accepted) and a
+        /// `LichessMatchSession` has been built — the immersive space
+        /// is opening. Briefly visible to give the user a clear "found!"
+        /// signal between the seek/wait state and the immersive
+        /// actually opening.
+        case openingMatch(opponent: String)
     }
 
     private(set) var pendingAction: PendingAction?
@@ -64,6 +70,12 @@ final class LichessLobbyController {
     /// `/api/challenge/{id}/cancel` if the user backs out before the
     /// recipient accepts).
     private var pendingFriendChallengeID: String?
+
+    /// Game IDs we've already surfaced through `onGameSessionReady`.
+    /// The fallback path in `refreshActiveGames()` consults this so it
+    /// doesn't double-open a game that the event-stream's `gameStart`
+    /// already kicked off.
+    private var openedGameIDs: Set<String> = []
 
     /// Last requested time control — stashed so the matchmaking branch
     /// (Quick Pair → gameStart) can pre-populate the resulting
@@ -271,6 +283,13 @@ final class LichessLobbyController {
         }
     }
 
+    /// Clears `pendingAction`. Called by the lobby host after the
+    /// immersive space has opened — the "Trovato avversario, apertura
+    /// scacchiera…" indicator goes away once the user is in 3D.
+    func clearPending() {
+        pendingAction = nil
+    }
+
     /// Cancels an outstanding friend-challenge POST that hasn't been
     /// accepted yet. No-op if there isn't one.
     func cancelFriendChallenge() async {
@@ -308,12 +327,31 @@ final class LichessLobbyController {
         }
     }
 
-    /// Pulls the current `nowPlaying` list. Called on lobby appear and
+    /// Pulls the current `nowPlaying` list. Called on lobby appear,
     /// after event-stream reconnects (where missed `gameStart` events
-    /// would otherwise leave the active list stale).
+    /// would otherwise leave the active list stale), and on a 30 s
+    /// idle poll while the lobby is visible.
+    ///
+    /// **Fallback auto-open**: if the user is currently seeking and a
+    /// game appears in `nowPlaying` that we haven't already opened,
+    /// surface it through `onGameSessionReady`. This catches the case
+    /// where Lichess matches the seek but the `gameStart` event-stream
+    /// frame is missed (event stream reconnect mid-match, cellular
+    /// blip, etc.) — rare but the user otherwise has to manually tap
+    /// the active game card to enter the match.
     func refreshActiveGames() async {
+        let oldIDs = Set(activeGames.map { $0.gameId })
         do {
-            activeGames = try await session.api.accountPlaying()
+            let updated = try await session.api.accountPlaying()
+            activeGames = updated
+            if case .seeking = pendingAction {
+                if let newlyMatched = updated.first(where: {
+                    !oldIDs.contains($0.gameId) && !openedGameIDs.contains($0.gameId)
+                }) {
+                    cancelSeek()
+                    resumeActiveGame(newlyMatched)
+                }
+            }
         } catch let error as LichessError {
             lastError = error
         } catch {
@@ -323,9 +361,12 @@ final class LichessLobbyController {
 
     /// Resumes an in-progress game by opening its game stream and
     /// surfacing the resulting `LichessMatchSession`. Driven by tap on
-    /// the "Partite in corso" list.
+    /// the "Partite in corso" list, OR by the `refreshActiveGames`
+    /// fallback when the `gameStart` event was missed.
     func resumeActiveGame(_ playing: LichessPlayingGame) {
         guard let token = session.token else { return }
+        guard !openedGameIDs.contains(playing.gameId) else { return }
+        openedGameIDs.insert(playing.gameId)
 
         let humanColor: Side = playing.color == .white ? .white : .black
         let opponent = LichessMatchSession.Opponent(
@@ -426,13 +467,19 @@ final class LichessLobbyController {
     /// their session inline in `challengeAI(...)`.
     private func handleGameStart(_ info: LichessGameEventInfo) {
         guard let token = session.token else { return }
+        // De-dupe against the refreshActiveGames fallback path.
+        guard !openedGameIDs.contains(info.gameId) else { return }
+        openedGameIDs.insert(info.gameId)
 
-        // The pending action was either a seek or a waiting-for-opponent.
-        // Either way we're done with it — clear so the lobby UI returns
-        // to its idle state.
+        // The seek / waiting-for-opponent pending state ends here, but
+        // we don't go straight back to idle — set `.openingMatch` so
+        // the lobby shows a clear "trovato avversario, apertura
+        // partita…" indicator until the immersive space takes over.
+        // The host clears this via `clearPending()` when the immersive
+        // actually opens.
         seekTask = nil
         pendingFriendChallengeID = nil
-        pendingAction = nil
+        pendingAction = .openingMatch(opponent: info.opponent.username)
 
         let humanColor: Side = info.color == .white ? .white : .black
         let opponent = LichessMatchSession.Opponent(
