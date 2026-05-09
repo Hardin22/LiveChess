@@ -27,12 +27,11 @@ struct ChessPieceEquipment: Equipment {
     // MARK: - Private helpers
 
     private static func pose(for square: Square) -> TableVisualState.Pose2D {
-        let size = SceneMetrics.squareSize
-        let half = SceneMetrics.boardPlayableSide / 2
-        let x = -half + size * (Float(square.file) + 0.5)
-        let z = -half + size * (Float(square.rank) + 0.5)
+        // Match BoardSurface.position(for:) so TabletopKit's internal state
+        // and our render positions stay aligned: rank 0 maps to +z, rank 7 to -z.
+        let pos = BoardSurface.position(for: square)
         return TableVisualState.Pose2D(
-            position: TableVisualState.Point2D(x: Double(x), z: Double(z)),
+            position: TableVisualState.Point2D(x: Double(pos.x), z: Double(pos.z)),
             rotation: Angle2D(radians: 0)
         )
     }

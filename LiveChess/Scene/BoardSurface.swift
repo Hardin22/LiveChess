@@ -53,23 +53,19 @@ enum BoardSurface {
         let group = Entity()
         group.name = "BoardSquares"
 
-        let size = SceneMetrics.squareSize
-        let half = SceneMetrics.boardPlayableSide / 2
-
         for rank in 0..<8 {
             for file in 0..<8 {
                 let isLight = (file + rank).isMultiple(of: 2)
                 let squareEntity = ModelEntity(
                     mesh: .generateBox(
-                        size: [size, SceneMetrics.squareThickness, size],
+                        size: [SceneMetrics.squareSize, SceneMetrics.squareThickness, SceneMetrics.squareSize],
                         cornerRadius: 0.0005
                     ),
                     materials: [ChessMaterials.square(forIsLight: isLight)]
                 )
-                let x = -half + size * (Float(file) + 0.5)
-                let z = -half + size * (Float(rank) + 0.5)
+                let pos = position(for: Square(file: file, rank: rank)!)
                 // Squares sit slightly above the frame top (y > 0) so seams stay clean.
-                squareEntity.position = [x, SceneMetrics.squareThickness / 2 - 0.0001, z]
+                squareEntity.position = [pos.x, SceneMetrics.squareThickness / 2 - 0.0001, pos.z]
                 squareEntity.name = "Square_\(file)_\(rank)"
                 group.addChild(squareEntity)
             }
@@ -81,11 +77,30 @@ enum BoardSurface {
 
     /// Position (relative to the board root) of the centre of a `Square`,
     /// at the surface plane (`y = 0`).
-    static func position(for square: Square) -> SIMD3<Float> {
+    ///
+    /// Coordinate convention: with the board root at default rotation, the
+    /// player viewing the scene from `-z` looking at `+z`-forward sees:
+    ///
+    /// - **rank 1** (white's home rank, `square.rank == 0`) **closest** to them
+    ///   (largest `+z` in root-local space → least-negative world `z` once the
+    ///   root is positioned in front of the camera at world `z = -0.55`),
+    /// - **rank 8** (black's home) **farthest**,
+    /// - **a-file** (`file == 0`) on their **left** (most-negative `x`),
+    /// - **h-file** on their right.
+    ///
+    /// This matches a real chess set viewed by White. When the human plays
+    /// Black we flip the whole root 180° around `y` (TODO: wire in
+    /// `MatchSettings.humanColor`).
+    nonisolated static func position(for square: Square) -> SIMD3<Float> {
         let size = SceneMetrics.squareSize
         let half = SceneMetrics.boardPlayableSide / 2
         let x = -half + size * (Float(square.file) + 0.5)
-        let z = -half + size * (Float(square.rank) + 0.5)
+        // Note the sign flip on z: rank 0 (rank 1) is the LARGEST z (closest
+        // to the viewer when the root sits in front of them at negative world
+        // z), rank 7 (rank 8) is the smallest. Without this flip the user
+        // ends up sitting on Black's side and perceives the central files as
+        // mirrored (queen and king look swapped).
+        let z = +half - size * (Float(square.rank) + 0.5)
         return [x, 0, z]
     }
 }
