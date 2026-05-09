@@ -63,4 +63,23 @@ enum ChessMaterials {
     static func square(forIsLight isLight: Bool) -> PhysicallyBasedMaterial {
         isLight ? lightSquare : darkSquare
     }
+
+    // MARK: - Legal-move markers
+
+    /// Resting style for a legal-destination dot — soft white, ~35% opaque.
+    static func legalMoveMarkerMaterial() -> UnlitMaterial {
+        var m = UnlitMaterial()
+        m.color = .init(tint: UIColor(white: 1.0, alpha: 1.0))
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.35))
+        return m
+    }
+
+    /// Highlighted style for the dot under the dragged piece — warm gold,
+    /// brighter, used while the user is hovering a particular destination.
+    static func activeMoveMarkerMaterial() -> UnlitMaterial {
+        var m = UnlitMaterial()
+        m.color = .init(tint: UIColor(red: 1.0, green: 0.78, blue: 0.30, alpha: 1.0))
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.85))
+        return m
+    }
 }

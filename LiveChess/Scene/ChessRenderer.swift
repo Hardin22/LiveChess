@@ -25,6 +25,11 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     private(set) var pieceEntities: [EquipmentIdentifier: Entity] = [:]
     /// Lookup by current square. Updated on every applied move.
     private(set) var pieceBySquare: [Square: Entity] = [:]
+    /// Currently visible legal-destination markers, keyed by their square.
+    private var legalMarkers: [Square: ModelEntity] = [:]
+    /// Square the dragged piece is currently hovering over (subset of
+    /// `legalMarkers`). `nil` when the piece is over a non-legal square.
+    private var activeMarkerSquare: Square?
 
     init() {
         self.rootEntity = Entity()
@@ -79,6 +84,11 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// piece on the destination first; updates the per-square / per-id maps
     /// and the entity's `ChessPieceComponent.square` so the next drag starts
     /// from the correct origin.
+    ///
+    /// Castling: when `move.isCastle == true`, also slides the matching rook
+    /// (h-file → f-file for kingside, a-file → d-file for queenside). The
+    /// `Move` we get only describes the king's path — the rook's twin move
+    /// is implied by the rules, so we pattern-match and apply it here too.
     func animateMove(_ move: Move) {
         guard let entity = pieceBySquare[move.from] else { return }
 
@@ -91,22 +101,50 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
             pieceBySquare.removeValue(forKey: move.to)
         }
 
-        pieceBySquare.removeValue(forKey: move.from)
-        pieceBySquare[move.to] = entity
+        glide(entity, to: move.to)
+
+        // Castle: also slide the matching rook.
+        if move.isCastle {
+            slideCastlingRook(kingFrom: move.from, kingTo: move.to)
+        }
+    }
+
+    /// Slides `entity` from its current square to `square`, updating
+    /// indexes and the piece's `ChessPieceComponent.square` along the way.
+    private func glide(_ entity: Entity, to square: Square) {
+        if let oldSquare = entity.components[ChessPieceComponent.self]?.square {
+            pieceBySquare.removeValue(forKey: oldSquare)
+        }
+        pieceBySquare[square] = entity
 
         if var comp = entity.components[ChessPieceComponent.self] {
-            comp.square = move.to
+            comp.square = square
             entity.components.set(comp)
         }
 
         var target = entity.transform
-        target.translation = surfacePosition(for: move.to)
+        target.translation = surfacePosition(for: square)
         entity.move(
             to: target,
             relativeTo: rootEntity,
             duration: Self.moveAnimationDuration,
             timingFunction: .easeOut
         )
+    }
+
+    /// Given the king's `from`/`to`, infers and animates the rook half of
+    /// a castling move. Kingside if the king's destination file is greater
+    /// than its origin (e1→g1 / e8→g8), otherwise queenside.
+    private func slideCastlingRook(kingFrom: Square, kingTo: Square) {
+        let isKingside = kingTo.file > kingFrom.file
+        let rank = kingFrom.rank
+        let rookFromFile = isKingside ? 7 : 0
+        let rookToFile = isKingside ? 5 : 3
+        guard let rookFrom = Square(file: rookFromFile, rank: rank),
+              let rookTo = Square(file: rookToFile, rank: rank),
+              let rook = pieceBySquare[rookFrom]
+        else { return }
+        glide(rook, to: rookTo)
     }
 
     /// Returns the held piece to the centre of its current square. Used when a
@@ -132,6 +170,101 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
             to: target,
             relativeTo: rootEntity,
             duration: 0.12,
+            timingFunction: .easeOut
+        )
+    }
+
+    // MARK: - Legal-move highlights
+
+    /// Spawns a faint marker on each `square` to show where the dragged
+    /// piece can land. Markers fade-and-scale-in over 150 ms.
+    func showLegalMoveMarkers(_ squares: [Square]) {
+        clearLegalMoveMarkers()
+        for square in squares {
+            let marker = makeMarker(for: square, active: false)
+            legalMarkers[square] = marker
+            rootEntity.addChild(marker)
+
+            // Scale-in animation so the markers don't pop into existence.
+            marker.transform.scale = SIMD3<Float>(repeating: 0.0)
+            var target = marker.transform
+            target.scale = SIMD3<Float>(repeating: 1.0)
+            marker.move(
+                to: target,
+                relativeTo: rootEntity,
+                duration: 0.15,
+                timingFunction: .easeOut
+            )
+        }
+    }
+
+    /// Switches which marker (if any) is shown in the active gold style.
+    /// Pass `nil` when the dragged piece is not over a legal square.
+    func setActiveMarker(_ square: Square?) {
+        guard square != activeMarkerSquare else { return }
+
+        if let prev = activeMarkerSquare, let marker = legalMarkers[prev] {
+            applyMarkerStyle(.legal, to: marker)
+        }
+        activeMarkerSquare = square
+        if let cur = square, let marker = legalMarkers[cur] {
+            applyMarkerStyle(.active, to: marker)
+        }
+    }
+
+    /// Removes every legal-move marker. Called when a drag ends or is cancelled.
+    func clearLegalMoveMarkers() {
+        for (_, marker) in legalMarkers {
+            marker.removeFromParent()
+        }
+        legalMarkers.removeAll()
+        activeMarkerSquare = nil
+    }
+
+    private enum MarkerStyle {
+        case legal
+        case active
+    }
+
+    private func makeMarker(for square: Square, active: Bool) -> ModelEntity {
+        let radius: Float = 0.012             // 12 mm (≈ 20% of a 60 mm square)
+        let height: Float = 0.0015            // 1.5 mm
+        let mesh = MeshResource.generateCylinder(height: height, radius: radius)
+        let material = active
+            ? ChessMaterials.activeMoveMarkerMaterial()
+            : ChessMaterials.legalMoveMarkerMaterial()
+        let marker = ModelEntity(mesh: mesh, materials: [material])
+
+        var pos = BoardSurface.position(for: square)
+        // Stack the marker just above the square's top face.
+        pos.y = SceneMetrics.squareThickness + height / 2 + 0.0005
+        marker.position = pos
+        marker.name = "LegalMarker_\(square.algebraic)"
+        // Grow the active marker a touch so the highlight is unmistakable.
+        if active {
+            marker.scale = SIMD3<Float>(repeating: 1.3)
+        }
+        return marker
+    }
+
+    private func applyMarkerStyle(_ style: MarkerStyle, to marker: ModelEntity) {
+        let material: UnlitMaterial
+        let scale: Float
+        switch style {
+        case .legal:
+            material = ChessMaterials.legalMoveMarkerMaterial()
+            scale = 1.0
+        case .active:
+            material = ChessMaterials.activeMoveMarkerMaterial()
+            scale = 1.3
+        }
+        marker.model?.materials = [material]
+        var target = marker.transform
+        target.scale = SIMD3<Float>(repeating: scale)
+        marker.move(
+            to: target,
+            relativeTo: rootEntity,
+            duration: 0.10,
             timingFunction: .easeOut
         )
     }

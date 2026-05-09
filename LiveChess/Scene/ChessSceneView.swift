@@ -142,16 +142,19 @@ struct ChessSceneView: View {
             // Cache legal destinations so onEnded doesn't have to recompute,
             // and capture origin for the snap-back path.
             let legal = coordinator.legalMoves(from: comp.square)
+            let destinations = Set(legal.map(\.to))
             pieceDrag = PieceDragState(
                 entity: value.entity,
                 originSquare: comp.square,
                 originLocalPosition: value.entity.position,
-                legalDestinations: Set(legal.map(\.to))
+                legalDestinations: destinations
             )
             renderer.lift(value.entity)
+            // Show targeting affordance for every legal destination.
+            renderer.showLegalMoveMarkers(Array(destinations))
         }
 
-        guard pieceDrag?.entity === value.entity else { return }
+        guard let drag = pieceDrag, drag.entity === value.entity else { return }
 
         // Translate the piece in root-local space by the world-space delta.
         let startWorld = value.convert(value.startLocation3D, from: .local, to: .scene)
@@ -165,18 +168,28 @@ struct ChessSceneView: View {
                 + originWorld,
             from: nil
         )
-        let origin = pieceDrag?.originLocalPosition ?? value.entity.position
+        let origin = drag.originLocalPosition
         value.entity.position = SIMD3<Float>(
             origin.x + endWorldLocal.x,
             max(SceneMetrics.squareThickness + ChessRenderer.liftHeight, origin.y + endWorldLocal.y),
             origin.z + endWorldLocal.z
         )
+
+        // Live "current target" highlight: the legal square (if any) that the
+        // piece's centre is currently above.
+        let candidate = BoardSurface.square(forBoardLocalPosition: value.entity.position)
+        if let candidate, drag.legalDestinations.contains(candidate) {
+            renderer.setActiveMarker(candidate)
+        } else {
+            renderer.setActiveMarker(nil)
+        }
     }
 
     private func onPieceDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
         guard let coordinator, let renderer,
               let drag = pieceDrag,
               drag.entity === value.entity else {
+            renderer?.clearLegalMoveMarkers()
             pieceDrag = nil
             return
         }
@@ -196,6 +209,7 @@ struct ChessSceneView: View {
         } else {
             renderer.snapBack(value.entity)
         }
+        renderer.clearLegalMoveMarkers()
         pieceDrag = nil
     }
 
