@@ -37,6 +37,12 @@ final class MatchCoordinator {
     @ObservationIgnored
     var moveAppliedHandler: (@MainActor (Move) -> Void)?
 
+    /// Called on the main actor after `newGame(...)` finishes resetting the
+    /// match. The scene host uses this to wipe the board's piece entities
+    /// and re-seed them from `Position.standardStart`.
+    @ObservationIgnored
+    var matchResetHandler: (@MainActor () -> Void)?
+
     /// Exposed so tests can `await coordinator.aiTask?.value` deterministically.
     /// In production code you should not need to touch this directly.
     private(set) var aiTask: Task<Void, Never>?
@@ -85,6 +91,7 @@ final class MatchCoordinator {
         }
 
         match.reset()
+        matchResetHandler?()
         triggerAIIfNeeded()
     }
 

@@ -25,7 +25,7 @@ struct ChessSceneView: View {
     @State private var pieceDrag: PieceDragState?              // piece drag
 
     var body: some View {
-        RealityView { content in
+        RealityView { content, attachments in
             await PieceMeshFactory.preload()
 
             let rules = ChessKitRulesEngine()
@@ -55,19 +55,12 @@ struct ChessSceneView: View {
             setup.add(seat: whiteSeat)
             setup.add(seat: blackSeat)
 
-            var nextID = 100
-            for square in Square.all {
-                guard let piece = Position.standardStart[square] else { continue }
-                let equipment = ChessPieceEquipment(
-                    id: EquipmentIdentifier(nextID),
-                    piece: piece,
-                    square: square,
-                    parentID: table.id
-                )
-                setup.add(equipment: equipment)
-                renderer.placePiece(equipment, on: square)
-                nextID += 1
-            }
+            Self.populatePieces(
+                into: &setup,
+                renderer: renderer,
+                tableID: table.id,
+                idStart: 100
+            )
 
             let game = TabletopGame(tableSetup: setup)
             game.claimSeat(humanSide == .white ? whiteSeat : blackSeat)
@@ -79,12 +72,40 @@ struct ChessSceneView: View {
                 renderer?.animateMove(move)
             }
 
+            // On New Game, wipe the visual pieces and re-seed them from the
+            // standard starting position. The coordinator has already reset
+            // its `Match`; we only need to re-create the visuals here.
+            coord.matchResetHandler = { [weak renderer] in
+                guard let renderer else { return }
+                renderer.clearAllPieces()
+                Self.repopulatePieces(
+                    renderer: renderer,
+                    tableID: table.id,
+                    idStart: 200
+                )
+            }
+
             renderer.rootEntity.position = SIMD3<Float>(
                 0,
                 SceneMetrics.defaultTableHeight,
                 SceneMetrics.defaultTableDepth
             )
             content.add(renderer.rootEntity)
+
+            // Anchor the floating HUD to the right of the board, slightly
+            // above the table surface, tilted up so it faces the user.
+            if let hud = attachments.entity(for: "match-hud") {
+                hud.position = SIMD3<Float>(
+                    SceneMetrics.boardOuterSide / 2 + 0.10,
+                    0.18,
+                    0
+                )
+                hud.transform.rotation = simd_quatf(
+                    angle: -.pi / 6,         // tilt back ~30° toward the user
+                    axis: SIMD3<Float>(1, 0, 0)
+                )
+                renderer.rootEntity.addChild(hud)
+            }
 
             _ = content.subscribe(to: SceneEvents.Update.self) { @MainActor event in
                 game.update(deltaTime: event.deltaTime)
@@ -95,8 +116,61 @@ struct ChessSceneView: View {
             self.renderer = renderer
 
             coord.start()
+        } attachments: {
+            Attachment(id: "match-hud") {
+                if let coordinator {
+                    MatchHUDView(coordinator: coordinator)
+                }
+            }
         }
         .gesture(combinedDrag)
+    }
+
+    /// Adds the 32 starting-position pieces and registers them both with
+    /// the renderer and with TabletopKit's `TableSetup`. Used at first
+    /// scene build.
+    private static func populatePieces(
+        into setup: inout TableSetup,
+        renderer: ChessRenderer,
+        tableID: EquipmentIdentifier,
+        idStart: Int
+    ) {
+        var nextID = idStart
+        for square in Square.all {
+            guard let piece = Position.standardStart[square] else { continue }
+            let equipment = ChessPieceEquipment(
+                id: EquipmentIdentifier(nextID),
+                piece: piece,
+                square: square,
+                parentID: tableID
+            )
+            setup.add(equipment: equipment)
+            renderer.placePiece(equipment, on: square)
+            nextID += 1
+        }
+    }
+
+    /// Re-creates only the renderer-side visuals at the standard starting
+    /// position. Used by `MatchCoordinator.matchResetHandler` on New Game —
+    /// the existing TabletopKit equipment list is left alone (we don't
+    /// drive the scene through its visualState anyway).
+    private static func repopulatePieces(
+        renderer: ChessRenderer,
+        tableID: EquipmentIdentifier,
+        idStart: Int
+    ) {
+        var nextID = idStart
+        for square in Square.all {
+            guard let piece = Position.standardStart[square] else { continue }
+            let equipment = ChessPieceEquipment(
+                id: EquipmentIdentifier(nextID),
+                piece: piece,
+                square: square,
+                parentID: tableID
+            )
+            renderer.placePiece(equipment, on: square)
+            nextID += 1
+        }
     }
 
     // MARK: - AI factory (single line to swap to Stockfish)

@@ -25,10 +25,16 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     private(set) var pieceEntities: [EquipmentIdentifier: Entity] = [:]
     /// Lookup by current square. Updated on every applied move.
     private(set) var pieceBySquare: [Square: Entity] = [:]
-    /// Currently visible legal-destination markers, keyed by their square.
+    /// Small white dots over each legal-destination square, visible during a
+    /// drag so the user knows where the piece can land.
     private var legalMarkers: [Square: ModelEntity] = [:]
-    /// Square the dragged piece is currently hovering over (subset of
-    /// `legalMarkers`). `nil` when the piece is over a non-legal square.
+    /// Full-square gold overlay shown on whichever legal square is currently
+    /// under the dragged piece. The square shape (rather than a scaled-up
+    /// dot) lets the overlay stick out around any piece sitting on the
+    /// destination, so capture targets are unmistakable.
+    private var activeOverlay: ModelEntity?
+    /// Square that `activeOverlay` is currently anchored to. `nil` when the
+    /// piece isn't over any legal target.
     private var activeMarkerSquare: Square?
 
     init() {
@@ -176,16 +182,16 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
 
     // MARK: - Legal-move highlights
 
-    /// Spawns a faint marker on each `square` to show where the dragged
-    /// piece can land. Markers fade-and-scale-in over 150 ms.
+    /// Spawns a small white dot over every legal-destination square so the
+    /// user can see where the picked-up piece can land. Markers fade-and-
+    /// scale-in over 150 ms.
     func showLegalMoveMarkers(_ squares: [Square]) {
         clearLegalMoveMarkers()
         for square in squares {
-            let marker = makeMarker(for: square, active: false)
+            let marker = makeLegalDot(at: square)
             legalMarkers[square] = marker
             rootEntity.addChild(marker)
 
-            // Scale-in animation so the markers don't pop into existence.
             marker.transform.scale = SIMD3<Float>(repeating: 0.0)
             var target = marker.transform
             target.scale = SIMD3<Float>(repeating: 1.0)
@@ -198,75 +204,98 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         }
     }
 
-    /// Switches which marker (if any) is shown in the active gold style.
-    /// Pass `nil` when the dragged piece is not over a legal square.
+    /// Anchors a full-square gold overlay to whichever legal square the
+    /// dragged piece is currently above. Pass `nil` when the piece is not
+    /// over any legal target. The overlay covers the square edge-to-edge,
+    /// so on a capture move it sticks out around the opponent's piece —
+    /// the user can tell at a glance "I'm targeting *this* enemy".
     func setActiveMarker(_ square: Square?) {
         guard square != activeMarkerSquare else { return }
-
-        if let prev = activeMarkerSquare, let marker = legalMarkers[prev] {
-            applyMarkerStyle(.legal, to: marker)
-        }
         activeMarkerSquare = square
-        if let cur = square, let marker = legalMarkers[cur] {
-            applyMarkerStyle(.active, to: marker)
+
+        activeOverlay?.removeFromParent()
+        activeOverlay = nil
+
+        if let cur = square {
+            let overlay = makeActiveOverlay(at: cur)
+            rootEntity.addChild(overlay)
+            activeOverlay = overlay
+
+            // Pop-in: start narrower than full size, expand to fit the
+            // square. Y-scale stays at 1 so the overlay's tiny thickness
+            // doesn't visibly grow.
+            overlay.transform.scale = SIMD3<Float>(0.6, 1.0, 0.6)
+            var target = overlay.transform
+            target.scale = SIMD3<Float>(repeating: 1.0)
+            overlay.move(
+                to: target,
+                relativeTo: rootEntity,
+                duration: 0.10,
+                timingFunction: .easeOut
+            )
         }
     }
 
-    /// Removes every legal-move marker. Called when a drag ends or is cancelled.
+    /// Removes every legal-move marker and the active overlay. Called when
+    /// a drag ends or is cancelled.
     func clearLegalMoveMarkers() {
         for (_, marker) in legalMarkers {
             marker.removeFromParent()
         }
         legalMarkers.removeAll()
+        activeOverlay?.removeFromParent()
+        activeOverlay = nil
         activeMarkerSquare = nil
     }
 
-    private enum MarkerStyle {
-        case legal
-        case active
-    }
-
-    private func makeMarker(for square: Square, active: Bool) -> ModelEntity {
-        let radius: Float = 0.012             // 12 mm (≈ 20% of a 60 mm square)
-        let height: Float = 0.0015            // 1.5 mm
+    private func makeLegalDot(at square: Square) -> ModelEntity {
+        let radius: Float = 0.012        // 12 mm — ~20% of a 60 mm square
+        let height: Float = 0.0015       // 1.5 mm
         let mesh = MeshResource.generateCylinder(height: height, radius: radius)
-        let material = active
-            ? ChessMaterials.activeMoveMarkerMaterial()
-            : ChessMaterials.legalMoveMarkerMaterial()
-        let marker = ModelEntity(mesh: mesh, materials: [material])
-
+        let entity = ModelEntity(
+            mesh: mesh,
+            materials: [ChessMaterials.legalMoveMarkerMaterial()]
+        )
         var pos = BoardSurface.position(for: square)
-        // Stack the marker just above the square's top face.
         pos.y = SceneMetrics.squareThickness + height / 2 + 0.0005
-        marker.position = pos
-        marker.name = "LegalMarker_\(square.algebraic)"
-        // Grow the active marker a touch so the highlight is unmistakable.
-        if active {
-            marker.scale = SIMD3<Float>(repeating: 1.3)
-        }
-        return marker
+        entity.position = pos
+        entity.name = "LegalDot_\(square.algebraic)"
+        return entity
     }
 
-    private func applyMarkerStyle(_ style: MarkerStyle, to marker: ModelEntity) {
-        let material: UnlitMaterial
-        let scale: Float
-        switch style {
-        case .legal:
-            material = ChessMaterials.legalMoveMarkerMaterial()
-            scale = 1.0
-        case .active:
-            material = ChessMaterials.activeMoveMarkerMaterial()
-            scale = 1.3
-        }
-        marker.model?.materials = [material]
-        var target = marker.transform
-        target.scale = SIMD3<Float>(repeating: scale)
-        marker.move(
-            to: target,
-            relativeTo: rootEntity,
-            duration: 0.10,
-            timingFunction: .easeOut
+    private func makeActiveOverlay(at square: Square) -> ModelEntity {
+        // Slightly inset from the square's edges to avoid z-fight with the
+        // wooden frame's inner border.
+        let size = SceneMetrics.squareSize - 0.002
+        let height: Float = 0.0015
+        let mesh = MeshResource.generateBox(
+            size: [size, height, size],
+            cornerRadius: 0.003
         )
+        let entity = ModelEntity(
+            mesh: mesh,
+            materials: [ChessMaterials.activeMoveMarkerMaterial()]
+        )
+        var pos = BoardSurface.position(for: square)
+        // Lift slightly *above* the legal dot so the overlay covers it.
+        pos.y = SceneMetrics.squareThickness + height / 2 + 0.0010
+        entity.position = pos
+        entity.name = "ActiveOverlay_\(square.algebraic)"
+        return entity
+    }
+
+    // MARK: - Reset
+
+    /// Clears every piece entity and any active marker. Used when the
+    /// coordinator starts a new game so the scene host can repopulate
+    /// from `Position.standardStart` cleanly.
+    func clearAllPieces() {
+        for (_, entity) in pieceEntities {
+            entity.removeFromParent()
+        }
+        pieceEntities.removeAll()
+        pieceBySquare.removeAll()
+        clearLegalMoveMarkers()
     }
 
     // MARK: - Helpers
