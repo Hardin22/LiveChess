@@ -9,9 +9,8 @@ import TabletopKit
 ///   * the **board frame** → drag the entire scene root in 3D (placement),
 ///   * **a piece** → drag-and-drop with snap-to-square + rules validation.
 ///
-/// The opponent is currently `RandomMoveAIEngine` so we can validate the full
-/// loop (drag → rules → engine → animation) without depending on Stockfish's
-/// NNUE network. Swap to `StockfishEngine()` in `makeAI()` later.
+/// The opponent is `StockfishEngine` (Stockfish 17 with NNUE) — see
+/// `makeAI(rules:)` below.
 @MainActor
 struct ChessSceneView: View {
 
@@ -172,11 +171,19 @@ struct ChessSceneView: View {
         }
     }
 
-    // MARK: - AI factory (single line to swap to Stockfish)
+    // MARK: - AI factory
 
+    /// Production opponent: Stockfish 17 driven via UCI through
+    /// `chesskit-engine`. The two NNUE files
+    /// (`nn-1111cefa1111.nnue`, `nn-37f18f62d772.nnue`) live in the app
+    /// bundle's `Resources/` and `chesskit-engine` picks them up
+    /// automatically during the engine's initial-setup phase. The `rules`
+    /// argument is unused at the moment (`StockfishEngine` doesn't need a
+    /// local rules engine, since Stockfish itself enforces legality), but
+    /// kept in the signature so swapping to `RandomMoveAIEngine(rules:)`
+    /// for debugging is a one-line change.
     private func makeAI(rules: any RulesEngine) -> any ChessAIEngine {
-        // TODO: when NNUE is bundled, return `StockfishEngine()`.
-        RandomMoveAIEngine(rules: rules)
+        StockfishEngine()
     }
 
     // MARK: - Combined drag
