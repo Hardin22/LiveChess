@@ -167,3 +167,28 @@ final class MatchCoordinator {
         return AISettings()
     }
 }
+
+// MARK: - MatchSession
+
+extension MatchCoordinator: MatchSession {
+
+    /// `MatchSession.isHumanTurn` derived from the AI-orchestration state:
+    /// gated on the game still being live, the AI not currently
+    /// computing, and the side-to-move's controller being `.human`.
+    var isHumanTurn: Bool {
+        guard !match.status.isGameOver else { return false }
+        guard !isAIThinking else { return false }
+        let side = match.currentPosition.sideToMove
+        let controller = side == .white ? white : black
+        if case .human = controller { return true }
+        return false
+    }
+
+    /// `MatchSession.submitMove(_:)` — wraps the existing synchronous
+    /// `submitHumanMove(_:)`. The protocol is `async` because the Lichess
+    /// implementation needs it; for the local coordinator the body is
+    /// effectively synchronous.
+    func submitMove(_ move: Move) async {
+        submitHumanMove(move)
+    }
+}
