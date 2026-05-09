@@ -29,24 +29,56 @@ enum BoardSurface {
     // MARK: - Components
 
     private static func makeFrame() -> Entity {
+        // Build the frame as four thin edge slabs surrounding the playable
+        // 8×8 area, **not** as a single box underneath the squares. The
+        // hollow shape means hit-tests on a square (which has no collision)
+        // pass through to nothing, instead of falling through to the frame
+        // below — so the user can hover/drag pieces without the frame
+        // catching every interaction it shouldn't.
         let outer = SceneMetrics.boardOuterSide
+        let playable = SceneMetrics.boardPlayableSide
+        let edge = SceneMetrics.boardFrameWidth
         let thickness = SceneMetrics.boardThickness
-        let mesh = MeshResource.generateBox(
-            size: [outer, thickness, outer],
-            cornerRadius: 0.002
+        let edgeCenter = playable / 2 + edge / 2
+
+        let group = Entity()
+        group.name = frameName
+
+        // North + south edges run along x and span the full outer width so
+        // the corners overlap nicely with the side rails.
+        for z in [Float(-edgeCenter), Float(+edgeCenter)] {
+            let bar = makeFrameBar(
+                size: [outer, thickness, edge],
+                position: [0, -thickness / 2, z]
+            )
+            group.addChild(bar)
+        }
+        // East + west edges run along z and only span the playable depth so
+        // they don't overlap with the N/S corners (avoids z-fight artefacts).
+        for x in [Float(-edgeCenter), Float(+edgeCenter)] {
+            let bar = makeFrameBar(
+                size: [edge, thickness, playable],
+                position: [x, -thickness / 2, 0]
+            )
+            group.addChild(bar)
+        }
+        return group
+    }
+
+    private static func makeFrameBar(
+        size: SIMD3<Float>,
+        position: SIMD3<Float>
+    ) -> ModelEntity {
+        let bar = ModelEntity(
+            mesh: .generateBox(size: size, cornerRadius: 0.002),
+            materials: [ChessMaterials.boardFrame]
         )
-        let entity = ModelEntity(mesh: mesh, materials: [ChessMaterials.boardFrame])
-        // Sink the frame so its top sits at y = 0; squares sit just above.
-        entity.position = [0, -thickness / 2, 0]
-        entity.name = frameName
-        // Make the frame draggable: required so SwiftUI's DragGesture(targetedTo:)
-        // can hit-test the entity. The sibling square boxes are intentionally
-        // *not* input targets — only the frame catches placement drags, so a
-        // drag on a square or piece can later be routed to game interactions.
-        entity.components.set(InputTargetComponent())
-        entity.components.set(HoverEffectComponent())
-        entity.generateCollisionShapes(recursive: false)
-        return entity
+        bar.position = position
+        bar.name = frameName
+        bar.components.set(InputTargetComponent())
+        bar.components.set(HoverEffectComponent())
+        bar.generateCollisionShapes(recursive: false)
+        return bar
     }
 
     private static func makeSquares() -> Entity {

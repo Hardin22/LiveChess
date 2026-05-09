@@ -36,22 +36,37 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     // MARK: - Setup
 
     /// Creates the visual entity for `equipment`, parents it under the scene
-    /// root, and stamps it with `ChessPieceComponent` + the input/collision
-    /// pair needed for SwiftUI gestures.
+    /// root, and stamps the wrapper with the `ChessPieceComponent` + the
+    /// `InputTargetComponent` + `CollisionComponent` triple that SwiftUI
+    /// gestures need.
+    ///
+    /// We put a *manual* box collision on the wrapper rather than calling
+    /// `generateCollisionShapes(recursive: true)`. That call produces shapes
+    /// only on descendant `ModelEntity`s (the loaded USDZ mesh), which then
+    /// don't carry `InputTargetComponent` — leaving the entity tree with no
+    /// node that has both components, so the gesture system never sees a
+    /// valid hit. Putting both on the wrapper side-steps the issue and lets
+    /// the gesture's `value.entity` resolve directly to the wrapper, where
+    /// `ChessPieceComponent` lives.
     func placePiece(_ equipment: ChessPieceEquipment, on square: Square) {
         let entity = PieceMeshFactory.makeEntity(for: equipment.piece)
         entity.name = "Piece_\(equipment.piece.color)_\(equipment.piece.kind)_\(equipment.id)"
         entity.position = surfacePosition(for: square)
 
+        let height = SceneMetrics.pieceHeight(for: equipment.piece.kind)
+        let diameter = SceneMetrics.pieceBaseDiameter
+        let collisionShape = ShapeResource
+            .generateBox(size: [diameter, height, diameter])
+            .offsetBy(translation: [0, height / 2, 0])
+        entity.components.set(CollisionComponent(shapes: [collisionShape]))
+        entity.components.set(InputTargetComponent())
+        entity.components.set(HoverEffectComponent())
         entity.components.set(ChessPieceComponent(
             equipmentID: equipment.id,
             color: equipment.piece.color,
             kind: equipment.piece.kind,
             square: square
         ))
-        entity.components.set(InputTargetComponent())
-        entity.components.set(HoverEffectComponent())
-        entity.generateCollisionShapes(recursive: true)
 
         rootEntity.addChild(entity)
         pieceEntities[equipment.id] = entity
