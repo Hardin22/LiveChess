@@ -6,12 +6,12 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.livechess.oauth</string>
+			<string>com.francescoalbano.livechess.oauth</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>livechess</string>
+				<string>com.francescoalbano.livechess</string>
 			</array>
 		</dict>
 	</array>

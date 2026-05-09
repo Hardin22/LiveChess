@@ -45,7 +45,12 @@ final class LichessAuthService: NSObject, ASWebAuthenticationPresentationContext
     }
 
     nonisolated static let defaultClientID = "app.livechess.visionos"
-    nonisolated static let defaultRedirectURI = "livechess://oauth/callback"
+    /// Lichess requires `redirect_uri` schemes in **reverse-domain
+    /// notation** for custom-scheme native apps (their PKCE validator
+    /// rejects single-word schemes like `livechess://` with a "Bad
+    /// authorization request — exotic redirect_uri scheme not allowed".
+    /// The recommendation in that error is `com.example://`).
+    nonisolated static let defaultRedirectURI = "com.francescoalbano.livechess://oauth/callback"
     /// Minimum scopes for v1: play games, send/accept challenges, read the
     /// account's preferences (board orientation, autoQueen, etc.). Email
     /// scope is intentionally omitted to keep the consent screen short.
