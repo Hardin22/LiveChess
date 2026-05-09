@@ -21,11 +21,18 @@ struct LichessAccount: Sendable, Decodable, Equatable {
 
 /// Per-perf rating block (one entry per speed/variant: `bullet`, `blitz`,
 /// `rapid`, `classical`, `correspondence`, `chess960`, ...).
+///
+/// All fields are optional because the `perfs` map also includes entries
+/// like `storm`, `racer`, `streak` that use a different schema
+/// (`{runs, score}`) than the rated-play perfs. Making the rating
+/// fields nullable lets the decoder succeed on the whole map even when
+/// those special-shape entries are present; we just won't read a
+/// rating off them (`rating(forPerfKey:)` returns nil for those).
 struct LichessPerf: Sendable, Decodable, Equatable {
-    let games: Int
-    let rating: Int
-    let rd: Int                     // rating deviation
-    let prog: Int                   // recent progress
+    let games: Int?
+    let rating: Int?
+    let rd: Int?                    // rating deviation
+    let prog: Int?                  // recent progress
     let prov: Bool?                 // true = provisional rating
 
     var isProvisional: Bool { prov ?? false }
