@@ -20,6 +20,10 @@ actor LichessGameStream {
 
     nonisolated let updates: AsyncStream<LichessGameStreamEvent>
 
+    /// Fired when Lichess returns 401 — bearer dead. Owners should
+    /// drop the token and surface re-auth. Loop exits after firing.
+    var onAuthFailure: (@Sendable () async -> Void)?
+
     private let continuation: AsyncStream<LichessGameStreamEvent>.Continuation
     private let gameID: String
     private var token: String
@@ -56,6 +60,12 @@ actor LichessGameStream {
         self.token = token
     }
 
+    /// Setter for the auth-failure callback. Property assignments on
+    /// an actor's mutable storage need to hop through a method.
+    func setAuthFailureHandler(_ handler: @escaping @Sendable () async -> Void) {
+        self.onAuthFailure = handler
+    }
+
     deinit {
         loop?.cancel()
         continuation.finish()
@@ -75,6 +85,12 @@ actor LichessGameStream {
                 // Game no longer exists — server-side cancelled / cleanup.
                 // Don't keep retrying; finalise the stream and let the
                 // session decide what to surface to the user.
+                continuation.finish()
+                return
+            } catch LichessError.tokenExpired {
+                // Bearer dead — bail and notify upward. Match session
+                // will end gracefully and the lobby will prompt re-auth.
+                await onAuthFailure?()
                 continuation.finish()
                 return
             } catch {

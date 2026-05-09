@@ -86,11 +86,37 @@ final class LichessLobbyController {
         guard let token = session.token else { return }
         guard eventStream == nil else { return }
         let stream = LichessEventStream(token: token)
+        // Reconnect → re-fetch active games. Lichess does not replay
+        // missed events across the gap, so a game started while we
+        // were offline would otherwise be invisible until the user
+        // navigates somewhere.
+        Task { [weak self] in
+            await stream.setReconnectHandler { [weak self] in
+                await self?.refreshActiveGames()
+            }
+            await stream.setAuthFailureHandler { [weak self] in
+                await self?.handleAuthFailure()
+            }
+            _ = self  // silence unused-capture warning
+        }
         eventStream = stream
         eventStreamConsumer = Task { [weak self] in
             await stream.start()
             await self?.consumeEvents(stream)
         }
+    }
+
+    /// Fired by either stream when Lichess rejects the bearer with 401.
+    /// Wipes local state via `signOut(local-only)` so the lobby's
+    /// `lichessCard` returns to the sign-in CTA.
+    private func handleAuthFailure() async {
+        // Tear down our streams first so the session.signOut() doesn't
+        // race with our reconnect loops.
+        await stopEventStream()
+        cancelSeek()
+        // Wipe locally — the bearer is dead so the server-side revoke
+        // would 401 anyway; signOut() best-efforts that.
+        await session.signOut()
     }
 
     func stopEventStream() async {
@@ -133,7 +159,7 @@ final class LichessLobbyController {
                 aiLevel: level
             )
             let initialClock = Self.initialClock(for: timeControl)
-            let stream = LichessGameStream(gameID: game.id, token: token)
+            let stream = makeGameStream(gameID: game.id, token: token)
             let matchSession = LichessMatchSession(
                 gameID: game.id,
                 humanColor: humanColor,
@@ -442,6 +468,22 @@ final class LichessLobbyController {
             rules: rules
         )
         onGameSessionReady?(matchSession)
+    }
+
+    /// Builds a per-game stream and wires the auth-failure handler. Used
+    /// by all three game-creation paths (AI challenge, gameStart from
+    /// event-stream, resumeActiveGame).
+    private func makeGameStream(gameID: String, token: String) -> LichessGameStream {
+        let stream = LichessGameStream(gameID: gameID, token: token)
+        Task { [weak self] in
+            // Inner closure also captures `self` weakly so the handler
+            // closure (stored on the actor and invoked from arbitrary
+            // concurrent contexts) doesn't outlive the controller.
+            await stream.setAuthFailureHandler { [weak self] in
+                await self?.handleAuthFailure()
+            }
+        }
+        return stream
     }
 
     private static func label(for spec: LichessTimeControlSpec) -> String {

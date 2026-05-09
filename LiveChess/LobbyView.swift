@@ -99,6 +99,16 @@ struct LobbyView: View {
         .task {
             await appModel.lichess.bootstrap()
             ensureLichessLobby()
+            // Cheap belt-and-braces refresh while the lobby is visible.
+            // Catches missed event-stream gaps that the in-stream
+            // reconnect callback can't reach (e.g. brief drops where
+            // the connection survived but events were quietly throttled).
+            // 30 s is well below Lichess' generic rate limit and fits
+            // comfortably under the user's typical lobby dwell time.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                await lichessLobby?.refreshActiveGames()
+            }
         }
         .onChange(of: appModel.lichess.isSignedIn) { _, _ in
             ensureLichessLobby()

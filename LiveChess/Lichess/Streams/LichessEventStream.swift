@@ -24,6 +24,19 @@ actor LichessEventStream {
     /// `start()` has been called and the connection is live.
     nonisolated let events: AsyncStream<LichessEvent>
 
+    /// Fired when Lichess returns 401 — the bearer is no longer valid.
+    /// Owners (the lobby controller / session) should drop the token
+    /// and surface the sign-in CTA. Loop exits after firing; no
+    /// further reconnect attempts.
+    var onAuthFailure: (@Sendable () async -> Void)?
+
+    /// Fired after a successful re-connect (i.e. the second-or-later
+    /// time the loop opens an HTTP connection). Owners use this to
+    /// re-fetch state that the event stream doesn't replay across the
+    /// gap (e.g. `/api/account/playing` for games that started while
+    /// we were offline).
+    var onReconnect: (@Sendable () async -> Void)?
+
     private let continuation: AsyncStream<LichessEvent>.Continuation
     private var token: String
     private let urlSession: URLSession
@@ -65,6 +78,17 @@ actor LichessEventStream {
         self.token = token
     }
 
+    /// Setter for the reconnect callback. Must go through a method
+    /// because `var` properties on an actor can't be assigned from
+    /// outside without hopping through one.
+    func setReconnectHandler(_ handler: @escaping @Sendable () async -> Void) {
+        self.onReconnect = handler
+    }
+
+    func setAuthFailureHandler(_ handler: @escaping @Sendable () async -> Void) {
+        self.onAuthFailure = handler
+    }
+
     deinit {
         loop?.cancel()
         continuation.finish()
@@ -74,21 +98,38 @@ actor LichessEventStream {
 
     private func runReconnectLoop() async {
         var backoffSeconds: UInt64 = 1
+        var hasConnectedBefore = false
         while !Task.isCancelled {
             do {
                 try await connectAndPump()
                 // Clean EOF (server closed) — reset backoff and reconnect.
+                // After the FIRST successful pump-then-disconnect we
+                // count subsequent connects as "reconnects" so owners
+                // can re-fetch missed state on the next iteration.
+                hasConnectedBefore = true
                 backoffSeconds = 1
             } catch is CancellationError {
                 return
+            } catch LichessError.tokenExpired {
+                // Bearer is dead — no point retrying. Surface upward
+                // and exit; the session layer will wipe the keychain
+                // and prompt re-auth.
+                await onAuthFailure?()
+                return
             } catch {
-                // Network failure / server error / decode breakage on the
-                // wire. Exponential backoff capped at 30 s. We don't
-                // surface the error onto the events stream — the UI
-                // observes connection state separately and the events
-                // stream only carries successfully-decoded events.
+                // Network failure / 5xx / decode breakage on the wire.
+                // Exponential backoff capped at 30 s. We don't surface
+                // transient errors on the events stream — the UI
+                // observes connection state separately.
                 try? await Task.sleep(nanoseconds: backoffSeconds * 1_000_000_000)
                 backoffSeconds = min(backoffSeconds * 2, 30)
+            }
+            // If we get here on the second-or-later iteration, the next
+            // connectAndPump call will be a *re*-connect from the
+            // owner's perspective. Notify so they can re-fetch state
+            // that wasn't replayed across the gap (e.g. account/playing).
+            if hasConnectedBefore && !Task.isCancelled {
+                await onReconnect?()
             }
         }
     }
