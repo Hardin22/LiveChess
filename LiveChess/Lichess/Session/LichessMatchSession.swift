@@ -232,8 +232,15 @@ final class LichessMatchSession: MatchSession {
     /// Declines an outstanding draw offer from the opponent. No-op (or
     /// 400) if there's no offer to decline; UI gates the affordance on
     /// `pendingDrawOfferFromOpponent == true`.
+    ///
+    /// Optimistically clears the local flag so the banner disappears
+    /// the moment the user taps. If the opponent re-offers (Stockfish
+    /// often does after a single move), the next `gameState` will set
+    /// the flag again and the banner reappears — which is the
+    /// truthful representation of a fresh offer.
     func declineDraw() async {
         guard result == nil else { return }
+        pendingDrawOfferFromOpponent = false
         do {
             try await api.draw(gameID: gameID, accept: false)
         } catch {
@@ -257,6 +264,7 @@ final class LichessMatchSession: MatchSession {
 
     func declineTakeback() async {
         guard result == nil else { return }
+        pendingTakebackOfferFromOpponent = false  // optimistic local clear; same shape as declineDraw
         do {
             try await api.takeback(gameID: gameID, accept: false)
         } catch {
@@ -421,6 +429,7 @@ final class LichessMatchSession: MatchSession {
             result = nil
             return
         }
+        let wasFinishedAlready = result != nil
         result = Result(
             status: state.status,
             winner: state.winner,
@@ -429,6 +438,19 @@ final class LichessMatchSession: MatchSession {
             // sets it via `applyRatingDiff(_:)` below when that event lands.
             ratingDiff: result?.ratingDiff
         )
+
+        // First time we're seeing a terminal status: tear down the game
+        // stream. Otherwise the actor's reconnect loop opens a fresh
+        // HTTP connection (the server happily serves the finished
+        // game's `gameFull` again), the session calls
+        // `matchResetHandler` → renderer wipes + repopulates from
+        // initialFen, then re-applies every move through
+        // `moveAppliedHandler` — and the renderer animates every piece
+        // back into position. The loop continues every reconnect tick
+        // (~1 s) → board appears to shuffle endlessly.
+        if !wasFinishedAlready {
+            Task { [stream] in await stream.stop() }
+        }
     }
 
     private func applyOfferFlags(from state: LichessGameState) {
