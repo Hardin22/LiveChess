@@ -42,28 +42,36 @@ enum PieceMeshFactory {
 
     // MARK: - USDZ scaling
 
-    /// Clones the template, uniformly scales it so its measured Y-extent equals
-    /// the target height for `piece.kind`, and offsets it vertically so the
-    /// model sits with its base on the local `y = 0` plane. The scaled entity
-    /// is wrapped in a fresh parent so the caller can position the wrapper
-    /// freely without the model's own pivot interfering.
+    /// Clones the template, uniformly scales so its measured Y-extent equals
+    /// the target height for `piece.kind`, and re-centres it inside a wrapper
+    /// `Entity` so that:
+    ///
+    /// - the model's geometric centre in X and Z lands at the wrapper origin
+    ///   (regardless of where the USDZ author placed the model's pivot —
+    ///   different Blender exports often have wildly different intrinsic
+    ///   pivots, which was making major pieces drift off their squares),
+    /// - the model's base sits on the wrapper's `y = 0` plane.
+    ///
+    /// Callers position the *wrapper* at the centre of the destination square;
+    /// the visual centre of the piece then lines up exactly, every time.
     private static func cloneAndNormalize(_ template: Entity, for piece: Piece) -> Entity {
         let model = template.clone(recursive: true)
-        let bounds = model.visualBounds(relativeTo: nil)
+        let bounds = model.visualBounds(recursive: true, relativeTo: nil)
+
         let measuredHeight = bounds.extents.y
         let target = SceneMetrics.pieceHeight(for: piece.kind)
-
-        let scale: Float
-        if measuredHeight > 0 {
-            scale = target / measuredHeight
-        } else {
-            scale = 1.0
-        }
+        let scale: Float = measuredHeight > 0 ? target / measuredHeight : 1.0
         model.scale = SIMD3<Float>(repeating: scale)
-        // After scaling, the model's local y range is [bounds.min.y * scale,
-        // bounds.max.y * scale]. Lift it so min.y maps to 0.
-        let scaledMinY = bounds.min.y * scale
-        model.position = SIMD3<Float>(0, -scaledMinY, 0)
+
+        // Counter-translate by the scaled bounds so the model's geometric
+        // centre (X, Z) and base (min Y) end up at the wrapper origin and
+        // y = 0 respectively. Without this, an off-centre USDZ pivot
+        // shifts the rendered piece visibly off its square.
+        model.position = SIMD3<Float>(
+            -bounds.center.x * scale,
+            -bounds.min.y    * scale,
+            -bounds.center.z * scale
+        )
 
         let wrapper = Entity()
         wrapper.addChild(model)

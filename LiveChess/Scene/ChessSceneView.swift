@@ -82,9 +82,10 @@ struct ChessSceneView: View {
         .gesture(boardPlacementDrag)
     }
 
-    /// Drag the board frame to reposition the entire scene horizontally.
-    /// Y is intentionally clamped so the user can't drop the board into
-    /// the floor or push it through the ceiling.
+    /// Drag the board frame to reposition the entire scene in 3D — including
+    /// vertically, so the user can lift or lower the board to a comfortable
+    /// height (especially needed in the simulator, where eye height defaults
+    /// to ~1.6 m and a fixed 0.78 m table feels too low).
     private var boardPlacementDrag: some Gesture {
         DragGesture()
             .targetedToAnyEntity()
@@ -104,7 +105,7 @@ struct ChessSceneView: View {
                 guard let origin = dragOriginPosition else { return }
                 root.position = SIMD3<Float>(
                     origin.x + Float(delta.x),
-                    origin.y,                        // keep at table height
+                    origin.y + Float(delta.y),
                     origin.z + Float(delta.z)
                 )
             }
