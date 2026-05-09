@@ -56,7 +56,11 @@ final class LichessAuthService: NSObject, ASWebAuthenticationPresentationContext
     private let scope: String
     private let urlSession: URLSession
 
-    init(
+    /// `nonisolated` so this can be constructed from any context (e.g. as
+    /// the default value for a property on another `@MainActor` class).
+    /// The body only stores plain values; nothing inside touches actor
+    /// state or main-thread-only APIs.
+    nonisolated init(
         clientID: String = LichessAuthService.defaultClientID,
         redirectURI: String = LichessAuthService.defaultRedirectURI,
         scope: String = LichessAuthService.defaultScope,

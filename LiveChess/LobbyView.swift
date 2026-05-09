@@ -10,25 +10,155 @@ struct LobbyView: View {
     var body: some View {
         @Bindable var appModel = appModel
 
-        VStack(spacing: 32) {
-            header
+        ScrollView {
+            VStack(spacing: 28) {
+                header
 
-            VStack(alignment: .leading, spacing: 24) {
-                colorPicker(for: $appModel.matchSettings.humanColor)
-                skillSlider(for: $appModel.matchSettings.aiSettings.skillLevel)
-                thinkingTimeSlider(for: $appModel.matchSettings.aiSettings.thinkingTime)
+                lichessCard
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Partita locale")
+                        .font(.headline)
+                    Text("Stockfish 17 sul tuo Apple Vision Pro.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+
+                VStack(alignment: .leading, spacing: 24) {
+                    colorPicker(for: $appModel.matchSettings.humanColor)
+                    skillSlider(for: $appModel.matchSettings.aiSettings.skillLevel)
+                    thinkingTimeSlider(for: $appModel.matchSettings.aiSettings.thinkingTime)
+                }
+                .padding(.horizontal, 8)
+
+                ToggleImmersiveSpaceButton()
+                    .controlSize(.extraLarge)
+                    .buttonStyle(.borderedProminent)
             }
+            .padding(.horizontal, 32)
+            .padding(.top, 32)
+            .padding(.bottom, 48)
+            .frame(maxWidth: 540, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            await appModel.lichess.bootstrap()
+        }
+    }
+
+    // MARK: - Lichess card
+
+    @ViewBuilder
+    private var lichessCard: some View {
+        switch appModel.lichess.status {
+        case .unknown:
+            HStack(spacing: 12) {
+                ProgressView().controlSize(.small)
+                Text("Verifica sessione Lichess…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
 
-            ToggleImmersiveSpaceButton()
-                .controlSize(.extraLarge)
-                .buttonStyle(.borderedProminent)
+        case .signedOut:
+            Button {
+                Task { await appModel.lichess.signIn() }
+            } label: {
+                Label("Accedi con Lichess", systemImage: "person.crop.circle.badge.checkmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .controlSize(.large)
+            .buttonStyle(.bordered)
 
-            Spacer()
+        case .signingIn:
+            HStack(spacing: 12) {
+                ProgressView().controlSize(.small)
+                Text("Accesso a Lichess in corso…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+
+        case .signingOut:
+            HStack(spacing: 12) {
+                ProgressView().controlSize(.small)
+                Text("Logout in corso…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+
+        case .signedIn(let account):
+            profileCard(account: account)
+
+        case .error(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                Button("Riprova") {
+                    Task { await appModel.lichess.bootstrap() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 32)
-        .frame(maxWidth: 540, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func profileCard(account: LichessAccount) -> some View {
+        let initials = String(account.username.prefix(2)).uppercased()
+        let rapid = account.rating(forPerfKey: "rapid")
+        let blitz = account.rating(forPerfKey: "blitz")
+        return HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(.tint.opacity(0.18))
+                    .frame(width: 44, height: 44)
+                Text(initials)
+                    .font(.headline)
+                    .foregroundStyle(.tint)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    if let title = account.title {
+                        Text(title)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.orange)
+                    }
+                    Text(account.username)
+                        .font(.headline)
+                }
+                HStack(spacing: 12) {
+                    if let rapid {
+                        Text("Rapid \(rapid)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if let blitz {
+                        Text("Blitz \(blitz)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer(minLength: 8)
+            Button("Logout") {
+                Task { await appModel.lichess.signOut() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     // MARK: - Sections
