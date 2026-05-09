@@ -284,6 +284,43 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         return entity
     }
 
+    // MARK: - Hover suppression during drag
+
+    /// Entities whose `HoverEffectComponent` was temporarily removed by
+    /// `suppressHover(except:)` so they can be restored on `restoreHover()`.
+    private var hoverSuppressedEntities: [Entity] = []
+
+    /// Removes `HoverEffectComponent` from every entity in the scene tree
+    /// EXCEPT `keep`. Used while a drag is in progress so the gaze passing
+    /// over other pieces / the wooden frame doesn't make them light up
+    /// distractingly.
+    func suppressHover(except keep: Entity?) {
+        hoverSuppressedEntities.removeAll(keepingCapacity: true)
+        enumerateAllEntities(in: rootEntity) { entity in
+            guard entity !== keep else { return }
+            if entity.components[HoverEffectComponent.self] != nil {
+                entity.components.remove(HoverEffectComponent.self)
+                hoverSuppressedEntities.append(entity)
+            }
+        }
+    }
+
+    /// Re-adds the default `HoverEffectComponent` to every entity that
+    /// `suppressHover(except:)` stripped.
+    func restoreHover() {
+        for entity in hoverSuppressedEntities {
+            entity.components.set(HoverEffectComponent())
+        }
+        hoverSuppressedEntities.removeAll(keepingCapacity: true)
+    }
+
+    private func enumerateAllEntities(in entity: Entity, _ body: (Entity) -> Void) {
+        body(entity)
+        for child in entity.children {
+            enumerateAllEntities(in: child, body)
+        }
+    }
+
     // MARK: - Reset
 
     /// Clears every piece entity and any active marker. Used when the

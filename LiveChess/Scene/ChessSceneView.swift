@@ -20,6 +20,10 @@ struct ChessSceneView: View {
 
     @State private var coordinator: MatchCoordinator?
     @State private var renderer: ChessRenderer?
+    /// Anchored to the user's head, used to raycast from the eye through the
+    /// gaze onto the board plane during piece drags. This is the only
+    /// reliable way to map gaze ↔ board square from oblique view angles.
+    @State private var headAnchor: AnchorEntity?
 
     @State private var dragOriginPosition: SIMD3<Float>?      // board placement
     @State private var pieceDrag: PieceDragState?              // piece drag
@@ -91,6 +95,16 @@ struct ChessSceneView: View {
                 SceneMetrics.defaultTableDepth
             )
             content.add(renderer.rootEntity)
+
+            // Track the user's head pose so the drag handler can raycast
+            // from the eye through the gaze onto the board plane. Without
+            // this, `value.location3D` from a piece-targeted drag projects
+            // onto a plane perpendicular to the *initial* gaze, which
+            // squashes the Z component on oblique views and makes long
+            // moves (queen d1 → h5) physically unreachable.
+            let head = AnchorEntity(.head, trackingMode: .predicted)
+            content.add(head)
+            self.headAnchor = head
 
             // Anchor the floating HUD to the right of the board, slightly
             // above the table surface, tilted up so it faces the user.
@@ -213,8 +227,6 @@ struct ChessSceneView: View {
         // Only the side-to-move's human pieces are draggable; ignore the rest.
         if pieceDrag == nil {
             guard isHumanTurnAndOwnsPiece(comp, coordinator: coordinator) else { return }
-            // Cache legal destinations so onEnded doesn't have to recompute,
-            // and capture origin for the snap-back path.
             let legal = coordinator.legalMoves(from: comp.square)
             let destinations = Set(legal.map(\.to))
             pieceDrag = PieceDragState(
@@ -224,50 +236,43 @@ struct ChessSceneView: View {
                 legalDestinations: destinations
             )
             renderer.lift(value.entity)
-            // Show targeting affordance for every legal destination.
             renderer.showLegalMoveMarkers(Array(destinations))
+            // Stop hover highlighting any other entity for the duration
+            // of this drag — keeps the gaze "ghost" from making the king
+            // / a different piece / the frame light up while you move.
+            renderer.suppressHover(except: value.entity)
         }
 
         guard let drag = pieceDrag, drag.entity === value.entity,
               let parent = value.entity.parent else { return }
 
-        // Tabletop "look-and-slide" drag — the canonical pattern Apple uses
-        // in BotanistGame, ChartingPawns and the visionOS Solitaire sample.
-        // The piece's X-Z follows the **absolute** 3D location of the
-        // gesture (= the user's gaze on Vision Pro, the cursor in the
-        // simulator) projected onto the board plane. Y is pinned to a
-        // fixed lift height.
+        // Place the piece by **raycasting from the user's eye through the
+        // current gaze onto the board's horizontal plane**. This is the
+        // proper "look-and-slide" tabletop projection — independent of
+        // view angle, so a queen-side diagonal across the whole board
+        // works even from a steeply oblique perspective.
         //
-        // Why absolute and not delta: a delta-based drag accumulates the
-        // gesture's translation3D from the start point, which in the
-        // simulator saturates as the cursor approaches the edges of the
-        // screen — long diagonals (queen d1 → h5 from a low angle) become
-        // physically impossible because translation3D can't grow past
-        // what the cursor can travel. Tracking the absolute target each
-        // frame side-steps that: the piece moves to wherever you're
-        // currently looking on the board, no matter how far the gaze has
-        // travelled.
-        //
-        // X/Z are clamped slightly outside the playable area so the piece
-        // can still hover on the very edge squares (a/h files, ranks 1/8)
-        // even if the user's gaze drifts a bit past them.
-        let nowScene = value.convert(value.location3D, from: .local, to: .scene)
-        let nowLocal = parent.convert(
-            position: SIMD3<Float>(Float(nowScene.x), Float(nowScene.y), Float(nowScene.z)),
-            from: nil
-        )
-        let halfBoard = SceneMetrics.boardPlayableSide / 2
-        let edgeSlack: Float = 0.03   // 3 cm of overshoot tolerance
-        let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
-        value.entity.position = SIMD3<Float>(
-            max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, nowLocal.x)),
-            liftedY,
-            max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, nowLocal.z))
-        )
-        _ = drag    // keep `drag` referenced; legality look-up still uses it below
+        // SwiftUI's `value.location3D` on a piece-targeted drag projects
+        // onto a plane perpendicular to the *initial* gaze direction.
+        // From a tilted view that plane isn't horizontal, so movement
+        // along the table's depth axis gets compressed. By replacing it
+        // with our own gaze→table-plane intersection (using the user's
+        // head transform from `AnchorEntity(.head)`), we recover the
+        // intuitive "the piece sits where I'm looking" behaviour at any
+        // angle.
+        if let target = boardPlaneIntersection(for: value, parent: parent) {
+            let halfBoard = SceneMetrics.boardPlayableSide / 2
+            let edgeSlack: Float = 0.03
+            let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
+            value.entity.position = SIMD3<Float>(
+                max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, target.x)),
+                liftedY,
+                max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, target.z))
+            )
+        }
 
-        // Live "current target" highlight: the legal square (if any) that the
-        // piece's centre is currently above.
+        // Live "current target" highlight: the legal square (if any) that
+        // the piece's centre is currently above.
         let candidate = BoardSurface.square(forBoardLocalPosition: value.entity.position)
         if let candidate, drag.legalDestinations.contains(candidate) {
             renderer.setActiveMarker(candidate)
@@ -276,11 +281,47 @@ struct ChessSceneView: View {
         }
     }
 
+    /// Casts a ray from the user's head through the current gaze point
+    /// (`value.location3D` in scene space) and returns where it intersects
+    /// the board's surface plane, in `parent`-local coordinates. `nil` if
+    /// the head anchor isn't tracked yet, the ray points away from the
+    /// table, or the math degenerates (e.g. parallel ray).
+    private func boardPlaneIntersection(
+        for value: EntityTargetValue<DragGesture.Value>,
+        parent: Entity
+    ) -> SIMD3<Float>? {
+        guard let head = headAnchor else { return nil }
+
+        let headWorld = head.position(relativeTo: nil)
+        let gazeScene = value.convert(value.location3D, from: .local, to: .scene)
+        let gazeWorld = SIMD3<Float>(
+            Float(gazeScene.x), Float(gazeScene.y), Float(gazeScene.z)
+        )
+
+        var rayDir = gazeWorld - headWorld
+        let length = simd_length(rayDir)
+        guard length > 1e-4 else { return nil }
+        rayDir /= length
+
+        // Solve for t in (head + t * dir).y == boardPlaneY (world).
+        let boardPlaneY = parent.position(relativeTo: nil).y
+            + SceneMetrics.squareThickness
+            + ChessRenderer.liftHeight
+        // Need the ray to actually point toward (downward from above) the table.
+        guard abs(rayDir.y) > 1e-4 else { return nil }
+        let t = (boardPlaneY - headWorld.y) / rayDir.y
+        guard t > 0 else { return nil }
+
+        let hitWorld = headWorld + rayDir * t
+        return parent.convert(position: hitWorld, from: nil)
+    }
+
     private func onPieceDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
         guard let coordinator, let renderer,
               let drag = pieceDrag,
               drag.entity === value.entity else {
             renderer?.clearLegalMoveMarkers()
+            renderer?.restoreHover()
             pieceDrag = nil
             return
         }
@@ -289,8 +330,6 @@ struct ChessSceneView: View {
         let candidate = BoardSurface.square(forBoardLocalPosition: dropLocal)
 
         if let candidate, drag.legalDestinations.contains(candidate) {
-            // Submit. animateMove(...) will snap the piece to the square's
-            // exact centre via the moveAppliedHandler callback.
             let move = legalMove(from: drag.originSquare, to: candidate, coordinator: coordinator)
             if let move {
                 coordinator.submitHumanMove(move)
@@ -301,6 +340,7 @@ struct ChessSceneView: View {
             renderer.snapBack(value.entity)
         }
         renderer.clearLegalMoveMarkers()
+        renderer.restoreHover()
         pieceDrag = nil
     }
 

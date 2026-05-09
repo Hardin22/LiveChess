@@ -87,7 +87,11 @@ enum BoardSurface {
 
         for rank in 0..<8 {
             for file in 0..<8 {
-                let isLight = (file + rank).isMultiple(of: 2)
+                // Standard chess colouring: a1 (file 0 + rank 0 = 0, even) is
+                // a DARK square; h1 (sum 7, odd) is LIGHT. So `isLight` flips
+                // on **odd** sums, not even — the previous formula had this
+                // backwards, which is why e1 was rendering light instead of dark.
+                let isLight = !(file + rank).isMultiple(of: 2)
                 let squareEntity = ModelEntity(
                     mesh: .generateBox(
                         size: [SceneMetrics.squareSize, SceneMetrics.squareThickness, SceneMetrics.squareSize],
