@@ -30,6 +30,13 @@ final class MatchCoordinator {
     private(set) var isAIThinking: Bool = false
     private(set) var lastError: Error?
 
+    /// Called on the main actor every time *any* move (human or AI) is
+    /// successfully applied to the match. Set by the scene host so it can
+    /// animate the piece to its new square. Not part of `@Observable`'s
+    /// tracked state — it's a plain stored callback.
+    @ObservationIgnored
+    var moveAppliedHandler: (@MainActor (Move) -> Void)?
+
     /// Exposed so tests can `await coordinator.aiTask?.value` deterministically.
     /// In production code you should not need to touch this directly.
     private(set) var aiTask: Task<Void, Never>?
@@ -86,6 +93,13 @@ final class MatchCoordinator {
         await aiTask?.value
     }
 
+    /// Legal moves for the piece on `square` in the current position. Used by
+    /// the scene's drag handler to validate drops without exposing the rules
+    /// engine directly.
+    func legalMoves(from square: Square) -> [Move] {
+        rules.legalMoves(from: square, in: match.currentPosition)
+    }
+
     // MARK: - Private
 
     private func performMove(_ move: Move) {
@@ -94,6 +108,7 @@ final class MatchCoordinator {
             let allPositions = match.positions + [resulting]
             let status = rules.status(of: resulting, history: allPositions)
             match.apply(move: move, resulting: resulting, status: status)
+            moveAppliedHandler?(move)
         } catch {
             lastError = error
         }

@@ -103,4 +103,18 @@ enum BoardSurface {
         let z = +half - size * (Float(square.rank) + 0.5)
         return [x, 0, z]
     }
+
+    /// Inverse of `position(for:)`: given a point in the board's local frame,
+    /// returns the square containing it (or `nil` if the point lies outside
+    /// the playable 8×8 area). Used by the drop-detection on piece drags.
+    nonisolated static func square(forBoardLocalPosition position: SIMD3<Float>) -> Square? {
+        let half = SceneMetrics.boardPlayableSide / 2
+        let size = SceneMetrics.squareSize
+        // x = -half + size * (file + 0.5)  ⇒  file = (x + half) / size - 0.5
+        // z =  half - size * (rank + 0.5)  ⇒  rank = (half - z) / size - 0.5
+        let file = Int(((position.x + half) / size).rounded(.down))
+        let rank = Int(((half - position.z) / size).rounded(.down))
+        guard (0..<8).contains(file), (0..<8).contains(rank) else { return nil }
+        return Square(file: file, rank: rank)
+    }
 }

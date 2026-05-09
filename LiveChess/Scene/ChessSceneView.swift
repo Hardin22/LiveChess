@@ -3,50 +3,58 @@ import RealityKit
 import TabletopKit
 import Spatial
 
-/// SwiftUI host for the chess `TabletopGame`.
+/// SwiftUI host for the chess scene.
 ///
-/// Builds the table setup with two seats and 32 pieces in the standard
-/// starting position, instantiates the `TabletopGame`, wires a
-/// `ChessRenderer`, and parents the resulting scene root under a "drag
-/// pad" so the user can pinch+drag the board frame to position it on
-/// any horizontal surface in their room.
+/// Builds the table, instantiates a `MatchCoordinator` from
+/// `AppModel.matchSettings`, and routes pinch-and-drag gestures to either:
+///   * the **board frame** → drag the entire scene root in 3D (placement),
+///   * **a piece** → drag-and-drop with snap-to-square + rules validation.
 ///
-/// **Placement model (Phase 6):** the scene root is placed at a default
-/// world position (~78 cm above the floor, 55 cm in front of the user)
-/// and the user can drag it horizontally by grabbing the wooden frame.
-/// We do *not* yet auto-anchor to a detected horizontal plane via
-/// `AnchorEntity(.plane(...))`; that's the next step (Phase 7+) once the
-/// placement gesture is validated.
+/// The opponent is currently `RandomMoveAIEngine` so we can validate the full
+/// loop (drag → rules → engine → animation) without depending on Stockfish's
+/// NNUE network. Swap to `StockfishEngine()` in `makeAI()` later.
 @MainActor
 struct ChessSceneView: View {
 
-    /// Captured scene-space position of the scene root at the start of a
-    /// placement drag. Reset to nil between drags so each new drag re-anchors.
-    @State private var dragOriginPosition: SIMD3<Float>?
+    @Environment(AppModel.self) private var appModel
+
+    @State private var coordinator: MatchCoordinator?
+    @State private var renderer: ChessRenderer?
+
+    @State private var dragOriginPosition: SIMD3<Float>?      // board placement
+    @State private var pieceDrag: PieceDragState?              // piece drag
 
     var body: some View {
         RealityView { content in
-            // Pre-load the 12 USDZ piece templates so the per-piece path can
-            // clone them synchronously; falls back to procedural placeholders
-            // for any model that isn't bundled.
             await PieceMeshFactory.preload()
+
+            let rules = ChessKitRulesEngine()
+            let ai = makeAI(rules: rules)
+            let humanSide = appModel.matchSettings.resolvedHumanSide()
+
+            let whiteController: MatchCoordinator.SideController =
+                humanSide == .white ? .human : .ai(appModel.matchSettings.aiSettings)
+            let blackController: MatchCoordinator.SideController =
+                humanSide == .black ? .human : .ai(appModel.matchSettings.aiSettings)
+
+            let match = Match()
+            let coord = MatchCoordinator(
+                match: match,
+                rules: rules,
+                ai: ai,
+                white: whiteController,
+                black: blackController
+            )
 
             let renderer = ChessRenderer()
             let table = ChessTable(id: EquipmentIdentifier(1))
 
             var setup = TableSetup(tabletop: table)
-
-            // Seats first — TabletopKit asserts at least one seat exists in
-            // the setup before TabletopGame init can succeed.
             let whiteSeat = ChessSeat(id: TableSeatIdentifier(1), side: .white)
             let blackSeat = ChessSeat(id: TableSeatIdentifier(2), side: .black)
             setup.add(seat: whiteSeat)
             setup.add(seat: blackSeat)
 
-            // 32 pieces in the starting position. Equipment is added to
-            // TabletopKit (so future actions/interactions know about them)
-            // AND to the renderer (which positions the visual at the right
-            // square in root-local coordinates).
             var nextID = 100
             for square in Square.all {
                 guard let piece = Position.standardStart[square] else { continue }
@@ -62,11 +70,15 @@ struct ChessSceneView: View {
             }
 
             let game = TabletopGame(tableSetup: setup)
-            game.claimSeat(whiteSeat)
+            game.claimSeat(humanSide == .white ? whiteSeat : blackSeat)
             game.addRenderDelegate(renderer)
 
-            // Position the scene root manually (TabletopKit's rootPose path
-            // is intercepted by ChessRenderer.updateRootPose as a no-op).
+            // Route every applied move (human or AI) through the renderer so
+            // the visual stays in sync with the authoritative `Match`.
+            coord.moveAppliedHandler = { [weak renderer] move in
+                renderer?.animateMove(move)
+            }
+
             renderer.rootEntity.position = SIMD3<Float>(
                 0,
                 SceneMetrics.defaultTableHeight,
@@ -74,49 +86,166 @@ struct ChessSceneView: View {
             )
             content.add(renderer.rootEntity)
 
-            // Tick the game from the render-loop update event.
             _ = content.subscribe(to: SceneEvents.Update.self) { @MainActor event in
                 game.update(deltaTime: event.deltaTime)
             }
+
+            // Stash for the gesture handlers.
+            self.coordinator = coord
+            self.renderer = renderer
+
+            coord.start()
         }
-        .gesture(boardPlacementDrag)
+        .gesture(combinedDrag)
     }
 
-    /// Drag the board frame to reposition the entire scene in 3D — including
-    /// vertically, so the user can lift or lower the board to a comfortable
-    /// height (especially needed in the simulator, where eye height defaults
-    /// to ~1.6 m and a fixed 0.78 m table feels too low).
-    private var boardPlacementDrag: some Gesture {
-        DragGesture()
+    // MARK: - AI factory (single line to swap to Stockfish)
+
+    private func makeAI(rules: any RulesEngine) -> any ChessAIEngine {
+        // TODO: when NNUE is bundled, return `StockfishEngine()`.
+        RandomMoveAIEngine(rules: rules)
+    }
+
+    // MARK: - Combined drag
+
+    /// One physical gesture, dispatched to either piece or board placement
+    /// based on which entity SwiftUI hit-tested under the user's pinch.
+    private var combinedDrag: some Gesture {
+        DragGesture(minimumDistance: 0)
             .targetedToAnyEntity()
             .onChanged { value in
-                guard value.entity.name == BoardSurface.frameName,
-                      let root = sceneRoot(containing: value.entity) else { return }
-
-                // Convert gesture endpoints from gesture-local into scene
-                // (world) space and subtract for a true world-space delta.
-                let startScenePoint = value.convert(value.startLocation3D, from: .local, to: .scene)
-                let nowScenePoint = value.convert(value.location3D, from: .local, to: .scene)
-                let delta = nowScenePoint - startScenePoint
-
-                if dragOriginPosition == nil {
-                    dragOriginPosition = root.position
+                if value.entity.components[ChessPieceComponent.self] != nil {
+                    onPieceDragChanged(value)
+                } else if value.entity.name == BoardSurface.frameName {
+                    onBoardPlacementChanged(value)
                 }
-                guard let origin = dragOriginPosition else { return }
-                root.position = SIMD3<Float>(
-                    origin.x + Float(delta.x),
-                    origin.y + Float(delta.y),
-                    origin.z + Float(delta.z)
-                )
             }
-            .onEnded { _ in
-                dragOriginPosition = nil
+            .onEnded { value in
+                if value.entity.components[ChessPieceComponent.self] != nil {
+                    onPieceDragEnded(value)
+                } else if value.entity.name == BoardSurface.frameName {
+                    onBoardPlacementEnded(value)
+                }
             }
     }
 
-    /// Walk up the scene graph from `entity` until we hit the renderer's root
-    /// (named `ChessSceneRoot`). The drag gesture is targeted at the frame,
-    /// but it's the whole root we want to translate.
+    // MARK: - Piece drag
+
+    private func onPieceDragChanged(_ value: EntityTargetValue<DragGesture.Value>) {
+        guard let coordinator, let renderer,
+              let comp = value.entity.components[ChessPieceComponent.self]
+        else { return }
+
+        // Only the side-to-move's human pieces are draggable; ignore the rest.
+        if pieceDrag == nil {
+            guard isHumanTurnAndOwnsPiece(comp, coordinator: coordinator) else { return }
+            // Cache legal destinations so onEnded doesn't have to recompute,
+            // and capture origin for the snap-back path.
+            let legal = coordinator.legalMoves(from: comp.square)
+            pieceDrag = PieceDragState(
+                entity: value.entity,
+                originSquare: comp.square,
+                originLocalPosition: value.entity.position,
+                legalDestinations: Set(legal.map(\.to))
+            )
+            renderer.lift(value.entity)
+        }
+
+        guard pieceDrag?.entity === value.entity else { return }
+
+        // Translate the piece in root-local space by the world-space delta.
+        let startWorld = value.convert(value.startLocation3D, from: .local, to: .scene)
+        let nowWorld = value.convert(value.location3D, from: .local, to: .scene)
+        let deltaWorld = nowWorld - startWorld
+        guard let parent = value.entity.parent else { return }
+        // Convert the delta into root-local. parent is rootEntity for pieces.
+        let originWorld = parent.convert(position: SIMD3<Float>(0, 0, 0), to: nil)
+        let endWorldLocal = parent.convert(
+            position: SIMD3<Float>(Float(deltaWorld.x), Float(deltaWorld.y), Float(deltaWorld.z))
+                + originWorld,
+            from: nil
+        )
+        let origin = pieceDrag?.originLocalPosition ?? value.entity.position
+        value.entity.position = SIMD3<Float>(
+            origin.x + endWorldLocal.x,
+            max(SceneMetrics.squareThickness + ChessRenderer.liftHeight, origin.y + endWorldLocal.y),
+            origin.z + endWorldLocal.z
+        )
+    }
+
+    private func onPieceDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
+        guard let coordinator, let renderer,
+              let drag = pieceDrag,
+              drag.entity === value.entity else {
+            pieceDrag = nil
+            return
+        }
+
+        let dropLocal = value.entity.position
+        let candidate = BoardSurface.square(forBoardLocalPosition: dropLocal)
+
+        if let candidate, drag.legalDestinations.contains(candidate) {
+            // Submit. animateMove(...) will snap the piece to the square's
+            // exact centre via the moveAppliedHandler callback.
+            let move = legalMove(from: drag.originSquare, to: candidate, coordinator: coordinator)
+            if let move {
+                coordinator.submitHumanMove(move)
+            } else {
+                renderer.snapBack(value.entity)
+            }
+        } else {
+            renderer.snapBack(value.entity)
+        }
+        pieceDrag = nil
+    }
+
+    private func isHumanTurnAndOwnsPiece(
+        _ comp: ChessPieceComponent,
+        coordinator: MatchCoordinator
+    ) -> Bool {
+        guard !coordinator.match.status.isGameOver else { return false }
+        guard !coordinator.isAIThinking else { return false }
+        return coordinator.match.currentPosition.sideToMove == comp.color
+    }
+
+    /// Picks the canonical legal `Move` matching `from → to`. Prefers a
+    /// promotion-to-queen variant when present (auto-promotion in MVP).
+    private func legalMove(
+        from: Square,
+        to: Square,
+        coordinator: MatchCoordinator
+    ) -> Move? {
+        let candidates = coordinator.legalMoves(from: from).filter { $0.to == to }
+        if candidates.isEmpty { return nil }
+        if let promo = candidates.first(where: { $0.promotion == .queen }) {
+            return promo
+        }
+        return candidates.first
+    }
+
+    // MARK: - Board placement drag
+
+    private func onBoardPlacementChanged(_ value: EntityTargetValue<DragGesture.Value>) {
+        guard let root = sceneRoot(containing: value.entity) else { return }
+        let startScene = value.convert(value.startLocation3D, from: .local, to: .scene)
+        let nowScene = value.convert(value.location3D, from: .local, to: .scene)
+        let delta = nowScene - startScene
+
+        if dragOriginPosition == nil {
+            dragOriginPosition = root.position
+        }
+        guard let origin = dragOriginPosition else { return }
+        root.position = SIMD3<Float>(
+            origin.x + Float(delta.x),
+            origin.y + Float(delta.y),
+            origin.z + Float(delta.z)
+        )
+    }
+
+    private func onBoardPlacementEnded(_ value: EntityTargetValue<DragGesture.Value>) {
+        dragOriginPosition = nil
+    }
+
     private func sceneRoot(containing entity: Entity) -> Entity? {
         var node: Entity? = entity
         while let n = node {
@@ -125,4 +254,15 @@ struct ChessSceneView: View {
         }
         return nil
     }
+}
+
+// MARK: - Helpers
+
+/// Per-active-piece-drag state. Captured on the first onChanged tick so the
+/// next ticks have an origin to translate from and a legality whitelist.
+private struct PieceDragState {
+    let entity: Entity
+    let originSquare: Square
+    let originLocalPosition: SIMD3<Float>
+    let legalDestinations: Set<Square>
 }

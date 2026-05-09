@@ -19,8 +19,12 @@ enum PieceMeshFactory {
     /// Loads all 12 piece USDZ models into the cache. Must complete before
     /// `makeEntity(for:)` is called for full-fidelity output; missing models
     /// silently fall back to procedural placeholders.
+    ///
+    /// Also registers `ChessPieceComponent` with RealityKit on first call —
+    /// custom components must be registered before any Entity can carry one.
     static func preload() async {
         guard !preloadComplete else { return }
+        ChessPieceComponent.registerComponent()
         for kind in PieceKind.allCases {
             for color in [Side.white, Side.black] {
                 let name = filename(for: Piece(kind, color))
