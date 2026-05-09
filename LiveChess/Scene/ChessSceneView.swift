@@ -233,7 +233,8 @@ struct ChessSceneView: View {
                 entity: value.entity,
                 originSquare: comp.square,
                 originLocalPosition: value.entity.position,
-                legalDestinations: destinations
+                legalDestinations: destinations,
+                lastAcceptedLocalPosition: value.entity.position
             )
             renderer.lift(value.entity)
             renderer.showLegalMoveMarkers(Array(destinations))
@@ -261,15 +262,45 @@ struct ChessSceneView: View {
         // intuitive "the piece sits where I'm looking" behaviour at any
         // angle.
         if let raw = boardPlaneIntersection(for: value, parent: parent) {
-            let target = clampToOriginNeighbourhood(raw, originSquare: drag.originSquare)
+            // Two-stage plausibility check before we move the piece:
+            //
+            // 1. **Velocity guard** — drop any frame whose projected target
+            //    is more than 4 squares away from the previous accepted
+            //    position. visionOS gestures fire >= 60 Hz, so 4 squares
+            //    (240 mm) per tick is ~14 m/s of hand motion: well above
+            //    any plausible drag, but well below the half-board jump
+            //    that gaze sign-flip produces. When the projection
+            //    misbehaves we simply hold the piece at its last good spot
+            //    until it recovers; the user sees a brief stall instead of
+            //    a teleport across the board.
+            //
+            // 2. **Radius cap** — defence in depth. Cap distance from the
+            //    origin square at 1.5x the playable side (720 mm). The
+            //    longest legal queen move is the corner-to-corner diagonal
+            //    (sqrt(2)*7*60 mm ≈ 594 mm), so legal moves are unaffected;
+            //    only true projection runaways get pulled back.
+            let originPos = BoardSurface.position(for: drag.originSquare)
+            let dxOrigin = raw.x - originPos.x
+            let dzOrigin = raw.z - originPos.z
+            let distFromOrigin = (dxOrigin * dxOrigin + dzOrigin * dzOrigin).squareRoot()
+
+            let dxLast = raw.x - drag.lastAcceptedLocalPosition.x
+            let dzLast = raw.z - drag.lastAcceptedLocalPosition.z
+            let jumpFromLast = (dxLast * dxLast + dzLast * dzLast).squareRoot()
+
+            let maxJump: Float = SceneMetrics.squareSize * 4
+            let maxRadius: Float = SceneMetrics.boardPlayableSide * 1.5
+
+            guard jumpFromLast <= maxJump, distFromOrigin <= maxRadius else { return }
+
             let halfBoard = SceneMetrics.boardPlayableSide / 2
             let edgeSlack: Float = 0.03
             let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
-            value.entity.position = SIMD3<Float>(
-                max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, target.x)),
-                liftedY,
-                max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, target.z))
-            )
+            let xClamped = max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, raw.x))
+            let zClamped = max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, raw.z))
+            let newPos = SIMD3<Float>(xClamped, liftedY, zClamped)
+            value.entity.position = newPos
+            pieceDrag?.lastAcceptedLocalPosition = newPos
         }
 
         // Live "current target" highlight: the legal square (if any) that
@@ -346,34 +377,7 @@ struct ChessSceneView: View {
         return parent.convert(position: hitWorld, from: nil)
     }
 
-    /// Caps the requested target so the piece can never sit further than
-    /// ~85% of the board's playable side away from its origin square. The
-    /// gaze-follow fallback used by the simulator can produce sign-flipped
-    /// coordinates when the user's gaze rotates past the perpendicular
-    /// tracking plane — without this guard the piece teleports across to
-    /// the opposite corner of the board. The cap is comfortably larger
-    /// than any legal queen move (~7 squares ≈ 420 mm; the cap is ≈ 408 mm
-    /// from the origin square, so the queen still reaches every square it
-    /// could legally hit).
-    private func clampToOriginNeighbourhood(
-        _ candidate: SIMD3<Float>,
-        originSquare: Square
-    ) -> SIMD3<Float> {
-        let origin = BoardSurface.position(for: originSquare)
-        let dx = candidate.x - origin.x
-        let dz = candidate.z - origin.z
-        let dist = (dx * dx + dz * dz).squareRoot()
-        let maxRadius = SceneMetrics.boardPlayableSide * 0.85
-        guard dist > maxRadius else { return candidate }
-        let scale = maxRadius / dist
-        return SIMD3<Float>(
-            origin.x + dx * scale,
-            candidate.y,
-            origin.z + dz * scale
-        )
-    }
-
-    /// Simulator-friendly fallback: take whatever the gesture reports as its
+/// Simulator-friendly fallback: take whatever the gesture reports as its
     /// 3D location (gaze on its tracking plane), convert to scene then to
     /// root-local, and return X / Z. The Y component is ignored — the caller
     /// pins the piece's Y to the lift height. This is the same baseline that
@@ -481,9 +485,18 @@ struct ChessSceneView: View {
 
 /// Per-active-piece-drag state. Captured on the first onChanged tick so the
 /// next ticks have an origin to translate from and a legality whitelist.
+///
+/// `lastAcceptedLocalPosition` is the most recent in-board projected target
+/// we actually applied to the entity, used by the per-frame velocity guard
+/// in `onPieceDragChanged` to discard implausible jumps from the gaze
+/// projection (the simulator's `value.location3D` plane sometimes sign-flips
+/// when the gaze rotates past the perpendicular tracking plane, producing a
+/// target on the opposite side of the board — without this guard the piece
+/// teleports there).
 private struct PieceDragState {
     let entity: Entity
     let originSquare: Square
     let originLocalPosition: SIMD3<Float>
     let legalDestinations: Set<Square>
+    var lastAcceptedLocalPosition: SIMD3<Float>
 }
