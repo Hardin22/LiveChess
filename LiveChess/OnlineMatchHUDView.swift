@@ -20,6 +20,7 @@ struct OnlineMatchHUDView: View {
 
     @Bindable var session: LichessMatchSession
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @Environment(\.openURL) private var openURL
     @Environment(AppModel.self) private var appModel
 
     @State private var now: Date = .now
@@ -327,6 +328,19 @@ struct OnlineMatchHUDView: View {
                     .controlSize(.large)
                 }
             } else {
+                // Game over: deep-link to the Lichess analysis board
+                // (opens Safari on visionOS as a separate window) and
+                // a primary "back to lobby" button that disconnects the
+                // session and dismisses the immersive space.
+                Button {
+                    openURL(session.analysisURL)
+                } label: {
+                    Label("Analizza su Lichess", systemImage: "chart.line.uptrend.xyaxis")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+
                 Button {
                     Task { await leaveMatch() }
                 } label: {

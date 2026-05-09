@@ -683,6 +683,16 @@ struct LobbyView: View {
             if lichessLobby == nil {
                 let lobby = LichessLobbyController(session: appModel.lichess)
                 lobby.startEventStreamIfNeeded()
+                // Permanently wire gameFinish → fold ratingDiff into the
+                // currently-active online match, if the game id matches.
+                // This keeps the post-game banner accurate without a
+                // separate refetch from /api/account.
+                lobby.onGameFinishReceived = { @MainActor [weak appModel = appModel] info in
+                    guard let appModel else { return }
+                    guard case .online(let session) = appModel.activeSession else { return }
+                    guard session.gameID == info.gameId else { return }
+                    session.applyRatingDiff(info.ratingDiff)
+                }
                 lichessLobby = lobby
                 // Pull current active games so they appear immediately
                 // on cold start. The event stream will keep them in
