@@ -74,10 +74,18 @@ struct ChessSceneView: View {
             session.moveAppliedHandler = { [weak renderer] move in
                 renderer?.animateMove(move)
             }
-            session.matchResetHandler = { [weak renderer] in
-                guard let renderer else { return }
+            // matchResetHandler fires on local "Nuova partita" (resets to
+            // standard start), on Lichess `gameFull` (resets to game's
+            // initialFen, then the session re-applies moves through the
+            // moveAppliedHandler one by one), and on a Lichess optimistic-
+            // move rollback (reverts to the pre-move position). All three
+            // share the same shape: clear the board's piece entities and
+            // re-seed them from whatever position the session is now at.
+            session.matchResetHandler = { [weak renderer, weak session] in
+                guard let renderer, let session else { return }
                 renderer.clearAllPieces()
                 Self.repopulatePieces(
+                    from: session.match.currentPosition,
                     renderer: renderer,
                     tableID: table.id,
                     idStart: 200
@@ -204,17 +212,24 @@ struct ChessSceneView: View {
         }
     }
 
-    /// Re-creates only the renderer-side visuals at the standard starting
-    /// position. Used by `MatchSession.matchResetHandler` on local New Game
-    /// and on Lichess `gameFull` reconnect-replay.
+    /// Re-creates the renderer-side visuals from an arbitrary position.
+    /// Used by `MatchSession.matchResetHandler` for:
+    ///   * local "Nuova partita" (`position` = standard start)
+    ///   * Lichess `gameFull` reconnect (`position` = game's initial
+    ///     FEN — the session then re-applies moves through
+    ///     `moveAppliedHandler` so the renderer animates each one)
+    ///   * Lichess optimistic-move rollback (`position` = the pre-move
+    ///     snapshot — no animations needed; the board snaps back to the
+    ///     state before the rejected POST).
     private static func repopulatePieces(
+        from position: Position,
         renderer: ChessRenderer,
         tableID: EquipmentIdentifier,
         idStart: Int
     ) {
         var nextID = idStart
         for square in Square.all {
-            guard let piece = Position.standardStart[square] else { continue }
+            guard let piece = position[square] else { continue }
             let equipment = ChessPieceEquipment(
                 id: EquipmentIdentifier(nextID),
                 piece: piece,

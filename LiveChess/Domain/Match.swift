@@ -44,4 +44,20 @@ final class Match {
         moves = []
         self.status = status
     }
+
+    /// Rolls back the most recent move so the match is back to the state
+    /// it was in before that move was applied. `status` is restored to
+    /// the snapshot the caller captured *before* applying. No-op if
+    /// there are no moves yet.
+    ///
+    /// Used by `LichessMatchSession.submitMove(_:)` to undo an
+    /// optimistic apply when the server rejects the POST. Local
+    /// (`MatchCoordinator`) play never needs this since the rules
+    /// engine validates locally before applying.
+    func rollbackLastMove(restoringStatus status: GameStatus) {
+        guard !moves.isEmpty else { return }
+        moves.removeLast()
+        positions.removeLast()
+        self.status = status
+    }
 }

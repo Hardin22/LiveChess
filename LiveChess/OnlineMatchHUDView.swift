@@ -32,6 +32,12 @@ struct OnlineMatchHUDView: View {
             clockSection
             Divider()
             statusSection
+            if session.pendingDrawOfferFromOpponent {
+                drawOfferBanner
+            }
+            if session.pendingTakebackOfferFromOpponent {
+                takebackOfferBanner
+            }
             if !session.match.moves.isEmpty {
                 Divider()
                 moveLog
@@ -42,11 +48,98 @@ struct OnlineMatchHUDView: View {
             }
             Divider()
             controls
+            if let error = session.lastError {
+                errorBanner(error)
+            }
         }
         .padding(20)
         .frame(width: 320, alignment: .topLeading)
         .glassBackgroundEffect()
         .onReceive(timer) { now = $0 }
+    }
+
+    // MARK: - Offer banners
+
+    private var drawOfferBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "hand.raised.fill")
+                Text("\(opponentName) offre patta")
+            }
+            .font(.callout.weight(.medium))
+            .foregroundStyle(.orange)
+            HStack(spacing: 8) {
+                Button("Accetta") {
+                    Task { await session.offerOrAcceptDraw() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button("Rifiuta") {
+                    Task { await session.declineDraw() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var takebackOfferBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.uturn.backward")
+                Text("\(opponentName) chiede di annullare")
+            }
+            .font(.callout.weight(.medium))
+            .foregroundStyle(.orange)
+            HStack(spacing: 8) {
+                Button("Accetta") {
+                    Task { await session.offerOrAcceptTakeback() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button("Rifiuta") {
+                    Task { await session.declineTakeback() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func errorBanner(_ error: LichessError) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.circle.fill")
+            Text(humanReadable(error))
+                .font(.caption)
+            Spacer()
+            Button {
+                session.clearLastError()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(8)
+        .foregroundStyle(.red)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func humanReadable(_ error: LichessError) -> String {
+        switch error {
+        case .notAuthenticated: return "Sessione non autenticata."
+        case .tokenExpired: return "Sessione scaduta — torna in lobby per riaccedere."
+        case .scopeInsufficient: return "Permessi Lichess insufficienti."
+        case .rateLimited: return "Lichess sta limitando — riprova tra un minuto."
+        case .clientError: return "Mossa rifiutata da Lichess."
+        case .serverError: return "Lichess al momento non risponde."
+        case .decoding: return "Risposta non riconosciuta."
+        case .network: return "Connessione a Lichess persa."
+        case .invalidResponse: return "Risposta Lichess non valida."
+        }
     }
 
     // MARK: - Sections
@@ -177,14 +270,62 @@ struct OnlineMatchHUDView: View {
     private var controls: some View {
         VStack(spacing: 10) {
             if session.result == nil {
-                Button(role: .destructive) {
-                    Task { await session.submitResign() }
-                } label: {
-                    Label("Abbandona", systemImage: "flag.checkered")
-                        .frame(maxWidth: .infinity)
+                // Game is live → show the action set the server allows
+                // right now (abort only before the first move; takeback
+                // only when there's at least one move; claim-victory only
+                // when the opponent-gone countdown has elapsed).
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await session.offerOrAcceptDraw() }
+                    } label: {
+                        Label("Patta", systemImage: "hand.raised")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(session.pendingDrawOfferFromUs)
+
+                    Button {
+                        Task { await session.offerOrAcceptTakeback() }
+                    } label: {
+                        Label("Annulla", systemImage: "arrow.uturn.backward")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(session.match.moves.isEmpty || session.pendingTakebackOfferFromUs)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+
+                if session.canAbort {
+                    Button(role: .destructive) {
+                        Task { await session.abort() }
+                    } label: {
+                        Label("Annulla partita", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                } else {
+                    Button(role: .destructive) {
+                        Task { await session.resign() }
+                    } label: {
+                        Label("Abbandona", systemImage: "flag.checkered")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                }
+
+                if session.canClaimVictory {
+                    Button {
+                        Task { await session.claimVictory() }
+                    } label: {
+                        Label("Reclama vittoria", systemImage: "trophy.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                }
             } else {
                 Button {
                     Task { await leaveMatch() }
@@ -315,10 +456,3 @@ struct OnlineMatchHUDView: View {
     }
 }
 
-extension LichessMatchSession {
-    /// Convenience: phase-7 placeholder. The real implementation lands in
-    /// phase 8 with the rest of the Board API actions.
-    func submitResign() async {
-        // intentionally empty — wired in phase 8
-    }
-}

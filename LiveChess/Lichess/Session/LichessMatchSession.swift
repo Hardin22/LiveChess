@@ -139,10 +139,149 @@ final class LichessMatchSession: MatchSession {
         rules.legalMoves(from: square, in: match.currentPosition)
     }
 
-    /// Optimistic-apply + POST. Phase 8 wires the rollback path; for now
-    /// this is a no-op so the protocol conformance compiles.
+    /// Optimistic local apply + POST to the Board API. On a 4xx server
+    /// rejection (illegal, out-of-turn, game ended, …) the local apply
+    /// is rolled back and the renderer is asked to re-seed from the
+    /// pre-move snapshot via `matchResetHandler`. The next `gameState`
+    /// frame from the stream will confirm-or-correct in any case, so
+    /// even a swallowed error doesn't leave us out of sync for long.
     func submitMove(_ move: Move) async {
-        // Wired in phase 8.
+        guard isHumanTurn else { return }
+
+        // Optimistic local apply through the rules engine.
+        let preStatus = match.status
+        let nextPosition: Position
+        do {
+            nextPosition = try rules.apply(move, to: match.currentPosition)
+        } catch {
+            // Locally illegal — the drag handler shouldn't allow this; bail
+            // without reaching the network.
+            return
+        }
+        let nextStatus = rules.status(
+            of: nextPosition,
+            history: match.positions + [nextPosition]
+        )
+        match.apply(move: move, resulting: nextPosition, status: nextStatus)
+        moveAppliedHandler?(move)
+
+        // POST. Errors → rollback.
+        do {
+            try await api.makeMove(gameID: gameID, uci: move.uci)
+        } catch {
+            match.rollbackLastMove(restoringStatus: preStatus)
+            matchResetHandler?()
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Surface for the most recent action error (move, resign, draw, …)
+    /// so the HUD can show a transient toast / banner. Cleared by
+    /// `clearLastError()` once the user has dismissed the message.
+    private(set) var lastError: LichessError?
+
+    func clearLastError() {
+        lastError = nil
+    }
+
+    // MARK: - Board API actions
+
+    /// Resigns the game. Server marks status `resign` with the opponent
+    /// as `winner`; the resulting `gameState` frame populates `result`.
+    func resign() async {
+        guard result == nil else { return }
+        do {
+            try await api.resign(gameID: gameID)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Aborts the game — only valid before either side has made a move.
+    /// Lichess returns 400 otherwise; UI hides this affordance once
+    /// `match.moves.count > 0`.
+    func abort() async {
+        guard result == nil else { return }
+        do {
+            try await api.abort(gameID: gameID)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Offers a draw if the opponent isn't already offering one;
+    /// accepts otherwise (the API endpoint is the same `/draw/yes`
+    /// either way — Lichess decides based on the in-flight state).
+    /// `pendingDrawOfferFromUs` flips on after the next gameState
+    /// confirms.
+    func offerOrAcceptDraw() async {
+        guard result == nil else { return }
+        do {
+            try await api.draw(gameID: gameID, accept: true)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Declines an outstanding draw offer from the opponent. No-op (or
+    /// 400) if there's no offer to decline; UI gates the affordance on
+    /// `pendingDrawOfferFromOpponent == true`.
+    func declineDraw() async {
+        guard result == nil else { return }
+        do {
+            try await api.draw(gameID: gameID, accept: false)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Same offer/accept/decline shape as draws but for takebacks.
+    /// Accepting an opponent's takeback rolls the game back one (or
+    /// two, depending on whose turn it is) ply server-side; the
+    /// resulting `gameState` carries fewer moves than we have locally
+    /// and we replay from start in `apply(gameState:)`.
+    func offerOrAcceptTakeback() async {
+        guard result == nil else { return }
+        do {
+            try await api.takeback(gameID: gameID, accept: true)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    func declineTakeback() async {
+        guard result == nil else { return }
+        do {
+            try await api.takeback(gameID: gameID, accept: false)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Claims victory after the opponent has been disconnected long
+    /// enough — only valid when `opponentGoneClaimWinInSeconds` has
+    /// counted down to 0. Server returns 400 otherwise; UI gates the
+    /// affordance on the countdown value.
+    func claimVictory() async {
+        guard result == nil else { return }
+        do {
+            try await api.claimVictory(gameID: gameID)
+        } catch {
+            lastError = error as? LichessError ?? .network(underlying: error)
+        }
+    }
+
+    /// Whether the abort affordance should be visible. Lichess only
+    /// allows abort before the first move from either side.
+    var canAbort: Bool {
+        result == nil && match.moves.isEmpty
+    }
+
+    /// Whether the claim-victory button should be enabled (countdown
+    /// elapsed AND a gone-info is in flight).
+    var canClaimVictory: Bool {
+        result == nil
+            && opponentGoneClaimWinInSeconds == 0
     }
 
     // MARK: - Lifecycle
