@@ -154,25 +154,38 @@ struct ChessSceneView: View {
             renderer.showLegalMoveMarkers(Array(destinations))
         }
 
-        guard let drag = pieceDrag, drag.entity === value.entity else { return }
+        guard let drag = pieceDrag, drag.entity === value.entity,
+              let parent = value.entity.parent else { return }
 
-        // Translate the piece in root-local space by the world-space delta.
-        let startWorld = value.convert(value.startLocation3D, from: .local, to: .scene)
-        let nowWorld = value.convert(value.location3D, from: .local, to: .scene)
-        let deltaWorld = nowWorld - startWorld
-        guard let parent = value.entity.parent else { return }
-        // Convert the delta into root-local. parent is rootEntity for pieces.
-        let originWorld = parent.convert(position: SIMD3<Float>(0, 0, 0), to: nil)
-        let endWorldLocal = parent.convert(
-            position: SIMD3<Float>(Float(deltaWorld.x), Float(deltaWorld.y), Float(deltaWorld.z))
-                + originWorld,
+        // Tabletop "slide-along-the-board" drag, the canonical pattern Apple
+        // ships in TabletopKit and the visionOS tabletop samples
+        // (ChartingPawns, Solitaire). The piece is constrained to the X-Z
+        // plane at a fixed lift height — Y is pinned, never derived from the
+        // gesture. Moving the cursor up on screen, the hand up in real space,
+        // or the gaze around can't push the piece off the table. Long
+        // diagonals across the whole board work because only the lateral
+        // component of the drag is applied to the piece's position.
+        //
+        // We compute X/Z by converting both the gesture's start and current
+        // 3D locations into the scene root's local frame and taking the
+        // delta there. That way if we ever rotate the root 180° (for the
+        // human-plays-Black orientation), the drag still aligns with the
+        // user's view of the board without changing the gesture math.
+        let startScene = value.convert(value.startLocation3D, from: .local, to: .scene)
+        let nowScene = value.convert(value.location3D, from: .local, to: .scene)
+        let startLocal = parent.convert(
+            position: SIMD3<Float>(Float(startScene.x), Float(startScene.y), Float(startScene.z)),
             from: nil
         )
-        let origin = drag.originLocalPosition
+        let nowLocal = parent.convert(
+            position: SIMD3<Float>(Float(nowScene.x), Float(nowScene.y), Float(nowScene.z)),
+            from: nil
+        )
+        let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
         value.entity.position = SIMD3<Float>(
-            origin.x + endWorldLocal.x,
-            max(SceneMetrics.squareThickness + ChessRenderer.liftHeight, origin.y + endWorldLocal.y),
-            origin.z + endWorldLocal.z
+            drag.originLocalPosition.x + (nowLocal.x - startLocal.x),
+            liftedY,
+            drag.originLocalPosition.z + (nowLocal.z - startLocal.z)
         )
 
         // Live "current target" highlight: the legal square (if any) that the
