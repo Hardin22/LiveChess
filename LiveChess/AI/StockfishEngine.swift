@@ -40,13 +40,14 @@ actor StockfishEngine: ChessAIEngine {
         await engine.send(command: .go(movetime: movetimeMs))
 
         // Hard cap: the engine should reply with `bestmove` shortly after
-        // `movetime` elapses. Anything beyond that is a stuck process — bail
-        // out, send `stop` defensively, and surface a clear error to the
-        // caller instead of hanging the UI. The 10 s safety pad is generous
-        // because Stockfish startup and NNUE load can take a couple of
-        // seconds on the first request, and CI runs may share CPU with
-        // other tests.
-        let budget: Duration = .milliseconds(movetimeMs) + .seconds(10)
+        // `movetime` elapses. Anything beyond that is a stuck process —
+        // bail out, send `stop` defensively, and surface a clear error to
+        // the caller instead of hanging the UI. The 20 s safety pad is
+        // generous because Stockfish startup + NNUE load can take a
+        // couple of seconds on the first request, and CI runs may share
+        // CPU with other tests / Lichess model tests in the same
+        // process. Real-game thinking times are way under this margin.
+        let budget: Duration = .milliseconds(movetimeMs) + .seconds(20)
         return try await withCancellationStop {
             try await waitForBestMove(within: budget)
         }
