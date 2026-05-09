@@ -281,62 +281,50 @@ struct ChessSceneView: View {
         }
     }
 
-    /// Returns the world point where the user's gaze ray (origin + direction
-    /// from the gesture's `inputDevicePose3D`, the official visionOS API for
-    /// recovering the input device pose during a drag) intersects the board's
-    /// surface plane, expressed in `parent`-local coordinates.
-    ///
-    /// Why this rather than chasing `value.location3D`: `location3D` is the
-    /// gaze projected onto a tracking plane perpendicular to the *initial*
-    /// gaze. From an oblique view that plane isn't horizontal, so depth gets
-    /// compressed and long moves (queen d1→h5) become unreachable. The
-    /// gesture's `inputDevicePose3D` exposes the **raw eye position and gaze
-    /// direction** in the gesture's local frame, letting us do an exact
-    /// ray-plane intersection independent of view angle.
-    ///
-    /// Returns `nil` if the pose isn't available, the ray is parallel to the
-    /// table, or the math would put the hit point behind the user.
+    /// Returns where the dragged piece should sit, in the scene root's local
+    /// frame, given the current gesture state. Tries the precise gaze-ray /
+    /// board-plane intersection first (using `inputDevicePose3D` when it's
+    /// available, which is the visionOS-recommended path on real hardware),
+    /// then falls back to a direct gaze-follow projection that the visionOS
+    /// simulator can always satisfy.
     private func boardPlaneIntersection(
         for value: EntityTargetValue<DragGesture.Value>,
         parent: Entity
     ) -> SIMD3<Float>? {
-        guard let pose = value.gestureValue.inputDevicePose3D else { return nil }
+        if let pose = value.gestureValue.inputDevicePose3D,
+           let hit = raycastIntoBoard(pose: pose, value: value, parent: parent) {
+            return hit
+        }
+        return gazeFollowFallback(value: value, parent: parent)
+    }
 
-        // The gesture reports `inputDevicePose3D` in the same coordinate
-        // space as `location3D` — the gesture's `.local` (the targeted
-        // entity's local frame). We need both the eye position and gaze
-        // direction in **scene/world** space to intersect with the board's
-        // world-space horizontal plane.
-        let eyeLocal = SIMD3<Float>(
-            Float(pose.position.x), Float(pose.position.y), Float(pose.position.z)
-        )
-        let eyeScene = value.convert(
-            Point3D(x: Double(eyeLocal.x), y: Double(eyeLocal.y), z: Double(eyeLocal.z)),
-            from: .local,
-            to: .scene
-        )
+    /// Proper ray-plane intersection from the user's eye through the gaze
+    /// direction onto the board's horizontal plane. Reliable on real Vision
+    /// Pro; in the simulator `inputDevicePose3D` may be nil (no head/gaze
+    /// telemetry), so callers must have a fallback.
+    private func raycastIntoBoard(
+        pose: Pose3D,
+        value: EntityTargetValue<DragGesture.Value>,
+        parent: Entity
+    ) -> SIMD3<Float>? {
+        let eyeLocal = Point3D(x: pose.position.x, y: pose.position.y, z: pose.position.z)
+        let eyeScene = value.convert(eyeLocal, from: .local, to: .scene)
         let eyeWorld = SIMD3<Float>(
             Float(eyeScene.x), Float(eyeScene.y), Float(eyeScene.z)
         )
 
-        // Gaze "forward" is the rotation applied to (0, 0, -1) in the local
-        // frame, then converted into the scene by re-using the gesture's
-        // direction-aware convert (positions and the rotation around them
-        // give us a second world-space point to derive a world direction).
         let q4 = pose.rotation.quaternion
         let qf = simd_quatf(
             ix: Float(q4.imag.x), iy: Float(q4.imag.y), iz: Float(q4.imag.z),
             r: Float(q4.real)
         )
-        let forwardLocal = qf.act(SIMD3<Float>(0, 0, -1))
-        let aheadLocalPoint = eyeLocal + forwardLocal
-        let aheadScene = value.convert(
-            Point3D(x: Double(aheadLocalPoint.x),
-                    y: Double(aheadLocalPoint.y),
-                    z: Double(aheadLocalPoint.z)),
-            from: .local,
-            to: .scene
+        let forwardLocalSIMD = qf.act(SIMD3<Float>(0, 0, -1))
+        let aheadLocalPoint = Point3D(
+            x: Double(Float(pose.position.x) + forwardLocalSIMD.x),
+            y: Double(Float(pose.position.y) + forwardLocalSIMD.y),
+            z: Double(Float(pose.position.z) + forwardLocalSIMD.z)
         )
+        let aheadScene = value.convert(aheadLocalPoint, from: .local, to: .scene)
         let aheadWorld = SIMD3<Float>(
             Float(aheadScene.x), Float(aheadScene.y), Float(aheadScene.z)
         )
@@ -349,14 +337,31 @@ struct ChessSceneView: View {
             + SceneMetrics.squareThickness
             + ChessRenderer.liftHeight
 
-        // Need the ray to point at the table plane from above (negative y) or
-        // from below (positive y) — either is fine, just not parallel.
         guard abs(forward.y) > 1e-4 else { return nil }
         let t = (boardPlaneY - eyeWorld.y) / forward.y
         guard t > 0 else { return nil }
 
         let hitWorld = eyeWorld + forward * t
         return parent.convert(position: hitWorld, from: nil)
+    }
+
+    /// Simulator-friendly fallback: take whatever the gesture reports as its
+    /// 3D location (gaze on its tracking plane), convert to scene then to
+    /// root-local, and return X / Z. The Y component is ignored — the caller
+    /// pins the piece's Y to the lift height. This is the same baseline that
+    /// shipped before the pose-aware path; it can't reach extreme corners
+    /// from a steeply oblique view, but it always moves the piece, which
+    /// matters more in the simulator where `inputDevicePose3D` is nil.
+    private func gazeFollowFallback(
+        value: EntityTargetValue<DragGesture.Value>,
+        parent: Entity
+    ) -> SIMD3<Float>? {
+        let nowScene = value.convert(value.location3D, from: .local, to: .scene)
+        let nowLocal = parent.convert(
+            position: SIMD3<Float>(Float(nowScene.x), Float(nowScene.y), Float(nowScene.z)),
+            from: nil
+        )
+        return nowLocal
     }
 
     private func onPieceDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
