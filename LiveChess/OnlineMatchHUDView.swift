@@ -24,7 +24,10 @@ struct OnlineMatchHUDView: View {
     @Environment(AppModel.self) private var appModel
 
     @State private var now: Date = .now
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    /// 10 Hz so the active player's clock visibly counts down without
+    /// looking choppy when the time control gets short. The 100 ms
+    /// granularity matches what lichess.org displays at low time.
+    private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -175,7 +178,7 @@ struct OnlineMatchHUDView: View {
                 Text("Bianco")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text(format(milliseconds: session.clock.whiteMillis))
+                Text(format(milliseconds: displayedMillis(forSide: .white)))
                     .font(.title2.monospacedDigit().weight(.medium))
                     .foregroundStyle(highlightWhite ? .primary : .secondary)
             }
@@ -184,11 +187,33 @@ struct OnlineMatchHUDView: View {
                 Text("Nero")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text(format(milliseconds: session.clock.blackMillis))
+                Text(format(milliseconds: displayedMillis(forSide: .black)))
                     .font(.title2.monospacedDigit().weight(.medium))
                     .foregroundStyle(highlightBlack ? .primary : .secondary)
             }
         }
+    }
+
+    /// Computes the displayed clock for `side`. The side-to-move's clock
+    /// ticks down between server frames; the opponent's stays at the
+    /// last reported value. Server frames (`gameFull` / `gameState`)
+    /// reset the anchor so we never drift more than ~1 RTT off the
+    /// authoritative server time.
+    private func displayedMillis(forSide side: Side) -> Int {
+        let baseMs = side == .white
+            ? session.clock.whiteMillis
+            : session.clock.blackMillis
+
+        // Don't tick on game-over or while the corresponding side isn't
+        // on move. Also short-circuit on absurdly large clocks (we use
+        // Int.max as a sentinel for unlimited / correspondence).
+        guard session.result == nil,
+              session.match.currentPosition.sideToMove == side,
+              baseMs < Int.max / 2
+        else { return baseMs }
+
+        let elapsedMs = Int(now.timeIntervalSince(session.lastClockUpdate) * 1000)
+        return max(0, baseMs - elapsedMs)
     }
 
     @ViewBuilder

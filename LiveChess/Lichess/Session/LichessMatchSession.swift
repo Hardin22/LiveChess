@@ -73,6 +73,12 @@ final class LichessMatchSession: MatchSession {
     /// Domain match — fed by `apply(gameFull:)` / `apply(gameState:)`.
     private(set) var match: Match
     private(set) var clock: ClockState
+    /// Wall-clock instant at which `clock` was last set from a server
+    /// frame (`gameFull` or `gameState`). The HUD reads this together
+    /// with `clock.whiteMillis`/`blackMillis` to tick the active
+    /// player's clock down between server updates so the display
+    /// doesn't appear frozen mid-think.
+    private(set) var lastClockUpdate: Date = .now
     private(set) var connection: ConnectionState = .connecting
     /// Set when the opponent has offered a draw and is waiting on us.
     private(set) var pendingDrawOfferFromOpponent: Bool = false
@@ -404,6 +410,10 @@ final class LichessMatchSession: MatchSession {
             whiteIncrementMillis: state.winc,
             blackIncrementMillis: state.binc
         )
+        // Anchor for the HUD's client-side tick-down. Resetting on
+        // every server frame keeps us within ~1 RTT of authoritative
+        // server time even if the local clock drifts slightly.
+        lastClockUpdate = .now
     }
 
     private func applyStatus(from state: LichessGameState) {
