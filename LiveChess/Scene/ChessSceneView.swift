@@ -281,38 +281,81 @@ struct ChessSceneView: View {
         }
     }
 
-    /// Casts a ray from the user's head through the current gaze point
-    /// (`value.location3D` in scene space) and returns where it intersects
-    /// the board's surface plane, in `parent`-local coordinates. `nil` if
-    /// the head anchor isn't tracked yet, the ray points away from the
-    /// table, or the math degenerates (e.g. parallel ray).
+    /// Returns the world point where the user's gaze ray (origin + direction
+    /// from the gesture's `inputDevicePose3D`, the official visionOS API for
+    /// recovering the input device pose during a drag) intersects the board's
+    /// surface plane, expressed in `parent`-local coordinates.
+    ///
+    /// Why this rather than chasing `value.location3D`: `location3D` is the
+    /// gaze projected onto a tracking plane perpendicular to the *initial*
+    /// gaze. From an oblique view that plane isn't horizontal, so depth gets
+    /// compressed and long moves (queen d1→h5) become unreachable. The
+    /// gesture's `inputDevicePose3D` exposes the **raw eye position and gaze
+    /// direction** in the gesture's local frame, letting us do an exact
+    /// ray-plane intersection independent of view angle.
+    ///
+    /// Returns `nil` if the pose isn't available, the ray is parallel to the
+    /// table, or the math would put the hit point behind the user.
     private func boardPlaneIntersection(
         for value: EntityTargetValue<DragGesture.Value>,
         parent: Entity
     ) -> SIMD3<Float>? {
-        guard let head = headAnchor else { return nil }
+        guard let pose = value.gestureValue.inputDevicePose3D else { return nil }
 
-        let headWorld = head.position(relativeTo: nil)
-        let gazeScene = value.convert(value.location3D, from: .local, to: .scene)
-        let gazeWorld = SIMD3<Float>(
-            Float(gazeScene.x), Float(gazeScene.y), Float(gazeScene.z)
+        // The gesture reports `inputDevicePose3D` in the same coordinate
+        // space as `location3D` — the gesture's `.local` (the targeted
+        // entity's local frame). We need both the eye position and gaze
+        // direction in **scene/world** space to intersect with the board's
+        // world-space horizontal plane.
+        let eyeLocal = SIMD3<Float>(
+            Float(pose.position.x), Float(pose.position.y), Float(pose.position.z)
+        )
+        let eyeScene = value.convert(
+            Point3D(x: Double(eyeLocal.x), y: Double(eyeLocal.y), z: Double(eyeLocal.z)),
+            from: .local,
+            to: .scene
+        )
+        let eyeWorld = SIMD3<Float>(
+            Float(eyeScene.x), Float(eyeScene.y), Float(eyeScene.z)
         )
 
-        var rayDir = gazeWorld - headWorld
-        let length = simd_length(rayDir)
+        // Gaze "forward" is the rotation applied to (0, 0, -1) in the local
+        // frame, then converted into the scene by re-using the gesture's
+        // direction-aware convert (positions and the rotation around them
+        // give us a second world-space point to derive a world direction).
+        let q4 = pose.rotation.quaternion
+        let qf = simd_quatf(
+            ix: Float(q4.imag.x), iy: Float(q4.imag.y), iz: Float(q4.imag.z),
+            r: Float(q4.real)
+        )
+        let forwardLocal = qf.act(SIMD3<Float>(0, 0, -1))
+        let aheadLocalPoint = eyeLocal + forwardLocal
+        let aheadScene = value.convert(
+            Point3D(x: Double(aheadLocalPoint.x),
+                    y: Double(aheadLocalPoint.y),
+                    z: Double(aheadLocalPoint.z)),
+            from: .local,
+            to: .scene
+        )
+        let aheadWorld = SIMD3<Float>(
+            Float(aheadScene.x), Float(aheadScene.y), Float(aheadScene.z)
+        )
+        var forward = aheadWorld - eyeWorld
+        let length = simd_length(forward)
         guard length > 1e-4 else { return nil }
-        rayDir /= length
+        forward /= length
 
-        // Solve for t in (head + t * dir).y == boardPlaneY (world).
         let boardPlaneY = parent.position(relativeTo: nil).y
             + SceneMetrics.squareThickness
             + ChessRenderer.liftHeight
-        // Need the ray to actually point toward (downward from above) the table.
-        guard abs(rayDir.y) > 1e-4 else { return nil }
-        let t = (boardPlaneY - headWorld.y) / rayDir.y
+
+        // Need the ray to point at the table plane from above (negative y) or
+        // from below (positive y) — either is fine, just not parallel.
+        guard abs(forward.y) > 1e-4 else { return nil }
+        let t = (boardPlaneY - eyeWorld.y) / forward.y
         guard t > 0 else { return nil }
 
-        let hitWorld = headWorld + rayDir * t
+        let hitWorld = eyeWorld + forward * t
         return parent.convert(position: hitWorld, from: nil)
     }
 
