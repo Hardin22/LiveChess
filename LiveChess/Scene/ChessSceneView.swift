@@ -260,7 +260,8 @@ struct ChessSceneView: View {
         // head transform from `AnchorEntity(.head)`), we recover the
         // intuitive "the piece sits where I'm looking" behaviour at any
         // angle.
-        if let target = boardPlaneIntersection(for: value, parent: parent) {
+        if let raw = boardPlaneIntersection(for: value, parent: parent) {
+            let target = clampToOriginNeighbourhood(raw, originSquare: drag.originSquare)
             let halfBoard = SceneMetrics.boardPlayableSide / 2
             let edgeSlack: Float = 0.03
             let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
@@ -343,6 +344,33 @@ struct ChessSceneView: View {
 
         let hitWorld = eyeWorld + forward * t
         return parent.convert(position: hitWorld, from: nil)
+    }
+
+    /// Caps the requested target so the piece can never sit further than
+    /// ~85% of the board's playable side away from its origin square. The
+    /// gaze-follow fallback used by the simulator can produce sign-flipped
+    /// coordinates when the user's gaze rotates past the perpendicular
+    /// tracking plane — without this guard the piece teleports across to
+    /// the opposite corner of the board. The cap is comfortably larger
+    /// than any legal queen move (~7 squares ≈ 420 mm; the cap is ≈ 408 mm
+    /// from the origin square, so the queen still reaches every square it
+    /// could legally hit).
+    private func clampToOriginNeighbourhood(
+        _ candidate: SIMD3<Float>,
+        originSquare: Square
+    ) -> SIMD3<Float> {
+        let origin = BoardSurface.position(for: originSquare)
+        let dx = candidate.x - origin.x
+        let dz = candidate.z - origin.z
+        let dist = (dx * dx + dz * dz).squareRoot()
+        let maxRadius = SceneMetrics.boardPlayableSide * 0.85
+        guard dist > maxRadius else { return candidate }
+        let scale = maxRadius / dist
+        return SIMD3<Float>(
+            origin.x + dx * scale,
+            candidate.y,
+            origin.z + dz * scale
+        )
     }
 
     /// Simulator-friendly fallback: take whatever the gesture reports as its
