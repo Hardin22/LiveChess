@@ -17,7 +17,7 @@ import Combine
 /// The panel is rendered at fixed size (300 pt wide, ~auto height) so the
 /// scene host can place it on a single attachment quad without surprises.
 @MainActor
-struct MatchHUDView: View {
+struct LocalMatchHUDView: View {
 
     @Bindable var coordinator: MatchCoordinator
 

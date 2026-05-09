@@ -36,4 +36,15 @@ protocol MatchSession: AnyObject {
     /// optimistically and POSTs to `/api/board/game/{id}/move/{uci}`,
     /// rolling back on a 4xx.
     func submitMove(_ move: Move) async
+
+    /// Set by the scene host to be notified each time a move (ours or
+    /// theirs) is applied to `match`. The renderer animates the piece
+    /// in response.
+    var moveAppliedHandler: (@MainActor (Move) -> Void)? { get set }
+
+    /// Set by the scene host to be notified that the board was reset
+    /// from scratch — either via local "Nuova partita" or via a Lichess
+    /// `gameFull` reconnect-replay. The renderer wipes its piece
+    /// entities and re-seeds them.
+    var matchResetHandler: (@MainActor () -> Void)? { get set }
 }

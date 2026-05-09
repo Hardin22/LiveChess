@@ -4,19 +4,28 @@ import TabletopKit
 
 /// SwiftUI host for the chess scene.
 ///
-/// Builds the table, instantiates a `MatchCoordinator` from
-/// `AppModel.matchSettings`, and routes pinch-and-drag gestures to either:
-///   * the **board frame** → drag the entire scene root in 3D (placement),
-///   * **a piece** → drag-and-drop with snap-to-square + rules validation.
+/// Reads `AppModel.activeSession` at first appearance to figure out which
+/// match flavour to render — local (human vs Stockfish via
+/// `MatchCoordinator`) or online (human vs Lichess opponent via
+/// `LichessMatchSession`). Both cases share the same renderer,
+/// drag-handler, and HUD attachment plumbing through the
+/// `MatchSession` protocol.
 ///
-/// The opponent is `StockfishEngine` (Stockfish 17 with NNUE) — see
-/// `makeAI(rules:)` below.
+/// Move flow:
+///   * **piece drag** → `session.legalMoves(from:)` for highlights →
+///     `session.submitMove(_:)` on legal drop. The session decides what
+///     happens next (local AI computes; Lichess POSTs to the Board API).
+///   * **board frame drag** → physical re-positioning of the board in the
+///     immersive space. Same UX whether the match is local or online.
 @MainActor
 struct ChessSceneView: View {
 
     @Environment(AppModel.self) private var appModel
 
-    @State private var coordinator: MatchCoordinator?
+    /// `any MatchSession` — set in the make closure after we resolve
+    /// `appModel.activeSession`. Used by the drag handler and the HUD
+    /// attachment closure.
+    @State private var session: (any MatchSession)?
     @State private var renderer: ChessRenderer?
 
     @State private var dragOriginPosition: SIMD3<Float>?      // board placement
@@ -26,24 +35,18 @@ struct ChessSceneView: View {
         RealityView { content, attachments in
             await PieceMeshFactory.preload()
 
-            let rules = ChessKitRulesEngine()
-            let ai = makeAI(rules: rules)
-            let humanSide = appModel.matchSettings.resolvedHumanSide()
+            // Resolve which session we're rendering. The lobby is supposed
+            // to have set this before opening the immersive space; if it
+            // somehow didn't, fall back to a fresh local match against
+            // Stockfish so the scene at least boots cleanly.
+            let active = appModel.activeSession ?? .local(Self.makeDefaultLocalCoordinator(
+                matchSettings: appModel.matchSettings
+            ))
+            let session: any MatchSession = active.session
 
-            let whiteController: MatchCoordinator.SideController =
-                humanSide == .white ? .human : .ai(appModel.matchSettings.aiSettings)
-            let blackController: MatchCoordinator.SideController =
-                humanSide == .black ? .human : .ai(appModel.matchSettings.aiSettings)
-
-            let match = Match()
-            let coord = MatchCoordinator(
-                match: match,
-                rules: rules,
-                ai: ai,
-                white: whiteController,
-                black: blackController
-            )
-
+            // Render-side construction. Same shape for both flavours; the
+            // session abstraction keeps the differences out of the make
+            // closure.
             let renderer = ChessRenderer()
             let table = ChessTable(id: EquipmentIdentifier(1))
 
@@ -60,20 +63,18 @@ struct ChessSceneView: View {
                 idStart: 100
             )
 
+            let humanSide = Self.humanSide(for: active, settings: appModel.matchSettings)
             let game = TabletopGame(tableSetup: setup)
             game.claimSeat(humanSide == .white ? whiteSeat : blackSeat)
             game.addRenderDelegate(renderer)
 
-            // Route every applied move (human or AI) through the renderer so
-            // the visual stays in sync with the authoritative `Match`.
-            coord.moveAppliedHandler = { [weak renderer] move in
+            // Wire renderer hooks via the shared MatchSession protocol so
+            // both `MatchCoordinator` and `LichessMatchSession` drive the
+            // same animation pipeline.
+            session.moveAppliedHandler = { [weak renderer] move in
                 renderer?.animateMove(move)
             }
-
-            // On New Game, wipe the visual pieces and re-seed them from the
-            // standard starting position. The coordinator has already reset
-            // its `Match`; we only need to re-create the visuals here.
-            coord.matchResetHandler = { [weak renderer] in
+            session.matchResetHandler = { [weak renderer] in
                 guard let renderer else { return }
                 renderer.clearAllPieces()
                 Self.repopulatePieces(
@@ -109,19 +110,74 @@ struct ChessSceneView: View {
                 game.update(deltaTime: event.deltaTime)
             }
 
-            // Stash for the gesture handlers.
-            self.coordinator = coord
+            // Stash for the gesture handlers + HUD attachment closure.
+            self.session = session
             self.renderer = renderer
 
-            coord.start()
+            // Kick off whichever flow this is.
+            switch active {
+            case .local(let coord):
+                coord.start()
+            case .online(let online):
+                await online.start()
+            }
         } attachments: {
             Attachment(id: "match-hud") {
-                if let coordinator {
-                    MatchHUDView(coordinator: coordinator)
+                if let session = appModel.activeSession {
+                    switch session {
+                    case .local(let coord):
+                        LocalMatchHUDView(coordinator: coord)
+                    case .online(let online):
+                        OnlineMatchHUDView(session: online)
+                    }
                 }
             }
         }
         .gesture(combinedDrag)
+        .onDisappear {
+            // Tear down the online connection so we don't keep the game
+            // stream open (and our event-stream slot busy) when the
+            // immersive space closes.
+            if let session = appModel.activeSession,
+               case .online(let online) = session {
+                Task { await online.disconnect() }
+            }
+            appModel.activeSession = nil
+        }
+    }
+
+    /// Determines which seat the human is on, based on the session
+    /// flavour: the lobby's `humanColor` setting for local games, or
+    /// the Lichess-assigned colour for online games.
+    private static func humanSide(
+        for active: ActiveSession,
+        settings: MatchSettings
+    ) -> Side {
+        switch active {
+        case .local: return settings.resolvedHumanSide()
+        case .online(let online): return online.humanColor
+        }
+    }
+
+    /// Fallback used only if the immersive opens with no `activeSession`
+    /// pre-set. Mirrors what the lobby's "Apri scacchiera" button would
+    /// have built — the human-vs-Stockfish loop with current settings.
+    private static func makeDefaultLocalCoordinator(
+        matchSettings: MatchSettings
+    ) -> MatchCoordinator {
+        let rules = ChessKitRulesEngine()
+        let humanSide = matchSettings.resolvedHumanSide()
+        let whiteController: MatchCoordinator.SideController =
+            humanSide == .white ? .human : .ai(matchSettings.aiSettings)
+        let blackController: MatchCoordinator.SideController =
+            humanSide == .black ? .human : .ai(matchSettings.aiSettings)
+        return MatchCoordinator(
+            match: Match(),
+            rules: rules,
+            ai: StockfishEngine(),
+            white: whiteController,
+            black: blackController
+        )
     }
 
     /// Adds the 32 starting-position pieces and registers them both with
@@ -149,9 +205,8 @@ struct ChessSceneView: View {
     }
 
     /// Re-creates only the renderer-side visuals at the standard starting
-    /// position. Used by `MatchCoordinator.matchResetHandler` on New Game —
-    /// the existing TabletopKit equipment list is left alone (we don't
-    /// drive the scene through its visualState anyway).
+    /// position. Used by `MatchSession.matchResetHandler` on local New Game
+    /// and on Lichess `gameFull` reconnect-replay.
     private static func repopulatePieces(
         renderer: ChessRenderer,
         tableID: EquipmentIdentifier,
@@ -169,21 +224,6 @@ struct ChessSceneView: View {
             renderer.placePiece(equipment, on: square)
             nextID += 1
         }
-    }
-
-    // MARK: - AI factory
-
-    /// Production opponent: Stockfish 17 driven via UCI through
-    /// `chesskit-engine`. The two NNUE files
-    /// (`nn-1111cefa1111.nnue`, `nn-37f18f62d772.nnue`) live in the app
-    /// bundle's `Resources/` and `chesskit-engine` picks them up
-    /// automatically during the engine's initial-setup phase. The `rules`
-    /// argument is unused at the moment (`StockfishEngine` doesn't need a
-    /// local rules engine, since Stockfish itself enforces legality), but
-    /// kept in the signature so swapping to `RandomMoveAIEngine(rules:)`
-    /// for debugging is a one-line change.
-    private func makeAI(rules: any RulesEngine) -> any ChessAIEngine {
-        StockfishEngine()
     }
 
     // MARK: - Combined drag
@@ -212,14 +252,14 @@ struct ChessSceneView: View {
     // MARK: - Piece drag
 
     private func onPieceDragChanged(_ value: EntityTargetValue<DragGesture.Value>) {
-        guard let coordinator, let renderer,
+        guard let session, let renderer,
               let comp = value.entity.components[ChessPieceComponent.self]
         else { return }
 
         // Only the side-to-move's human pieces are draggable; ignore the rest.
         if pieceDrag == nil {
-            guard isHumanTurnAndOwnsPiece(comp, coordinator: coordinator) else { return }
-            let legal = coordinator.legalMoves(from: comp.square)
+            guard isHumanPickup(comp, in: session) else { return }
+            let legal = session.legalMoves(from: comp.square)
             let destinations = Set(legal.map(\.to))
             pieceDrag = PieceDragState(
                 entity: value.entity,
@@ -270,7 +310,7 @@ struct ChessSceneView: View {
     }
 
     private func onPieceDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
-        guard let coordinator, let renderer,
+        guard let session, let renderer,
               let drag = pieceDrag,
               drag.entity === value.entity else {
             renderer?.clearLegalMoveMarkers()
@@ -282,13 +322,9 @@ struct ChessSceneView: View {
         let dropLocal = value.entity.position
         let candidate = BoardSurface.square(forBoardLocalPosition: dropLocal)
 
-        if let candidate, drag.legalDestinations.contains(candidate) {
-            let move = legalMove(from: drag.originSquare, to: candidate, coordinator: coordinator)
-            if let move {
-                coordinator.submitHumanMove(move)
-            } else {
-                renderer.snapBack(value.entity)
-            }
+        if let candidate, drag.legalDestinations.contains(candidate),
+           let move = legalMove(from: drag.originSquare, to: candidate, in: session) {
+            Task { await session.submitMove(move) }
         } else {
             renderer.snapBack(value.entity)
         }
@@ -297,13 +333,15 @@ struct ChessSceneView: View {
         pieceDrag = nil
     }
 
-    private func isHumanTurnAndOwnsPiece(
+    /// True iff the dragged piece belongs to the side-to-move AND it's
+    /// the human player's turn (no AI computing locally, no remote-stream
+    /// pause).
+    private func isHumanPickup(
         _ comp: ChessPieceComponent,
-        coordinator: MatchCoordinator
+        in session: any MatchSession
     ) -> Bool {
-        guard !coordinator.match.status.isGameOver else { return false }
-        guard !coordinator.isAIThinking else { return false }
-        return coordinator.match.currentPosition.sideToMove == comp.color
+        guard session.isHumanTurn else { return false }
+        return session.match.currentPosition.sideToMove == comp.color
     }
 
     /// Picks the canonical legal `Move` matching `from → to`. Prefers a
@@ -311,9 +349,9 @@ struct ChessSceneView: View {
     private func legalMove(
         from: Square,
         to: Square,
-        coordinator: MatchCoordinator
+        in session: any MatchSession
     ) -> Move? {
-        let candidates = coordinator.legalMoves(from: from).filter { $0.to == to }
+        let candidates = session.legalMoves(from: from).filter { $0.to == to }
         if candidates.isEmpty { return nil }
         if let promo = candidates.first(where: { $0.promotion == .queen }) {
             return promo
