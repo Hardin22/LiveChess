@@ -136,6 +136,74 @@ actor LichessAPIClient {
         try await postIgnoringResponse(LichessEndpoints.claimVictory(gameID: gameID))
     }
 
+    // MARK: - Pool seek
+
+    /// Enters the matchmaking pool with the given criteria and holds the
+    /// HTTP connection open until either a partner is matched (server
+    /// closes the stream) or the calling Task is cancelled (closes the
+    /// stream client-side, which cancels the seek server-side).
+    ///
+    /// Lichess Board API restriction: the pool only accepts Rapid /
+    /// Classical / Correspondence — Bullet/Blitz are blocked
+    /// server-side for OAuth clients. The lobby UI hides those presets;
+    /// if a caller passes one anyway the server returns 400 and we
+    /// surface it via the throws.
+    ///
+    /// **Critical**: the actual `gameStart` event lands on
+    /// `/api/stream/event` (consumed elsewhere). This call's only job is
+    /// to keep the seek alive in the pool. We use a session that's NOT
+    /// the shared streaming one, because the streaming session has an
+    /// effectively unbounded resource timeout — perfect for game streams,
+    /// but we want seeks to be cancellable at request scope, not
+    /// session-wide.
+    func runSeek(
+        timeControl: LichessTimeControlSpec,
+        rated: Bool
+    ) async throws {
+        guard let token else { throw LichessError.notAuthenticated }
+
+        var request = URLRequest(url: LichessEndpoints.boardSeek())
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            "application/x-www-form-urlencoded",
+            forHTTPHeaderField: "Content-Type"
+        )
+        var body = LichessFormBody.seekClockKeys(for: timeControl)
+        body["rated"] = rated ? "true" : "false"
+        body["variant"] = "standard"
+        request.httpBody = LichessFormBody.encoded(body)
+
+        let session = URLSession.lichessStreaming
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw LichessError.invalidResponse
+        }
+        switch http.statusCode {
+        case 200..<300: break
+        case 401: throw LichessError.tokenExpired
+        case 403: throw LichessError.scopeInsufficient(scopeName: "board:play")
+        case 429: throw LichessError.rateLimited(retryAfter: 60)
+        case 400..<500:
+            throw LichessError.clientError(status: http.statusCode, body: nil)
+        default:
+            throw LichessError.serverError(status: http.statusCode, body: nil)
+        }
+
+        // Drain heartbeats. The seek stays alive until the connection
+        // is closed by the server (game found) or by us (Task cancelled
+        // → URLSession.AsyncBytes throws CancellationError → loop exits).
+        do {
+            for try await _ in bytes.lines {
+                if Task.isCancelled { break }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            throw LichessError.network(underlying: error)
+        }
+    }
+
     // MARK: - Internal request plumbing
 
     /// Builds an authenticated `URLRequest` with the bearer header. Throws

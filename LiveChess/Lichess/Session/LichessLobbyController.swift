@@ -41,6 +41,23 @@ final class LichessLobbyController {
     private var eventStream: LichessEventStream?
     private var eventStreamConsumer: Task<Void, Never>?
 
+    /// In-flight seek task (Quick Pair). Cancellation closes the HTTP
+    /// connection client-side, which removes us from the pool
+    /// server-side.
+    private var seekTask: Task<Void, Never>?
+
+    /// In-flight friend-challenge ID (so we can cancel it via
+    /// `/api/challenge/{id}/cancel` if the user backs out before the
+    /// recipient accepts).
+    private var pendingFriendChallengeID: String?
+
+    /// Last requested time control — stashed so the matchmaking branch
+    /// (Quick Pair → gameStart) can pre-populate the resulting
+    /// `LichessMatchSession` clock with the right initial values
+    /// instead of zero-zero, avoiding a brief 00:00 flash before
+    /// `gameFull` arrives.
+    private var lastRequestedTimeControl: LichessTimeControlSpec?
+
     init(
         session: LichessSession,
         rules: any RulesEngine = ChessKitRulesEngine()
@@ -125,6 +142,115 @@ final class LichessLobbyController {
         }
     }
 
+    /// Enters the matchmaking pool (`POST /api/board/seek`) with the
+    /// given criteria. The HTTP connection is held open server-side
+    /// until a partner is matched (a `gameStart` event then arrives on
+    /// `/api/stream/event` and lights up an online session) — or the
+    /// user cancels with `cancelSeek()`, which tears down the
+    /// connection and removes us from the pool.
+    func quickPair(
+        rated: Bool,
+        timeControl: LichessTimeControlSpec
+    ) {
+        guard let _ = session.token else {
+            lastError = .notAuthenticated
+            return
+        }
+        guard seekTask == nil else { return }
+
+        let label = Self.label(for: timeControl)
+        pendingAction = .seeking(rated: rated, label: label)
+        lastError = nil
+        lastRequestedTimeControl = timeControl
+
+        let api = session.api
+        seekTask = Task { [weak self] in
+            do {
+                try await api.runSeek(timeControl: timeControl, rated: rated)
+            } catch let error as LichessError {
+                self?.handleSeekFailure(error)
+                return
+            } catch is CancellationError {
+                // User cancelled — quietly clear pending state.
+                self?.clearSeekPending()
+                return
+            } catch {
+                self?.handleSeekFailure(.network(underlying: error))
+                return
+            }
+            // Server closed the connection — partner found. The
+            // gameStart event lands on the global stream; nothing else
+            // to do here.
+            self?.clearSeekPending()
+        }
+    }
+
+    /// Cancels an in-flight seek. No-op if there isn't one.
+    func cancelSeek() {
+        seekTask?.cancel()
+        seekTask = nil
+        pendingAction = nil
+        lastRequestedTimeControl = nil
+    }
+
+    /// Sends a direct challenge to a specific Lichess user. Returns
+    /// once the challenge is *created* (status `created`); the
+    /// resulting `gameStart` arrives on the event stream when the
+    /// recipient accepts.
+    func challengeFriend(
+        username: String,
+        rated: Bool,
+        timeControl: LichessTimeControlSpec,
+        color: LichessChallengeColor
+    ) async {
+        guard let _ = session.token else {
+            lastError = .notAuthenticated
+            return
+        }
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        pendingAction = .creatingUserChallenge(username: trimmed)
+        lastError = nil
+        lastRequestedTimeControl = timeControl
+        do {
+            let challenge = try await session.api.createUserChallenge(
+                username: trimmed,
+                rated: rated,
+                timeControl: timeControl,
+                color: color
+            )
+            pendingFriendChallengeID = challenge.id
+            pendingAction = .waitingForOpponent(challengeID: challenge.id)
+        } catch let error as LichessError {
+            pendingAction = nil
+            lastError = error
+        } catch {
+            pendingAction = nil
+            lastError = .network(underlying: error)
+        }
+    }
+
+    /// Cancels an outstanding friend-challenge POST that hasn't been
+    /// accepted yet. No-op if there isn't one.
+    func cancelFriendChallenge() async {
+        guard let id = pendingFriendChallengeID else { return }
+        pendingFriendChallengeID = nil
+        pendingAction = nil
+        try? await session.api.cancelChallenge(id)
+    }
+
+    private func handleSeekFailure(_ error: LichessError) {
+        seekTask = nil
+        pendingAction = nil
+        lastError = error
+    }
+
+    private func clearSeekPending() {
+        seekTask = nil
+        pendingAction = nil
+    }
+
     // MARK: - Event stream consumption
 
     /// Long-running loop that dispatches the global event-stream payloads
@@ -136,16 +262,12 @@ final class LichessLobbyController {
         for await event in stream.events {
             if Task.isCancelled { return }
             switch event {
-            case .gameStart:
-                // Phase 9 (Quick Pair + friend challenge) wires this:
-                // build a LichessMatchSession from the GameEventInfo
-                // payload and call onGameSessionReady. AI games skip
-                // the event stream entirely (we got the game id from
-                // the REST response), so this branch is dormant in
-                // phase 7.
-                break
+            case .gameStart(let info):
+                handleGameStart(info)
             case .gameFinish:
-                // Phase 11 wires the rating-diff fold-in here.
+                // Phase 11 folds gameFinish.ratingDiff into the active
+                // session here (so the post-game banner can show the
+                // Elo delta without a refetch).
                 break
             case .challenge:
                 // Phase 10 wires the incoming-challenge banner here.
@@ -155,6 +277,69 @@ final class LichessLobbyController {
             case .unknown:
                 break
             }
+        }
+    }
+
+    /// Builds and surfaces a `LichessMatchSession` for a freshly-started
+    /// online game. Used for both Quick Pair (after `runSeek` matched)
+    /// and accepted friend challenges. AI challenges skip this path —
+    /// they get the game id directly from the REST response and build
+    /// their session inline in `challengeAI(...)`.
+    private func handleGameStart(_ info: LichessGameEventInfo) {
+        guard let token = session.token else { return }
+
+        // The pending action was either a seek or a waiting-for-opponent.
+        // Either way we're done with it — clear so the lobby UI returns
+        // to its idle state.
+        seekTask = nil
+        pendingFriendChallengeID = nil
+        pendingAction = nil
+
+        let humanColor: Side = info.color == .white ? .white : .black
+        let opponent = LichessMatchSession.Opponent(
+            username: info.opponent.username,
+            title: info.opponent.title,
+            rating: info.opponent.rating,
+            provisional: false,
+            aiLevel: info.opponent.aiLevel
+        )
+
+        // Seed clock from the time-control we requested if we have one;
+        // gameFull will overwrite within milliseconds anyway. Using
+        // a sane initial value avoids a brief 00:00 flash in the HUD.
+        let initialClock = lastRequestedTimeControl
+            .map { Self.initialClock(for: $0) }
+            ?? LichessMatchSession.ClockState(
+                whiteMillis: 0,
+                blackMillis: 0,
+                whiteIncrementMillis: 0,
+                blackIncrementMillis: 0
+            )
+
+        let stream = LichessGameStream(gameID: info.gameId, token: token)
+        let matchSession = LichessMatchSession(
+            gameID: info.gameId,
+            humanColor: humanColor,
+            opponent: opponent,
+            isRated: info.rated,
+            initialFen: info.fen ?? "startpos",
+            clock: initialClock,
+            api: session.api,
+            stream: stream,
+            rules: rules
+        )
+        onGameSessionReady?(matchSession)
+    }
+
+    private static func label(for spec: LichessTimeControlSpec) -> String {
+        switch spec {
+        case let .realTime(limit, increment):
+            let minutes = limit / 60
+            return "\(minutes)+\(increment)"
+        case let .correspondence(daysPerTurn):
+            return "Corrispondenza (\(daysPerTurn)g)"
+        case .unlimited:
+            return "Senza tempo"
         }
     }
 

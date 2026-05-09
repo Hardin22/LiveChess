@@ -13,6 +13,40 @@ struct LobbyView: View {
     /// lobby's lifetime so the event stream can keep running.
     @State private var lichessLobby: LichessLobbyController?
 
+    /// Currently selected online mode (which configuration card is
+    /// expanded). `nil` = the mode picker is showing the 3 entry-point
+    /// buttons.
+    @State private var onlineMode: OnlineMode?
+
+    /// Selected time control for the online configuration card. Defaults
+    /// to the most popular preset for each mode.
+    @State private var selectedTimeControl: LichessTimeControlSpec =
+        .realTime(limitSeconds: 600, incrementSeconds: 0)
+    @State private var selectedColor: LichessChallengeColor = .random
+    @State private var selectedRated: Bool = false
+    @State private var selectedAILevel: Int = 3
+    @State private var friendUsername: String = ""
+
+    enum OnlineMode: String, Hashable, CaseIterable {
+        case quickPair, friend, ai
+
+        var label: String {
+            switch self {
+            case .quickPair: return "Cerca partita"
+            case .friend: return "Sfida amico"
+            case .ai: return "Stockfish (Lichess)"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .quickPair: return "person.2.fill"
+            case .friend: return "person.crop.circle.badge.plus"
+            case .ai: return "cpu"
+            }
+        }
+    }
+
     var body: some View {
         @Bindable var appModel = appModel
 
@@ -78,21 +112,13 @@ struct LobbyView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Online — Lichess")
                 .font(.headline)
-            Text("Sfida lo Stockfish ospitato da Lichess (le partite sono sempre casual).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             if let action = lichessLobby?.pendingAction {
                 pendingActionRow(action)
+            } else if let mode = onlineMode {
+                onlineSetupCard(for: mode)
             } else {
-                Button {
-                    Task { await openOnlineAIMatch() }
-                } label: {
-                    Label("Sfida Stockfish (Lichess)", systemImage: "globe")
-                        .frame(maxWidth: .infinity)
-                }
-                .controlSize(.large)
-                .buttonStyle(.bordered)
+                modePicker
             }
 
             if let error = lichessLobby?.lastError {
@@ -105,6 +131,216 @@ struct LobbyView: View {
         .padding(.horizontal, 8)
     }
 
+    /// Three side-by-side entry buttons that swap to the corresponding
+    /// configuration card on tap.
+    private var modePicker: some View {
+        HStack(spacing: 10) {
+            ForEach(OnlineMode.allCases, id: \.self) { mode in
+                Button {
+                    onlineMode = mode
+                    syncDefaultsForMode(mode)
+                } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: mode.icon)
+                            .font(.title2)
+                        Text(mode.label)
+                            .font(.caption)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func onlineSetupCard(for mode: OnlineMode) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Button {
+                    onlineMode = nil
+                } label: {
+                    Image(systemName: "chevron.left")
+                    Text("Indietro")
+                }
+                .buttonStyle(.plain)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                Spacer()
+                Label(mode.label, systemImage: mode.icon)
+                    .font(.headline)
+            }
+
+            switch mode {
+            case .quickPair: quickPairCard
+            case .friend: friendChallengeCard
+            case .ai: stockfishCard
+            }
+        }
+        .padding(14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Quick Pair — `/api/board/seek` only allows Rapid+/Correspondence
+    /// for OAuth clients (Bullet/Blitz are blocked server-side), so the
+    /// preset grid mirrors that constraint.
+    @ViewBuilder
+    private var quickPairCard: some View {
+        Toggle("Rated", isOn: $selectedRated)
+        timePresets(allowed: .quickPairAllowed)
+        Button {
+            guard let lobby = lichessLobby else { return }
+            wireOnGameSessionReadyAndOpenImmersive(lobby)
+            lobby.quickPair(rated: selectedRated, timeControl: selectedTimeControl)
+        } label: {
+            Label("Cerca avversario", systemImage: "person.2.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .controlSize(.large)
+        .buttonStyle(.borderedProminent)
+    }
+
+    /// Friend challenge — `/api/challenge/{username}` accepts every time
+    /// control including Bullet / Blitz.
+    @ViewBuilder
+    private var friendChallengeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Username avversario")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("es. magnuscarlsen", text: $friendUsername)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+        Toggle("Rated", isOn: $selectedRated)
+        timePresets(allowed: .friendAllowed)
+        colorPicker
+        Button {
+            guard let lobby = lichessLobby else { return }
+            wireOnGameSessionReadyAndOpenImmersive(lobby)
+            Task {
+                await lobby.challengeFriend(
+                    username: friendUsername,
+                    rated: selectedRated,
+                    timeControl: selectedTimeControl,
+                    color: selectedColor
+                )
+            }
+        } label: {
+            let trimmed = friendUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            Label(trimmed.isEmpty ? "Sfida" : "Sfida \(trimmed)", systemImage: "paperplane.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .controlSize(.large)
+        .buttonStyle(.borderedProminent)
+        .disabled(friendUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// Lichess Stockfish challenge — always unrated server-side, so no
+    /// rated toggle. Levels 1–8.
+    @ViewBuilder
+    private var stockfishCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Livello")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(selectedAILevel) / 8")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Picker("Livello", selection: $selectedAILevel) {
+                ForEach(1...8, id: \.self) { level in
+                    Text("\(level)").tag(level)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        timePresets(allowed: .friendAllowed)
+        colorPicker
+        Button {
+            guard let lobby = lichessLobby else { return }
+            wireOnGameSessionReadyAndOpenImmersive(lobby)
+            Task {
+                await lobby.challengeAI(
+                    level: selectedAILevel,
+                    timeControl: selectedTimeControl,
+                    color: selectedColor
+                )
+            }
+        } label: {
+            Label("Sfida Stockfish (Lichess)", systemImage: "cpu")
+                .frame(maxWidth: .infinity)
+        }
+        .controlSize(.large)
+        .buttonStyle(.borderedProminent)
+    }
+
+    private var colorPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Colore")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Colore", selection: $selectedColor) {
+                Text("Bianco").tag(LichessChallengeColor.white)
+                Text("Nero").tag(LichessChallengeColor.black)
+                Text("Random").tag(LichessChallengeColor.random)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+    }
+
+    /// Reusable time-control button grid. Filters the master preset
+    /// list against the per-mode allowed set.
+    @ViewBuilder
+    private func timePresets(allowed: TimePresetSet) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tempo")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            let presets = TimePreset.all.filter { allowed.contains($0.speed) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(presets, id: \.label) { preset in
+                    presetButton(preset)
+                }
+            }
+        }
+    }
+
+    /// Single preset cell. Splits into two branches because Swift can't
+    /// unify `BorderedProminentButtonStyle` and `BorderedButtonStyle`
+    /// in a ternary on `.buttonStyle(...)`.
+    @ViewBuilder
+    private func presetButton(_ preset: TimePreset) -> some View {
+        if preset.spec == selectedTimeControl {
+            Button {
+                selectedTimeControl = preset.spec
+            } label: {
+                Text(preset.label)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        } else {
+            Button {
+                selectedTimeControl = preset.spec
+            } label: {
+                Text(preset.label)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
     @ViewBuilder
     private func pendingActionRow(_ action: LichessLobbyController.PendingAction) -> some View {
         HStack(spacing: 12) {
@@ -112,6 +348,69 @@ struct LobbyView: View {
             Text(label(for: action))
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            Spacer()
+            switch action {
+            case .seeking:
+                Button("Annulla") {
+                    lichessLobby?.cancelSeek()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            case .waitingForOpponent:
+                Button("Annulla") {
+                    Task { await lichessLobby?.cancelFriendChallenge() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    /// Make sure the picker defaults match a sensible preset for the
+    /// chosen mode (Quick Pair limits us to Rapid+; AI allows fastest).
+    private func syncDefaultsForMode(_ mode: OnlineMode) {
+        switch mode {
+        case .quickPair:
+            // 10+0 is the most popular Rapid pool.
+            selectedTimeControl = .realTime(limitSeconds: 600, incrementSeconds: 0)
+            selectedRated = false
+        case .friend:
+            // 5+3 Blitz is a nice friendly default.
+            selectedTimeControl = .realTime(limitSeconds: 300, incrementSeconds: 3)
+            selectedRated = false
+            selectedColor = .random
+        case .ai:
+            // 10+0 vs Stockfish — gives both engines a chance to think.
+            selectedTimeControl = .realTime(limitSeconds: 600, incrementSeconds: 0)
+            selectedColor = .white
+            selectedAILevel = 3
+        }
+    }
+
+    /// Sets up `lobby.onGameSessionReady` to flip `appModel.activeSession`
+    /// and open the immersive space when the game is built. Used by all
+    /// three online flows.
+    private func wireOnGameSessionReadyAndOpenImmersive(
+        _ lobby: LichessLobbyController
+    ) {
+        lobby.onGameSessionReady = { @MainActor [weak appModel = appModel] matchSession in
+            guard let appModel else { return }
+            appModel.activeSession = .online(matchSession)
+            appModel.immersiveSpaceState = .inTransition
+            Task { @MainActor in
+                switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+                case .opened:
+                    break
+                case .userCancelled, .error:
+                    appModel.immersiveSpaceState = .closed
+                    appModel.activeSession = nil
+                @unknown default:
+                    appModel.immersiveSpaceState = .closed
+                    appModel.activeSession = nil
+                }
+            }
         }
     }
 
@@ -179,37 +478,6 @@ struct LobbyView: View {
             appModel.immersiveSpaceState = .closed
             appModel.activeSession = nil
         }
-    }
-
-    /// Issues an AI challenge against Lichess' hosted Stockfish at the
-    /// chosen level + time, builds a `LichessMatchSession` from the
-    /// response and opens the immersive space wired to it. Phase-7
-    /// defaults: level 3, 10+0 Rapid, white. The configurable picker
-    /// lands in phase 9.
-    private func openOnlineAIMatch() async {
-        guard let lobby = lichessLobby else { return }
-        lobby.onGameSessionReady = { @MainActor [weak appModel = appModel] matchSession in
-            guard let appModel else { return }
-            appModel.activeSession = .online(matchSession)
-            appModel.immersiveSpaceState = .inTransition
-            Task { @MainActor in
-                switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
-                case .opened:
-                    break
-                case .userCancelled, .error:
-                    appModel.immersiveSpaceState = .closed
-                    appModel.activeSession = nil
-                @unknown default:
-                    appModel.immersiveSpaceState = .closed
-                    appModel.activeSession = nil
-                }
-            }
-        }
-        await lobby.challengeAI(
-            level: 3,
-            timeControl: .realTime(limitSeconds: 600, incrementSeconds: 0),
-            color: .white
-        )
     }
 
     /// Lazily instantiate the Lichess lobby controller once the session
@@ -428,6 +696,54 @@ struct LobbyView: View {
     private static func formatSeconds(_ s: Double) -> String {
         s == s.rounded() ? "\(Int(s)) s" : String(format: "%.1f s", s).replacingOccurrences(of: ".", with: ",")
     }
+}
+
+// MARK: - Time-control presets
+
+/// One row of the lobby's time-control button grid. The list mirrors
+/// what the lichess.org "Quick Pair" picker offers.
+private struct TimePreset: Hashable {
+    let label: String
+    let spec: LichessTimeControlSpec
+    let speed: LichessSpeed
+
+    static let all: [TimePreset] = [
+        // Bullet
+        .init(label: "1+0",  spec: .realTime(limitSeconds: 60, incrementSeconds: 0),  speed: .bullet),
+        .init(label: "2+1",  spec: .realTime(limitSeconds: 120, incrementSeconds: 1), speed: .bullet),
+        // Blitz
+        .init(label: "3+0",  spec: .realTime(limitSeconds: 180, incrementSeconds: 0), speed: .blitz),
+        .init(label: "3+2",  spec: .realTime(limitSeconds: 180, incrementSeconds: 2), speed: .blitz),
+        .init(label: "5+0",  spec: .realTime(limitSeconds: 300, incrementSeconds: 0), speed: .blitz),
+        .init(label: "5+3",  spec: .realTime(limitSeconds: 300, incrementSeconds: 3), speed: .blitz),
+        // Rapid
+        .init(label: "10+0", spec: .realTime(limitSeconds: 600, incrementSeconds: 0), speed: .rapid),
+        .init(label: "10+5", spec: .realTime(limitSeconds: 600, incrementSeconds: 5), speed: .rapid),
+        .init(label: "15+10", spec: .realTime(limitSeconds: 900, incrementSeconds: 10), speed: .rapid),
+        // Classical
+        .init(label: "30+0", spec: .realTime(limitSeconds: 1800, incrementSeconds: 0), speed: .classical),
+        .init(label: "30+20", spec: .realTime(limitSeconds: 1800, incrementSeconds: 20), speed: .classical),
+        // Correspondence
+        .init(label: "Corrisp.", spec: .correspondence(daysPerTurn: 3), speed: .correspondence),
+    ]
+}
+
+/// Which speeds are allowed for a given lobby flow. Quick Pair is
+/// constrained server-side to Rapid+; friend challenges + AI accept
+/// everything (correspondence included via the Corrisp. preset).
+private struct TimePresetSet {
+    let speeds: Set<LichessSpeed>
+
+    func contains(_ speed: LichessSpeed) -> Bool {
+        speeds.contains(speed)
+    }
+
+    /// Quick Pair pool — Bullet/Blitz blocked server-side for OAuth
+    /// Board API consumers (`SetupForm.scala:isBoardCompatible`).
+    static let quickPairAllowed = TimePresetSet(speeds: [.rapid, .classical, .correspondence])
+
+    /// Friend challenges + AI challenges — full set.
+    static let friendAllowed = TimePresetSet(speeds: [.bullet, .blitz, .rapid, .classical, .correspondence])
 }
 
 #Preview(windowStyle: .automatic) {
