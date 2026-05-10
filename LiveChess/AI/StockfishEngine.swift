@@ -35,6 +35,22 @@ actor StockfishEngine: ChessAIEngine {
         let skill = max(0, min(20, settings.skillLevel))
         let movetimeMs = milliseconds(of: settings.thinkingTime)
 
+        // `Skill Level` alone barely throttles Stockfish 17 with NNUE
+        // — the top picks remain near-optimal because the eval is so
+        // strong, so even Skill 2 plays "perfect" chess against
+        // amateurs. The proper way to dial down strength is the Elo
+        // limiter: `UCI_LimitStrength=true` + `UCI_Elo=N`, where N is
+        // in [LowestElo..HighestElo] = [1320..3190] (per Stockfish's
+        // `Search::Skill` constants). We map our 0–20 slider linearly
+        // onto that range so each step is ~94 Elo.
+        //
+        // We still send `Skill Level` for parity with engines that
+        // don't honour `UCI_LimitStrength` (older builds, some
+        // forks). Stockfish 17 prefers the Elo value when both are
+        // set, which is the desired behaviour.
+        let elo = Self.elo(forSkillLevel: skill)
+        await engine.send(command: .setoption(id: "UCI_LimitStrength", value: "true"))
+        await engine.send(command: .setoption(id: "UCI_Elo", value: "\(elo)"))
         await engine.send(command: .setoption(id: "Skill Level", value: "\(skill)"))
         await engine.send(command: .position(.fen(position.fen)))
         await engine.send(command: .go(movetime: movetimeMs))
@@ -143,5 +159,22 @@ actor StockfishEngine: ChessAIEngine {
         let seconds = Double(duration.components.seconds)
             + Double(duration.components.attoseconds) / 1e18
         return max(50, Int((seconds * 1000).rounded()))
+    }
+
+    /// Maps the 0–20 user slider to Stockfish 17's Elo range
+    /// `[1320, 3190]`. Linear so each step is ~94 Elo:
+    ///   skill  0 →  1320 Elo (beginner)
+    ///   skill  5 →  1788 Elo
+    ///   skill 10 →  2255 Elo (intermediate)
+    ///   skill 15 →  2723 Elo
+    ///   skill 20 →  3190 Elo (top engine, no throttle)
+    /// Stockfish itself uses a non-linear Elo→playing-strength curve
+    /// internally, but a linear slider mapping is what users
+    /// intuitively expect.
+    nonisolated static func elo(forSkillLevel skill: Int) -> Int {
+        let clamped = max(0, min(20, skill))
+        let lowest = 1320
+        let highest = 3190
+        return lowest + (highest - lowest) * clamped / 20
     }
 }

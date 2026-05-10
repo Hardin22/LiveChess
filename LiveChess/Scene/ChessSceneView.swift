@@ -124,11 +124,11 @@ struct ChessSceneView: View {
             content.add(renderer.rootEntity)
 
             // If the user has enabled the virtual environment, load it,
-            // find the antique table inside, and translate the whole
-            // env so that the table-top centre is exactly where the
-            // chessboard will sit. ARKit-based plane detection is
+            // apply the seated-POV transform, place the chessboard on
+            // top of the in-env table, and add the cinematic lighting
+            // + dust-mote particles. ARKit-based plane detection is
             // skipped in this mode (real-world surfaces aren't
-            // relevant when we're showing a virtual room).
+            // relevant when we're showing a synthetic room).
             //
             // If env loading fails for any reason — corrupt USDZ,
             // missing AntiqueTable named entity, etc. — we silently
@@ -136,11 +136,12 @@ struct ChessSceneView: View {
             // always gets a working board.
             var didMountVirtualEnv = false
             if appModel.virtualEnvironmentEnabled {
-                if await Self.mountVirtualEnvironment(
-                    targetBoardCenter: fallback.translation,
+                if let virtualBoardPos = await Self.mountVirtualEnvironment(
                     into: content
                 ) {
-                    renderer.rootEntity.transform = fallback
+                    var t = fallback
+                    t.translation = virtualBoardPos
+                    renderer.rootEntity.transform = t
                     didMountVirtualEnv = true
                 }
             }
@@ -268,43 +269,214 @@ struct ChessSceneView: View {
         }
     }
 
-    /// Loads `Resources/environment.usdz` (a small Blender-authored
-    /// chess room with a table + 2 chairs), finds the `AntiqueTable`
-    /// named entity, and translates the entire env so the table's
-    /// top-centre lands exactly at `targetBoardCenter` in world
-    /// space. The chessboard is then positioned at the same point so
-    /// it appears resting on the table.
+    /// Loads `Resources/environment.usdz` (the colleague's Blender-
+    /// authored dwarven chess hall with table + chairs + sconces +
+    /// statues + arches), applies the seated-POV transform he wired,
+    /// and adds the cinematic noir lighting + dust-mote particles he
+    /// designed for it. Computes the world-space top of `AntiqueTable`
+    /// and returns it (with a small upward lift) so the caller can
+    /// seat the chessboard on it without z-fighting the table mesh.
     ///
-    /// Returns `true` on success. On any failure (missing file,
-    /// corrupt USDZ, no `AntiqueTable` child) returns `false` so the
-    /// caller can route through the AR placement fallback — the user
-    /// still gets a playable board.
+    /// Returns `nil` on any failure (missing file, corrupt USDZ, no
+    /// `AntiqueTable` child) so the caller can route through the AR
+    /// placement fallback — the user always gets a playable board.
     private static func mountVirtualEnvironment(
-        targetBoardCenter: SIMD3<Float>,
         into content: any RealityViewContentProtocol
-    ) async -> Bool {
+    ) async -> SIMD3<Float>? {
         let env: Entity
         do {
             env = try await Entity(named: "environment", in: .main)
         } catch {
-            return false
+            return nil
         }
+        env.name = "VirtualEnvironment"
+
+        // Seated-POV transform from the env author's reference scene.
+        // Math (his comments): Blender black chair sits at (9, 0, 0.62)
+        // facing -X toward the table. Rotating -π/2 around Y maps
+        // chair-forward (-X) to user-forward (-Z), and translating by
+        // (0, +0.3, -9.15) lands the chair eye at the user's natural
+        // standing eye level near world origin. Net effect: the user
+        // feels seated *in* the antique chair, looking across the
+        // table at the opposite chair — the natural chess setup.
+        env.transform.rotation = simd_quatf(
+            angle: -.pi / 2,
+            axis: SIMD3<Float>(0, 1, 0)
+        )
+        env.position = SIMD3<Float>(0, 0.3, -9.15)
+        content.add(env)
+
+        // Locate the antique table and read its world-space top after
+        // the env transform has been committed.
         guard let table = env.findEntity(named: "AntiqueTable") else {
-            return false
+            // Env mounted but we can't find the table — leave it
+            // visible (the rest of the room is still nice) and bail
+            // so the caller goes through the AR fallback for
+            // positioning. Better than no board.
+            return nil
         }
-        // Compute the table-top centre in env-local coordinates. Bounds
-        // are axis-aligned — the top is `center.y + extents.y / 2`.
-        let bounds = table.visualBounds(relativeTo: env)
-        let tableTopLocal = SIMD3<Float>(
+        let bounds = table.visualBounds(relativeTo: nil)
+        let tableTopY = bounds.center.y + bounds.extents.y / 2
+        // Lift the chessboard ~6 mm above the table mesh so its frame
+        // doesn't z-fight the table surface (the board's frame extends
+        // a few mm below its origin; flush placement causes the
+        // muddy "blended" look the user reported).
+        let lift: Float = 0.006
+        let boardPosition = SIMD3<Float>(
             bounds.center.x,
-            bounds.center.y + bounds.extents.y / 2,
+            tableTopY + lift,
             bounds.center.z
         )
-        // Translate the env so the table-top ends up at the target.
-        env.position = targetBoardCenter - tableTopLocal
-        env.name = "VirtualEnvironment"
-        content.add(env)
-        return true
+
+        // Cinematic noir lighting + dust motes, ported from the env
+        // author's reference scene. Tuned to the geometry, so kept as
+        // a unit. See `addEnvironmentLighting` and `addDustMotes`.
+        addEnvironmentLighting(into: content)
+        addDustMotes(into: content)
+
+        return boardPosition
+    }
+
+    /// Four-light noir setup the env author tuned for this hall:
+    ///   - KEY: tight warm spot directly above the table.
+    ///   - RIM: warm molten-gold accent from far behind the room
+    ///          (the Erebor signature glow), with a slow flicker.
+    ///   - FILL: cool counter-light behind the user.
+    ///   - TABLE FILL: small warm pool at table height for material
+    ///                 readability on the pieces, also flickers.
+    @MainActor
+    private static func addEnvironmentLighting(
+        into content: any RealityViewContentProtocol
+    ) {
+        // KEY — tight warm spotlight on the chess area
+        var key = SpotLightComponent(
+            color: .init(red: 1.0, green: 0.78, blue: 0.45, alpha: 1.0),
+            intensity: 3_500_000
+        )
+        key.attenuationRadius = 4.0
+        key.innerAngleInDegrees = 30
+        key.outerAngleInDegrees = 65
+        let keyEntity = Entity()
+        keyEntity.name = "KeyLight"
+        keyEntity.components.set(key)
+        keyEntity.look(
+            at: SIMD3<Float>(0, 0.7, -1.0),
+            from: SIMD3<Float>(0, 4.5, -1.0),
+            relativeTo: nil
+        )
+        content.add(keyEntity)
+
+        // RIM — warm molten-gold accent
+        var rim = PointLightComponent(
+            color: .init(red: 1.0, green: 0.45, blue: 0.12, alpha: 1.0),
+            intensity: 1_200_000
+        )
+        rim.attenuationRadius = 18.0
+        let rimEntity = Entity()
+        rimEntity.name = "RimLight"
+        rimEntity.components.set(rim)
+        rimEntity.position = SIMD3<Float>(0, 4.0, -12.0)
+        content.add(rimEntity)
+        startLightFlicker(on: rimEntity, baseIntensity: 1_200_000, amplitude: 0.18, period: 2.7)
+
+        // FILL — cool counter-light from entrance side
+        var fill = PointLightComponent(
+            color: .init(red: 0.45, green: 0.55, blue: 0.85, alpha: 1.0),
+            intensity: 150_000
+        )
+        fill.attenuationRadius = 14.0
+        let fillEntity = Entity()
+        fillEntity.name = "FillLight"
+        fillEntity.components.set(fill)
+        fillEntity.position = SIMD3<Float>(0, 2.5, 5.0)
+        content.add(fillEntity)
+
+        // TABLE FILL — soft warm pool at table surface
+        var tableFill = PointLightComponent(
+            color: .init(red: 1.0, green: 0.82, blue: 0.55, alpha: 1.0),
+            intensity: 80_000
+        )
+        tableFill.attenuationRadius = 1.8
+        let tableFillEntity = Entity()
+        tableFillEntity.name = "TableFillLight"
+        tableFillEntity.components.set(tableFill)
+        tableFillEntity.position = SIMD3<Float>(0, 1.0, -1.0)
+        content.add(tableFillEntity)
+        startLightFlicker(on: tableFillEntity, baseIntensity: 80_000, amplitude: 0.10, period: 1.9)
+    }
+
+    /// Drives an organic-looking intensity flicker on a `PointLightComponent`
+    /// using two superimposed sine waves at different frequencies.
+    /// Cancelled implicitly when the entity is released (weak capture
+    /// returns nil → loop exits).
+    @MainActor
+    private static func startLightFlicker(
+        on entity: Entity,
+        baseIntensity: Float,
+        amplitude: Float,
+        period: Double
+    ) {
+        Task { @MainActor [weak entity] in
+            let start = Date()
+            while !Task.isCancelled {
+                guard let entity = entity else { return }
+                let elapsed = Date().timeIntervalSince(start)
+                let phase = (elapsed / period) * 2.0 * .pi
+                let secondary = (elapsed / (period * 0.43)) * 2.0 * .pi
+                let mix = (sin(phase) * 0.7 + sin(secondary) * 0.3)
+                let modulator = Float(mix) * amplitude
+                let newIntensity = baseIntensity * (1.0 + modulator)
+                if var p = entity.components[PointLightComponent.self] {
+                    p.intensity = newIntensity
+                    entity.components.set(p)
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+
+    /// Drifting dust motes — small tinted particles that float through
+    /// the warm key-light beam, courtesy of the env author. Pure
+    /// `ParticleEmitterComponent` so no asset dependency.
+    @MainActor
+    private static func addDustMotes(
+        into content: any RealityViewContentProtocol
+    ) {
+        var emitter = ParticleEmitterComponent()
+        emitter.emitterShape = .box
+        emitter.emitterShapeSize = SIMD3<Float>(2.5, 2.0, 2.5)
+        emitter.birthLocation = .volume
+        emitter.birthDirection = .normal
+        emitter.timing = .repeating(
+            warmUp: 8.0,
+            emit: .init(duration: .infinity),
+            idle: nil
+        )
+
+        var main = emitter.mainEmitter
+        main.birthRate = 35
+        main.lifeSpan = 18
+        main.lifeSpanVariation = 6
+        main.size = 0.006
+        main.sizeVariation = 0.003
+        main.color = .constant(.single(
+            .init(red: 1.0, green: 0.88, blue: 0.65, alpha: 0.8)
+        ))
+        main.opacityCurve = .gradualFadeInOut
+        main.spreadingAngle = 0.5
+        main.acceleration = SIMD3<Float>(0, -0.02, 0)
+        main.angularSpeed = 0.2
+        main.angularSpeedVariation = 0.1
+        emitter.mainEmitter = main
+
+        emitter.speed = 0.04
+        emitter.speedVariation = 0.02
+
+        let entity = Entity()
+        entity.name = "DustMotes"
+        entity.components.set(emitter)
+        entity.position = SIMD3<Float>(0, 2.5, -1.0)
+        content.add(entity)
     }
 
     /// Fallback used only if the immersive opens with no `activeSession`
