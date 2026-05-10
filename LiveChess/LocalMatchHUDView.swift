@@ -20,6 +20,10 @@ import Combine
 struct LocalMatchHUDView: View {
 
     @Bindable var coordinator: MatchCoordinator
+    /// Optional — drives the "Move board" button. Nil only in the
+    /// SwiftUI preview; in real scenes the placement controller is
+    /// always set up by `ChessSceneView.make`.
+    var placement: PlacementController?
 
     /// Wall-clock time the current match started. Reset on `newGame()`.
     @State private var matchStartedAt: Date = .now
@@ -140,14 +144,27 @@ struct LocalMatchHUDView: View {
 
     @ViewBuilder
     private var controls: some View {
-        Button {
-            coordinator.newGame()
-        } label: {
-            Label("New game", systemImage: "arrow.clockwise")
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 8) {
+            Button {
+                coordinator.newGame()
+            } label: {
+                Label("New game", systemImage: "arrow.clockwise")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+
+            if let placement {
+                Button {
+                    placement.reposition()
+                } label: {
+                    Label("Move board", systemImage: "viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
     }
 
     // MARK: - Derived strings / styles

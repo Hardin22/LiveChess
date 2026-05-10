@@ -28,6 +28,13 @@ struct ChessSceneView: View {
     @State private var session: (any MatchSession)?
     @State private var renderer: ChessRenderer?
 
+    /// Drives the initial chessboard placement on a detected horizontal
+    /// table (Vision Pro device) and the "Move board" reposition flow.
+    /// Fallbacks transparently to the hardcoded position on the
+    /// simulator. Created in `make`, stashed here so the HUD's
+    /// reposition button can reach it.
+    @State private var placementController: PlacementController?
+
     @State private var dragOriginPosition: SIMD3<Float>?      // board placement
     @State private var pieceDrag: PieceDragState?              // piece drag
 
@@ -92,23 +99,46 @@ struct ChessSceneView: View {
                 )
             }
 
-            renderer.rootEntity.position = SIMD3<Float>(
-                0,
-                SceneMetrics.defaultTableHeight,
-                SceneMetrics.defaultTableDepth
-            )
             // Board orientation: rotate the whole root 180° around Y when
             // the human is playing Black, so the user sits on Black's
             // side and sees their own pieces at the bottom of the board.
             // Without this, a Black-side game would look mirrored from
             // the player's POV (kings/queens on the wrong files).
             let needsBlackPerspective = humanSide == .black
-            if needsBlackPerspective {
-                renderer.rootEntity.transform.rotation = simd_quatf(
-                    angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+            let baseRotation: simd_quatf = needsBlackPerspective
+                ? simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
+                : simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
+            // Fallback transform — used immediately so the user always
+            // sees a board, then refined by `PlacementController` once
+            // ARKit locates a real table (Vision Pro device only). On
+            // the simulator the fallback IS the final position.
+            let fallback = Transform(
+                scale: .one,
+                rotation: baseRotation,
+                translation: SIMD3<Float>(
+                    0,
+                    SceneMetrics.defaultTableHeight,
+                    SceneMetrics.defaultTableDepth
                 )
-            }
+            )
             content.add(renderer.rootEntity)
+
+            // Hand the renderer's root to the placement controller, which
+            // seats it at `fallback` immediately and then nudges it onto
+            // a detected horizontal surface (table) within ~3 s.
+            let placement = PlacementController(fallback: fallback)
+            self.placementController = placement
+            placement.attach(boardEntity: renderer.rootEntity)
+
+            // Placement helper: small floating tooltip above the board
+            // that surfaces "Looking for a flat surface…" / "Drag the
+            // board's edge to reposition" / etc. Driven entirely by
+            // `placementController.helperMessage`; the SwiftUI body in
+            // the attachment closure shows / hides itself.
+            if let helper = attachments.entity(for: "placement-helper") {
+                helper.position = SIMD3<Float>(0, 0.45, 0)
+                renderer.rootEntity.addChild(helper)
+            }
 
             // Anchor the floating HUD to the right of the board, slightly
             // above the table surface, tilted up so it faces the user.
@@ -157,11 +187,20 @@ struct ChessSceneView: View {
                 if let session = appModel.activeSession {
                     switch session {
                     case .local(let coord):
-                        LocalMatchHUDView(coordinator: coord)
+                        LocalMatchHUDView(
+                            coordinator: coord,
+                            placement: placementController
+                        )
                     case .online(let online):
-                        OnlineMatchHUDView(session: online)
+                        OnlineMatchHUDView(
+                            session: online,
+                            placement: placementController
+                        )
                     }
                 }
+            }
+            Attachment(id: "placement-helper") {
+                PlacementHelperOverlay(controller: placementController)
             }
         }
         .gesture(combinedDrag)
@@ -173,7 +212,13 @@ struct ChessSceneView: View {
                case .online(let online) = session {
                 Task { await online.disconnect() }
             }
+            // Stop ARKit so the world-sensing indicator goes off when
+            // the user is back in the lobby window.
+            if let placement = placementController {
+                Task { await placement.tearDown() }
+            }
             appModel.activeSession = nil
+            placementController = nil
         }
     }
 

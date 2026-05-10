@@ -19,6 +19,11 @@ import Combine
 struct OnlineMatchHUDView: View {
 
     @Bindable var session: LichessMatchSession
+    /// Optional — drives the "Move board" button. Nil only in the
+    /// SwiftUI preview; in real scenes the placement controller is
+    /// always set up by `ChessSceneView.make`.
+    var placement: PlacementController?
+
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openURL) private var openURL
     @Environment(AppModel.self) private var appModel
@@ -374,6 +379,20 @@ struct OnlineMatchHUDView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+            }
+
+            // "Move board" is available across both states (live + over).
+            // In the over state it doesn't matter much, but it's harmless
+            // and keeps the affordance discoverable.
+            if let placement {
+                Button {
+                    placement.reposition()
+                } label: {
+                    Label("Move board", systemImage: "viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
         }
     }
