@@ -639,15 +639,38 @@ struct LobbyView: View {
 
     /// Sets up `lobby.onGameSessionReady` to flip `appModel.activeSession`
     /// and open the immersive space when the game is built. Used by all
-    /// three online flows.
+    /// three online flows (Quick Pair, friend challenge, AI challenge,
+    /// plus accept-incoming and resume-active-game).
+    ///
+    /// Crucial detail for the multi-game lifecycle: if an immersive is
+    /// already open from a previous game, we MUST dismiss it before
+    /// opening the new one. RealityView's `make` closure runs once and
+    /// captures the active session at that time — toggling
+    /// `appModel.activeSession` later doesn't trigger a rebuild, so a
+    /// new session would render against the previous board state and
+    /// be non-interactive (the drag handler still references the dead
+    /// session). Dismiss-then-open forces a clean rebuild.
     private func wireOnGameSessionReadyAndOpenImmersive(
         _ lobby: LichessLobbyController
     ) {
-        lobby.onGameSessionReady = { @MainActor [weak appModel = appModel] matchSession in
+        lobby.onGameSessionReady = {
+            @MainActor [weak appModel = appModel] matchSession in
             guard let appModel else { return }
-            appModel.activeSession = .online(matchSession)
-            appModel.immersiveSpaceState = .inTransition
             Task { @MainActor in
+                // Tear down any previous online session + dismiss its
+                // immersive. The previous scene's onDisappear cleans up
+                // the renderer; we await dismissImmersiveSpace() so the
+                // teardown completes before the new session is wired.
+                if case .online(let old) = appModel.activeSession {
+                    await old.disconnect()
+                }
+                if appModel.immersiveSpaceState == .open {
+                    appModel.immersiveSpaceState = .inTransition
+                    await dismissImmersiveSpace()
+                }
+
+                appModel.activeSession = .online(matchSession)
+                appModel.immersiveSpaceState = .inTransition
                 switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
                 case .opened:
                     break
