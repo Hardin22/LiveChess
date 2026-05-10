@@ -302,28 +302,49 @@ final class LichessLobbyController {
     /// Accepts an incoming challenge from another user. Server then
     /// emits a `gameStart` on the global stream, which spins up an
     /// online match session normally.
+    ///
+    /// Optimistically removes the row so the banner disappears the
+    /// moment the user taps. If the API call fails (challenge already
+    /// expired / cancelled / etc.) we add it back so the user can see
+    /// what went wrong.
     func acceptIncoming(_ id: String) async {
+        let removed = incomingChallenges.first(where: { $0.id == id })
+        incomingChallenges.removeAll { $0.id == id }
         do {
             try await session.api.acceptChallenge(id)
-            incomingChallenges.removeAll { $0.id == id }
         } catch let error as LichessError {
             lastError = error
+            if let removed { incomingChallenges.insert(removed, at: 0) }
         } catch {
             lastError = .network(underlying: error)
+            if let removed { incomingChallenges.insert(removed, at: 0) }
         }
     }
 
     /// Declines an incoming challenge with an optional reason. The
     /// reason is shown to the challenger as context; `nil` falls back
     /// to Lichess' "generic" decline message.
+    ///
+    /// Same optimistic-clear shape as `acceptIncoming`. In particular
+    /// for *rematch* challenges Lichess sometimes returns 4xx if the
+    /// challenge has already been auto-cancelled (e.g. the original
+    /// game's window closed) — without optimistic clear the row would
+    /// stay visible forever even though it's already gone server-side.
     func declineIncoming(_ id: String, reason: LichessDeclineReason? = nil) async {
+        let removed = incomingChallenges.first(where: { $0.id == id })
+        incomingChallenges.removeAll { $0.id == id }
         do {
             try await session.api.declineChallenge(id, reason: reason)
-            incomingChallenges.removeAll { $0.id == id }
+        } catch LichessError.clientError(let status, _) where status == 404 {
+            // Already gone server-side — optimistic clear is correct.
+            // Don't surface as an error.
+            return
         } catch let error as LichessError {
             lastError = error
+            if let removed { incomingChallenges.insert(removed, at: 0) }
         } catch {
             lastError = .network(underlying: error)
+            if let removed { incomingChallenges.insert(removed, at: 0) }
         }
     }
 

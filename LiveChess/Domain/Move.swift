@@ -69,4 +69,32 @@ extension Move {
         case .pawn, .king: "?"
         }
     }
+
+    /// Returns a copy of this move with `isCastle` / `isEnPassant`
+    /// derived from the piece sitting at `from` in `position`. Use this
+    /// to augment a move parsed from an external UCI string (Stockfish,
+    /// Lichess) so downstream consumers — particularly the renderer —
+    /// can drive the right animation. The rules engine itself doesn't
+    /// need the flags to apply the move correctly, but the renderer's
+    /// castling-rook slide and en-passant capture fade are gated on
+    /// them.
+    func augmentingFlags(in position: Position) -> Move {
+        guard let piece = position[from] else { return self }
+        let fileDelta = abs(from.file - to.file)
+        let castling = piece.kind == .king && fileDelta == 2
+        // En-passant: pawn moves diagonally to an empty square. The
+        // captured pawn sits on the same rank as the moving pawn's
+        // origin (not the destination), but the renderer doesn't need
+        // that detail — just the flag so it can fade the right piece.
+        let enPassant = piece.kind == .pawn
+            && fileDelta == 1
+            && position[to] == nil
+        return Move(
+            from: from,
+            to: to,
+            promotion: promotion,
+            isCastle: castling,
+            isEnPassant: enPassant
+        )
+    }
 }

@@ -110,12 +110,18 @@ final class MatchCoordinator {
     // MARK: - Private
 
     private func performMove(_ move: Move) {
+        // Augment with isCastle / isEnPassant in case the move came from
+        // an external source (Stockfish via UCI, or any other producer
+        // that doesn't set the flags). Human-drag moves come through
+        // `legalMoves(...)` already augmented; `augmentingFlags(in:)` is
+        // a no-op for those.
+        let augmented = move.augmentingFlags(in: match.currentPosition)
         do {
-            let resulting = try rules.apply(move, to: match.currentPosition)
+            let resulting = try rules.apply(augmented, to: match.currentPosition)
             let allPositions = match.positions + [resulting]
             let status = rules.status(of: resulting, history: allPositions)
-            match.apply(move: move, resulting: resulting, status: status)
-            moveAppliedHandler?(move)
+            match.apply(move: augmented, resulting: resulting, status: status)
+            moveAppliedHandler?(augmented)
         } catch {
             lastError = error
         }

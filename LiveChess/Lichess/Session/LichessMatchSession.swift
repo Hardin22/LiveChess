@@ -397,7 +397,14 @@ final class LichessMatchSession: MatchSession {
     }
 
     private func applyOneMove(uci: String) {
-        guard let move = Move(uci: uci) else { return }
+        guard let parsed = Move(uci: uci) else { return }
+        // Infer isCastle / isEnPassant from the geometry — UCI carries
+        // no castling flag (it's just the king's `from→to`), so without
+        // this the renderer's `slideCastlingRook(...)` is skipped on
+        // opponent castles and the rook stays visually in its original
+        // square (the model is correct via the rules engine; only the
+        // animation is missing).
+        let move = parsed.augmentingFlags(in: match.currentPosition)
         do {
             let next = try rules.apply(move, to: match.currentPosition)
             let status = rules.status(of: next, history: match.positions + [next])
