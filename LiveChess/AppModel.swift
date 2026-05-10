@@ -41,6 +41,12 @@ class AppModel {
     /// Carries the bearer token for the rest of the app's Lichess flows.
     let lichess = LichessSession()
 
+    /// User-controlled piece appearance (preset + per-side colour).
+    /// Persisted across launches via `UserDefaults`. Read by the
+    /// renderer at scene-build time to override the USDZ-baked
+    /// materials.
+    let pieceCustomization = PieceCustomization()
+
     /// The match the immersive scene should render. Set by the lobby
     /// (or the Lichess controller when an online game starts) immediately
     /// before opening the immersive space, then read by `ChessSceneView`

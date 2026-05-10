@@ -1,5 +1,6 @@
 import Foundation
 import RealityKit
+import UIKit
 
 /// Builds the visible 8×8 chessboard surface as a single RealityKit entity
 /// hierarchy. Sits flat in the X-Z plane with the centre at the world
@@ -17,8 +18,11 @@ enum BoardSurface {
         let root = Entity()
         root.name = "ChessBoard"
 
-        let frame = makeFrame()
-        root.addChild(frame)
+        let base = makeBase()
+        root.addChild(base)
+
+        let inset = makeInsetGroove()
+        root.addChild(inset)
 
         let squares = makeSquares()
         root.addChild(squares)
@@ -28,57 +32,91 @@ enum BoardSurface {
 
     // MARK: - Components
 
-    private static func makeFrame() -> Entity {
-        // Build the frame as four thin edge slabs surrounding the playable
-        // 8×8 area, **not** as a single box underneath the squares. The
-        // hollow shape means hit-tests on a square (which has no collision)
-        // pass through to nothing, instead of falling through to the frame
-        // below — so the user can hover/drag pieces without the frame
-        // catching every interaction it shouldn't.
-        let outer = SceneMetrics.boardOuterSide
-        let playable = SceneMetrics.boardPlayableSide
-        let edge = SceneMetrics.boardFrameWidth
-        let thickness = SceneMetrics.boardThickness
-        let edgeCenter = playable / 2 + edge / 2
-
+    /// Single solid slab covering the full outer board area. Acts as
+    /// both the structural board and the visible frame: the slab's
+    /// top is at `y = 0`, and the 64 thin square tiles sit flush
+    /// just above it. The portion of the slab left visible around
+    /// the 8×8 square area IS the frame — no separate rim entities,
+    /// no corner seams, no plank fragmentation.
+    ///
+    /// Tagged with `frameName` (both wrapper and slab) so the existing
+    /// reposition gesture's hit-test still resolves to the frame.
+    /// Slightly rounded corners (6 mm) give a tournament-board feel
+    /// instead of a hard-edged Lego brick.
+    private static func makeBase() -> Entity {
         let group = Entity()
         group.name = frameName
 
-        // North + south edges run along x and span the full outer width so
-        // the corners overlap nicely with the side rails.
-        for z in [Float(-edgeCenter), Float(+edgeCenter)] {
-            let bar = makeFrameBar(
-                size: [outer, thickness, edge],
-                position: [0, -thickness / 2, z]
-            )
-            group.addChild(bar)
-        }
-        // East + west edges run along z and only span the playable depth so
-        // they don't overlap with the N/S corners (avoids z-fight artefacts).
-        for x in [Float(-edgeCenter), Float(+edgeCenter)] {
-            let bar = makeFrameBar(
-                size: [edge, thickness, playable],
-                position: [x, -thickness / 2, 0]
-            )
-            group.addChild(bar)
-        }
+        let outer = SceneMetrics.boardOuterSide
+        let thickness = SceneMetrics.boardThickness
+
+        let slab = ModelEntity(
+            mesh: .generateBox(
+                size: [outer, thickness, outer],
+                cornerRadius: 0.0025
+            ),
+            materials: [ChessMaterials.boardFrame]
+        )
+        // Recess the slab top by `boardBaseRecess` below the visible
+        // playing surface so the squares' tops (which sit at
+        // boardSurfaceY) end up strictly z-above the slab top —
+        // eliminates the coplanar-surfaces z-fight that used to
+        // mix the frame texture into the square texture along the
+        // perimeter cells.
+        slab.position = [0, SceneMetrics.boardSurfaceY - SceneMetrics.boardBaseRecess - thickness / 2, 0]
+        slab.name = frameName
+        slab.components.set(InputTargetComponent())
+        slab.components.set(HoverEffectComponent())
+        slab.generateCollisionShapes(recursive: false)
+        group.addChild(slab)
+
         return group
     }
 
-    private static func makeFrameBar(
-        size: SIMD3<Float>,
-        position: SIMD3<Float>
-    ) -> ModelEntity {
-        let bar = ModelEntity(
-            mesh: .generateBox(size: size, cornerRadius: 0.002),
-            materials: [ChessMaterials.boardFrame]
-        )
-        bar.position = position
-        bar.name = frameName
-        bar.components.set(InputTargetComponent())
-        bar.components.set(HoverEffectComponent())
-        bar.generateCollisionShapes(recursive: false)
-        return bar
+    /// Thin contrasting groove around the playable area — a refined
+    /// detail that delineates the frame from the squares without
+    /// adding height. Built as four very thin strips just inside
+    /// the playable boundary, ~0.5 mm proud of the base. Reads as an
+    /// inscribed line on real boards. Painted with the same frame
+    /// material so it follows the user's frame-colour pick (slightly
+    /// darkened so it still looks like a groove, not a paint smear).
+    private static func makeInsetGroove() -> Entity {
+        let group = Entity()
+        group.name = "BoardGroove"
+
+        let playable = SceneMetrics.boardPlayableSide
+        let strip: Float = 0.0015               // 1.5 mm wide
+        let thickness: Float = 0.0006           // 0.6 mm proud of base top
+        let outerEdge = playable / 2 + strip / 2
+        let topY: Float = thickness / 2
+
+        var grooveMaterial = PhysicallyBasedMaterial()
+        grooveMaterial.baseColor = .init(tint: UIColor(white: 0.05, alpha: 1))
+        grooveMaterial.roughness = 0.55
+        grooveMaterial.metallic = .init(floatLiteral: 0)
+
+        let length = playable + strip * 2
+        // North + south strips
+        for z in [Float(-outerEdge), Float(+outerEdge)] {
+            let bar = ModelEntity(
+                mesh: .generateBox(size: [length, thickness, strip], cornerRadius: 0.0003),
+                materials: [grooveMaterial]
+            )
+            bar.position = [0, topY, z]
+            bar.name = "BoardGrooveBar"
+            group.addChild(bar)
+        }
+        // East + west strips (slightly shorter so they tuck under the N/S strips)
+        for x in [Float(-outerEdge), Float(+outerEdge)] {
+            let bar = ModelEntity(
+                mesh: .generateBox(size: [strip, thickness, playable], cornerRadius: 0.0003),
+                materials: [grooveMaterial]
+            )
+            bar.position = [x, topY, 0]
+            bar.name = "BoardGrooveBar"
+            group.addChild(bar)
+        }
+        return group
     }
 
     private static func makeSquares() -> Entity {
@@ -88,20 +126,26 @@ enum BoardSurface {
         for rank in 0..<8 {
             for file in 0..<8 {
                 // Standard chess colouring: a1 (file 0 + rank 0 = 0, even) is
-                // a DARK square; h1 (sum 7, odd) is LIGHT. So `isLight` flips
-                // on **odd** sums, not even — the previous formula had this
-                // backwards, which is why e1 was rendering light instead of dark.
+                // a DARK square; h1 (sum 7, odd) is LIGHT. `isLight` flips on
+                // odd sums.
                 let isLight = !(file + rank).isMultiple(of: 2)
                 let squareEntity = ModelEntity(
                     mesh: .generateBox(
                         size: [SceneMetrics.squareSize, SceneMetrics.squareThickness, SceneMetrics.squareSize],
-                        cornerRadius: 0.0005
+                        cornerRadius: 0.0
                     ),
                     materials: [ChessMaterials.square(forIsLight: isLight)]
                 )
                 let pos = position(for: Square(file: file, rank: rank)!)
-                // Squares sit slightly above the frame top (y > 0) so seams stay clean.
-                squareEntity.position = [pos.x, SceneMetrics.squareThickness / 2 - 0.0001, pos.z]
+                // Inlay: tile top sits exactly at boardSurfaceY (= 0,
+                // same plane as the base slab's top), tile bottom
+                // sinks into the slab and is occluded by it. ZERO
+                // visible step from frame to square.
+                squareEntity.position = [
+                    pos.x,
+                    SceneMetrics.boardSurfaceY - SceneMetrics.squareThickness / 2,
+                    pos.z
+                ]
                 squareEntity.name = "Square_\(file)_\(rank)"
                 group.addChild(squareEntity)
             }

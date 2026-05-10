@@ -19,6 +19,10 @@ struct LobbyView: View {
     /// lobby's lifetime so the event stream can keep running.
     @State private var lichessLobby: LichessLobbyController?
 
+    /// Whether the piece-customisation sheet is presented. Bound to
+    /// the "Pieces" button in the header.
+    @State private var showingPieceCustomization: Bool = false
+
     /// Currently selected mode (drives which configuration card is
     /// visible). Defaults to `.local` so first-time users without a
     /// Lichess account can play immediately.
@@ -133,6 +137,10 @@ struct LobbyView: View {
                 lichessLobby?.clearPending()
             }
         }
+        .sheet(isPresented: $showingPieceCustomization) {
+            PieceCustomizationView()
+                .environment(appModel)
+        }
     }
 
     // MARK: - Header
@@ -144,6 +152,14 @@ struct LobbyView: View {
             Text("A chess game in mixed reality.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            Button {
+                showingPieceCustomization = true
+            } label: {
+                Label("Pieces", systemImage: "paintbrush.fill")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
     }

@@ -22,6 +22,9 @@ enum PieceMeshFactory {
     ///
     /// Also registers `ChessPieceComponent` with RealityKit on first call —
     /// custom components must be registered before any Entity can carry one.
+    /// Pre-loads the bundled CC0 PBR textures used by texture-backed
+    /// piece-material presets, so per-piece material construction stays
+    /// synchronous at render time.
     static func preload() async {
         guard !preloadComplete else { return }
         ChessPieceComponent.registerComponent()
@@ -33,13 +36,22 @@ enum PieceMeshFactory {
                 }
             }
         }
+        await PieceMaterialFactory.preloadTextures()
         preloadComplete = true
     }
 
-    static func makeEntity(for piece: Piece) -> Entity {
+    /// Builds a single piece entity. Pass `materialOverride = nil` (the
+    /// `.classic` case) to keep the USDZ author's baked materials; pass
+    /// a non-nil override to swap every `ModelComponent`'s materials
+    /// with that one (typically a `PhysicallyBasedMaterial` produced
+    /// by `PieceMaterialFactory`).
+    static func makeEntity(
+        for piece: Piece,
+        materialOverride: (any Material)? = nil
+    ) -> Entity {
         let name = filename(for: piece)
         if let template = templateCache[name] {
-            return cloneAndNormalize(template, for: piece)
+            return cloneAndNormalize(template, for: piece, materialOverride: materialOverride)
         }
         return makePlaceholderEntity(for: piece)
     }
@@ -58,7 +70,11 @@ enum PieceMeshFactory {
     ///
     /// Callers position the *wrapper* at the centre of the destination square;
     /// the visual centre of the piece then lines up exactly, every time.
-    private static func cloneAndNormalize(_ template: Entity, for piece: Piece) -> Entity {
+    private static func cloneAndNormalize(
+        _ template: Entity,
+        for piece: Piece,
+        materialOverride: (any Material)?
+    ) -> Entity {
         let model = template.clone(recursive: true)
         let bounds = model.visualBounds(recursive: true, relativeTo: nil)
 
@@ -77,9 +93,36 @@ enum PieceMeshFactory {
             -bounds.center.z * scale
         )
 
+        if let materialOverride {
+            applyMaterial(materialOverride, to: model)
+        }
+
         let wrapper = Entity()
         wrapper.addChild(model)
         return wrapper
+    }
+
+    /// Walks the cloned model's entity tree and swaps every
+    /// `ModelComponent`'s `materials` with `material`. The USDZ
+    /// authors split each piece into multiple sub-meshes (base, body,
+    /// head, sometimes a separate cross/crown) — we override every
+    /// one of them so the whole piece reads as a single material.
+    /// Original baked materials are discarded (we cloned the template,
+    /// so the cache is unaffected).
+    ///
+    /// Public so the renderer can re-skin pieces in place when the
+    /// user changes the customisation while the immersive scene is
+    /// open (no need to tear down + rebuild the entity tree).
+    static func applyMaterial(_ material: any Material, to root: Entity) {
+        var stack: [Entity] = [root]
+        while let entity = stack.popLast() {
+            if var model = entity.components[ModelComponent.self] {
+                let count = max(1, model.materials.count)
+                model.materials = Array(repeating: material, count: count)
+                entity.components.set(model)
+            }
+            stack.append(contentsOf: entity.children)
+        }
     }
 
     private static func filename(for piece: Piece) -> String {

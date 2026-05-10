@@ -2,6 +2,7 @@ import Foundation
 import RealityKit
 import TabletopKit
 import Spatial
+import UIKit
 import simd
 
 /// Bridges TabletopKit's abstract game state to RealityKit entities, and
@@ -59,10 +60,94 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// valid hit. Putting both on the wrapper side-steps the issue and lets
     /// the gesture's `value.entity` resolve directly to the wrapper, where
     /// `ChessPieceComponent` lives.
+    /// User-picked material configuration applied to every piece
+    /// built through this renderer. `nil` (the default) keeps the
+    /// USDZ-baked materials. The scene host sets this on construction
+    /// from the active `PieceCustomization`. Per-piece override
+    /// materials are derived per-side at `placePiece` time, since the
+    /// preset's tint differs for white vs black.
+    var pieceMaterial: PieceMaterial?
+
+    /// Live-applies a new piece-material configuration to every piece
+    /// already on the board, without rebuilding the entity tree. Used
+    /// by the scene host's `.onChange(pieceCustomization)` so an open
+    /// game updates its skin the moment the user moves a colour
+    /// picker in the lobby sheet.
+    func setPieceMaterial(_ config: PieceMaterial) {
+        self.pieceMaterial = config
+        for (_, entity) in pieceEntities {
+            guard let comp = entity.components[ChessPieceComponent.self] else { continue }
+            guard let override = PieceMaterialFactory.material(for: config, side: comp.color) else {
+                continue
+            }
+            PieceMeshFactory.applyMaterial(override, to: entity)
+        }
+    }
+
+    /// Live-rebuilds the board's surface materials to match the user's
+    /// full customisation (square + frame material families AND
+    /// per-slot tints). Walks the four frame bars + 64 squares and
+    /// swaps each `ModelComponent`'s materials with the PBR built by
+    /// `PieceMaterialFactory.boardSquareMaterial / boardFrameMaterial`.
+    /// No entity teardown — pieces and markers stay put.
+    ///
+    /// Square light/dark assignment is recomputed from the
+    /// `Square_<file>_<rank>` name encoded in `BoardSurface` so the
+    /// walk is self-contained (no dependency on whatever material is
+    /// currently installed).
+    func setBoardSurface(_ config: PieceMaterial) {
+        let lightMat = PieceMaterialFactory.boardSquareMaterial(for: config, isLight: true)
+        let darkMat  = PieceMaterialFactory.boardSquareMaterial(for: config, isLight: false)
+        let frameMat = PieceMaterialFactory.boardFrameMaterial(for: config)
+
+        var stack: [Entity] = [boardEntity]
+        while let entity = stack.popLast() {
+            if entity.name.hasPrefix("Square_"),
+               var model = entity.components[ModelComponent.self] {
+                let parts = entity.name.dropFirst("Square_".count).split(separator: "_")
+                if parts.count == 2,
+                   let file = Int(parts[0]),
+                   let rank = Int(parts[1]) {
+                    let isLight = !(file + rank).isMultiple(of: 2)
+                    model.materials = [isLight ? lightMat : darkMat]
+                    entity.components.set(model)
+                }
+            } else if entity.name == BoardSurface.frameName,
+                      var model = entity.components[ModelComponent.self] {
+                model.materials = [frameMat]
+                entity.components.set(model)
+            }
+            stack.append(contentsOf: entity.children)
+        }
+    }
+
     func placePiece(_ equipment: ChessPieceEquipment, on square: Square) {
-        let entity = PieceMeshFactory.makeEntity(for: equipment.piece)
+        let override: (any Material)? = pieceMaterial.flatMap { config in
+            PieceMaterialFactory.material(for: config, side: equipment.piece.color)
+        }
+        let entity = PieceMeshFactory.makeEntity(
+            for: equipment.piece,
+            materialOverride: override
+        )
         entity.name = "Piece_\(equipment.piece.color)_\(equipment.piece.kind)_\(equipment.id)"
         entity.position = surfacePosition(for: square)
+
+        // Knights and right-side bishops are authored in the USDZ
+        // facing one direction (whichever the modeller picked). The
+        // result is that all knights face the h-file from white's
+        // POV — visually weird because the kingside knight ends up
+        // staring away from its queenside twin. Flip the right-side
+        // pair (file 6 knight, file 5 bishop) 180° around Y so they
+        // face their counterparts. Rotation is preserved by the
+        // `glide` move animation, so a knight that moves keeps its
+        // initial orientation.
+        if (equipment.piece.kind == .knight && square.file == 6) ||
+           (equipment.piece.kind == .bishop && square.file == 5) {
+            entity.transform.rotation = simd_quatf(
+                angle: .pi,
+                axis: SIMD3<Float>(0, 1, 0)
+            )
+        }
 
         let height = SceneMetrics.pieceHeight(for: equipment.piece.kind)
         let diameter = SceneMetrics.pieceBaseDiameter
@@ -171,7 +256,7 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// drag begins so the user has a tactile cue.
     func lift(_ entity: Entity) {
         var target = entity.transform
-        target.translation.y = SceneMetrics.squareThickness + Self.liftHeight
+        target.translation.y = SceneMetrics.boardSurfaceY + Self.liftHeight
         entity.move(
             to: target,
             relativeTo: rootEntity,
@@ -257,7 +342,7 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
             materials: [ChessMaterials.legalMoveMarkerMaterial()]
         )
         var pos = BoardSurface.position(for: square)
-        pos.y = SceneMetrics.squareThickness + height / 2 + 0.0005
+        pos.y = SceneMetrics.boardSurfaceY + height / 2 + 0.0005
         entity.position = pos
         entity.name = "LegalDot_\(square.algebraic)"
         return entity
@@ -278,7 +363,7 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         )
         var pos = BoardSurface.position(for: square)
         // Lift slightly *above* the legal dot so the overlay covers it.
-        pos.y = SceneMetrics.squareThickness + height / 2 + 0.0010
+        pos.y = SceneMetrics.boardSurfaceY + height / 2 + 0.0010
         entity.position = pos
         entity.name = "ActiveOverlay_\(square.algebraic)"
         return entity
@@ -337,11 +422,12 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
 
     // MARK: - Helpers
 
-    /// World-position above a square's surface — base of the piece sits on the
-    /// top face of the square box (very slightly above the frame).
+    /// World-position on a square's playing surface — base of the
+    /// piece sits flush on the board's top plane (which, post-flush
+    /// rework, is the same plane for every square AND the frame).
     private func surfacePosition(for square: Square) -> SIMD3<Float> {
         var pos = BoardSurface.position(for: square)
-        pos.y = SceneMetrics.squareThickness
+        pos.y = SceneMetrics.boardSurfaceY
         return pos
     }
 

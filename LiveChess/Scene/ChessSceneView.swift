@@ -55,6 +55,13 @@ struct ChessSceneView: View {
             // session abstraction keeps the differences out of the make
             // closure.
             let renderer = ChessRenderer()
+            // Wire the user's chosen piece material BEFORE pieces are
+            // populated so the very first frame renders with the right
+            // override. Also push the board colours through so the
+            // squares + frame match the user's palette from frame one.
+            let customization = appModel.pieceCustomization.current
+            renderer.pieceMaterial = customization
+            renderer.setBoardSurface(customization)
             let table = ChessTable(id: EquipmentIdentifier(1))
 
             var setup = TableSetup(tabletop: table)
@@ -231,6 +238,15 @@ struct ChessSceneView: View {
             }
         }
         .gesture(combinedDrag)
+        .onChange(of: appModel.pieceCustomization.current) { _, newValue in
+            // Live re-skin: when the user moves a colour picker in the
+            // lobby's "Pieces" sheet while the immersive scene is
+            // open, push the new material + board palette into the
+            // running renderer. No teardown — pieces stay where they
+            // are, squares + frame just take on the new colours.
+            renderer?.setPieceMaterial(newValue)
+            renderer?.setBoardSurface(newValue)
+        }
         .onAppear {
             // The env-toggle flow set `pendingReopen` so `onDisappear`
             // would skip session teardown. We're back — clear the flag.
@@ -304,6 +320,13 @@ struct ChessSceneView: View {
             axis: SIMD3<Float>(0, 1, 0)
         )
         env.position = SIMD3<Float>(0, 0.3, -9.15)
+        // Soften the candelabra lights baked into the USDZ before
+        // adding the env to the scene — the author's tuning produces
+        // hard bright rings on the floor (small attenuationRadius +
+        // tight outer cone). Ours: lower intensity and widen
+        // attenuation so the falloff fades into a gradient instead of
+        // ending in a sharp circle.
+        softenEmbeddedLights(in: env)
         content.add(env)
 
         // Locate the antique table and read its world-space top after
@@ -337,6 +360,41 @@ struct ChessSceneView: View {
         return boardPosition
     }
 
+    /// Walks the loaded environment's entity tree and softens any
+    /// `PointLightComponent` / `SpotLightComponent` baked into the
+    /// USDZ (the candelabras' point lights and any spot rigs the
+    /// author included). Two adjustments:
+    ///
+    ///   * **intensity × 0.35** — the embedded lights overpower the
+    ///     scene's authored key/rim because the candelabra mesh sits
+    ///     close to the floor; cutting them way down lets the
+    ///     authored noir lighting do its job.
+    ///   * **attenuationRadius widened to ≥ 6 m** — the harsh bright
+    ///     ring the user reported is the falloff hitting zero inside
+    ///     a small radius; widening it spreads the gradient over
+    ///     metres, so the boundary fades to nothing instead of
+    ///     ending in a hard circle.
+    ///   * **spot outer cone widened by 1.4×** — softens the edge
+    ///     of any spot beam similarly.
+    @MainActor
+    private static func softenEmbeddedLights(in root: Entity) {
+        var stack: [Entity] = [root]
+        while let entity = stack.popLast() {
+            if var p = entity.components[PointLightComponent.self] {
+                p.intensity = p.intensity * 0.35
+                p.attenuationRadius = max(p.attenuationRadius * 2.5, 6.0)
+                entity.components.set(p)
+            }
+            if var s = entity.components[SpotLightComponent.self] {
+                s.intensity = s.intensity * 0.35
+                s.attenuationRadius = max(s.attenuationRadius * 2.5, 6.0)
+                s.outerAngleInDegrees = min(s.outerAngleInDegrees * 1.4, 175)
+                entity.components.set(s)
+            }
+            stack.append(contentsOf: entity.children)
+        }
+    }
+
     /// Four-light noir setup the env author tuned for this hall:
     ///   - KEY: tight warm spot directly above the table.
     ///   - RIM: warm molten-gold accent from far behind the room
@@ -348,14 +406,21 @@ struct ChessSceneView: View {
     private static func addEnvironmentLighting(
         into content: any RealityViewContentProtocol
     ) {
-        // KEY — tight warm spotlight on the chess area
+        // KEY — tight warm spotlight on the chess area. Stepped down
+        // again (1.5M → 800K) after the user reported lingering
+        // highlight clipping on glossy / metal presets — those PBR
+        // curves multiply specular by intensity, so the dimmer key
+        // still gives a pleasant warm pool but the highlights no
+        // longer wash out the colour. Outer cone widened slightly
+        // (65° → 75°) to soften the edge of the warm pool on the
+        // table fabric.
         var key = SpotLightComponent(
             color: .init(red: 1.0, green: 0.78, blue: 0.45, alpha: 1.0),
-            intensity: 3_500_000
+            intensity: 800_000
         )
         key.attenuationRadius = 4.0
         key.innerAngleInDegrees = 30
-        key.outerAngleInDegrees = 65
+        key.outerAngleInDegrees = 75
         let keyEntity = Entity()
         keyEntity.name = "KeyLight"
         keyEntity.components.set(key)
@@ -391,18 +456,23 @@ struct ChessSceneView: View {
         fillEntity.position = SIMD3<Float>(0, 2.5, 5.0)
         content.add(fillEntity)
 
-        // TABLE FILL — soft warm pool at table surface
+        // TABLE FILL — soft warm pool at table surface. Knocked down
+        // again (40K → 22K) after the second round of feedback: the
+        // glossy / metal presets were still picking up too much warm
+        // spec on top of the dimmer KEY. Attenuation widened so the
+        // remaining light spreads further before fading, keeping the
+        // candle warmth without piling intensity on the pieces.
         var tableFill = PointLightComponent(
             color: .init(red: 1.0, green: 0.82, blue: 0.55, alpha: 1.0),
-            intensity: 80_000
+            intensity: 22_000
         )
-        tableFill.attenuationRadius = 1.8
+        tableFill.attenuationRadius = 2.4
         let tableFillEntity = Entity()
         tableFillEntity.name = "TableFillLight"
         tableFillEntity.components.set(tableFill)
         tableFillEntity.position = SIMD3<Float>(0, 1.0, -1.0)
         content.add(tableFillEntity)
-        startLightFlicker(on: tableFillEntity, baseIntensity: 80_000, amplitude: 0.10, period: 1.9)
+        startLightFlicker(on: tableFillEntity, baseIntensity: 22_000, amplitude: 0.10, period: 1.9)
     }
 
     /// Drives an organic-looking intensity flicker on a `PointLightComponent`
@@ -619,7 +689,7 @@ struct ChessSceneView: View {
         )
         let halfBoard = SceneMetrics.boardPlayableSide / 2
         let edgeSlack: Float = 0.03
-        let liftedY = SceneMetrics.squareThickness + ChessRenderer.liftHeight
+        let liftedY = SceneMetrics.boardSurfaceY + ChessRenderer.liftHeight
         value.entity.position = SIMD3<Float>(
             max(-halfBoard - edgeSlack, min(halfBoard + edgeSlack, local.x)),
             liftedY,

@@ -12,16 +12,38 @@ enum SceneMetrics {
     static let boardPlayableSide: Float = 8 * squareSize     // 480 mm
 
     /// Frame thickness around the playable area on each side.
-    static let boardFrameWidth: Float = 0.030                // 30 mm
+    static let boardFrameWidth: Float = 0.036                // 36 mm
 
     /// Total side length including frame.
-    static let boardOuterSide: Float = boardPlayableSide + 2 * boardFrameWidth   // 540 mm
+    static let boardOuterSide: Float = boardPlayableSide + 2 * boardFrameWidth   // 552 mm
 
-    /// Vertical thickness of the board.
-    static let boardThickness: Float = 0.012                 // 12 mm
+    /// Vertical thickness of the board's solid base slab. Acts as
+    /// both the structural board AND the visible frame — the portion
+    /// of the slab left uncovered around the 8×8 square area IS the
+    /// frame (no separate rim entities, like a DGT smart board).
+    static let boardThickness: Float = 0.014                 // 14 mm
 
-    /// Vertical thickness of one square (slightly proud of the frame).
-    static let squareThickness: Float = boardThickness + 0.0005
+    /// Vertical thickness of one square. Squares are inlaid into the
+    /// base so their top sits exactly at `boardSurfaceY` — no visible
+    /// step from frame to square. The thickness here only governs how
+    /// deep the tile sinks into the slab; the bottom faces are
+    /// occluded by the slab so they don't z-fight or read as a layer.
+    static let squareThickness: Float = 0.0006               // 0.6 mm
+
+    /// Y-plane of the visible playing surface in board-local
+    /// coordinates. Square tiles' tops sit here, and pieces sit with
+    /// their base here. Single source of truth so any future surface
+    /// tweak only needs editing one constant.
+    static let boardSurfaceY: Float = 0
+
+    /// Tiny gap between the base slab's top and the squares' tops.
+    /// Without this offset the two surfaces are coplanar and the
+    /// depth buffer can't decide which to render → flickering /
+    /// texture-mixing artefacts where the square material fights the
+    /// frame material. 0.2 mm is below visual perception at any
+    /// sensible viewing distance but enough to make the squares
+    /// strictly z-above the slab.
+    static let boardBaseRecess: Float = 0.0002
 
     // MARK: - Pieces
 
