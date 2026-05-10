@@ -147,6 +147,15 @@ enum BoardSurface {
                     pos.z
                 ]
                 squareEntity.name = "Square_\(file)_\(rank)"
+                // Collision + InputTarget without HoverEffect: the
+                // square blocks the gaze ray so it doesn't fall
+                // through to the frame slab underneath (which would
+                // otherwise glow on every hover above the playable
+                // area). The drag handler ignores entities that are
+                // neither pieces nor the frame, so hovering / pinch-
+                // dragging an empty square just does nothing.
+                squareEntity.components.set(InputTargetComponent())
+                squareEntity.generateCollisionShapes(recursive: false)
                 group.addChild(squareEntity)
             }
         }
