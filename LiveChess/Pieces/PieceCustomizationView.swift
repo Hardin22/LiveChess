@@ -42,13 +42,13 @@ struct PieceCustomizationView: View {
 
                     presetSection(customization: customization)
 
-                    Divider()
-
-                    colorSection(customization: customization)
-
                     if customization.current.preset == .wood {
                         pieceWoodSection(customization: customization)
                     }
+
+                    Divider()
+
+                    colorSection(customization: customization)
 
                     Divider()
 

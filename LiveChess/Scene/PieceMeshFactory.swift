@@ -32,6 +32,14 @@ enum PieceMeshFactory {
             for color in [Side.white, Side.black] {
                 let name = filename(for: Piece(kind, color))
                 if let entity = try? await Entity(named: name, in: .main) {
+                    // Repair the broken UVs that downloaded chess
+                    // piece USDZs ship with — cylindrical projection
+                    // around the Y axis is the natural mapping for
+                    // (almost) rotationally symmetric pieces and
+                    // makes the wood / marble textures read as
+                    // continuous grain wrapping the body instead of
+                    // arbitrary stretched patches.
+                    MeshFactory.reUVCylindrical(entity)
                     templateCache[name] = entity
                 }
             }

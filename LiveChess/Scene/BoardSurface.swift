@@ -50,13 +50,22 @@ enum BoardSurface {
         let outer = SceneMetrics.boardOuterSide
         let thickness = SceneMetrics.boardThickness
 
-        let slab = ModelEntity(
-            mesh: .generateBox(
-                size: [outer, thickness, outer],
-                cornerRadius: 0.0025
-            ),
-            materials: [ChessMaterials.boardFrame]
+        // Tile the slab's UVs so the wood / marble texture appears
+        // at the same per-cm grain density as it does on the 6 cm
+        // squares — without this, the same texture stretched across
+        // a 55 cm slab reads as a different "huge grain" wood and
+        // breaks visual continuity with the board interior.
+        //
+        // Top tile count = outer / square ≈ 9.2 (one tile ≈ 6 cm).
+        // Side tile count: same horizontal density, vertical scaled
+        // to match (frame is 14 mm thick → ~0.23 of a tile tall).
+        let tilesPerSide = outer / SceneMetrics.squareSize
+        let mesh = MeshFactory.tiledBox(
+            size: [outer, thickness, outer],
+            topTiles: SIMD2<Float>(tilesPerSide, tilesPerSide),
+            sideTiles: SIMD2<Float>(tilesPerSide, thickness / SceneMetrics.squareSize)
         )
+        let slab = ModelEntity(mesh: mesh, materials: [ChessMaterials.boardFrame])
         // Recess the slab top by `boardBaseRecess` below the visible
         // playing surface so the squares' tops (which sit at
         // boardSurfaceY) end up strictly z-above the slab top —
