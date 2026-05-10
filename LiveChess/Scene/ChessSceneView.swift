@@ -123,12 +123,38 @@ struct ChessSceneView: View {
             )
             content.add(renderer.rootEntity)
 
+            // If the user has enabled the virtual environment, load it,
+            // find the antique table inside, and translate the whole
+            // env so that the table-top centre is exactly where the
+            // chessboard will sit. ARKit-based plane detection is
+            // skipped in this mode (real-world surfaces aren't
+            // relevant when we're showing a virtual room).
+            //
+            // If env loading fails for any reason — corrupt USDZ,
+            // missing AntiqueTable named entity, etc. — we silently
+            // fall through to the AR placement path so the user
+            // always gets a working board.
+            var didMountVirtualEnv = false
+            if appModel.virtualEnvironmentEnabled {
+                if await Self.mountVirtualEnvironment(
+                    targetBoardCenter: fallback.translation,
+                    into: content
+                ) {
+                    renderer.rootEntity.transform = fallback
+                    didMountVirtualEnv = true
+                }
+            }
+
             // Hand the renderer's root to the placement controller, which
             // seats it at `fallback` immediately and then nudges it onto
-            // a detected horizontal surface (table) within ~3 s.
-            let placement = PlacementController(fallback: fallback)
-            self.placementController = placement
-            placement.attach(boardEntity: renderer.rootEntity)
+            // a detected horizontal surface (table) within ~3 s. Skipped
+            // in virtual-environment mode — the env's table IS the
+            // surface we placed on.
+            if !didMountVirtualEnv {
+                let placement = PlacementController(fallback: fallback)
+                self.placementController = placement
+                placement.attach(boardEntity: renderer.rootEntity)
+            }
 
             // Placement helper: small floating tooltip above the board
             // that surfaces "Looking for a flat surface…" / "Drag the
@@ -204,21 +230,28 @@ struct ChessSceneView: View {
             }
         }
         .gesture(combinedDrag)
+        .onAppear {
+            // The env-toggle flow set `pendingReopen` so `onDisappear`
+            // would skip session teardown. We're back — clear the flag.
+            appModel.pendingReopen = false
+        }
         .onDisappear {
-            // Tear down the online connection so we don't keep the game
-            // stream open (and our event-stream slot busy) when the
-            // immersive space closes.
-            if let session = appModel.activeSession,
-               case .online(let online) = session {
-                Task { await online.disconnect() }
-            }
-            // Stop ARKit so the world-sensing indicator goes off when
-            // the user is back in the lobby window.
+            // Stop ARKit either way so the world-sensing indicator
+            // goes off promptly.
             if let placement = placementController {
                 Task { await placement.tearDown() }
             }
-            appModel.activeSession = nil
             placementController = nil
+            // If this dismiss is part of the env-toggle (planned
+            // re-open), keep the active session alive so the rebuilt
+            // scene picks it up unchanged. Otherwise tear down.
+            if !appModel.pendingReopen {
+                if let session = appModel.activeSession,
+                   case .online(let online) = session {
+                    Task { await online.disconnect() }
+                }
+                appModel.activeSession = nil
+            }
         }
     }
 
@@ -233,6 +266,45 @@ struct ChessSceneView: View {
         case .local: return settings.resolvedHumanSide()
         case .online(let online): return online.humanColor
         }
+    }
+
+    /// Loads `Resources/environment.usdz` (a small Blender-authored
+    /// chess room with a table + 2 chairs), finds the `AntiqueTable`
+    /// named entity, and translates the entire env so the table's
+    /// top-centre lands exactly at `targetBoardCenter` in world
+    /// space. The chessboard is then positioned at the same point so
+    /// it appears resting on the table.
+    ///
+    /// Returns `true` on success. On any failure (missing file,
+    /// corrupt USDZ, no `AntiqueTable` child) returns `false` so the
+    /// caller can route through the AR placement fallback — the user
+    /// still gets a playable board.
+    private static func mountVirtualEnvironment(
+        targetBoardCenter: SIMD3<Float>,
+        into content: any RealityViewContentProtocol
+    ) async -> Bool {
+        let env: Entity
+        do {
+            env = try await Entity(named: "environment", in: .main)
+        } catch {
+            return false
+        }
+        guard let table = env.findEntity(named: "AntiqueTable") else {
+            return false
+        }
+        // Compute the table-top centre in env-local coordinates. Bounds
+        // are axis-aligned — the top is `center.y + extents.y / 2`.
+        let bounds = table.visualBounds(relativeTo: env)
+        let tableTopLocal = SIMD3<Float>(
+            bounds.center.x,
+            bounds.center.y + bounds.extents.y / 2,
+            bounds.center.z
+        )
+        // Translate the env so the table-top ends up at the target.
+        env.position = targetBoardCenter - tableTopLocal
+        env.name = "VirtualEnvironment"
+        content.add(env)
+        return true
     }
 
     /// Fallback used only if the immersive opens with no `activeSession`

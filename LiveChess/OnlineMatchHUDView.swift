@@ -25,6 +25,7 @@ struct OnlineMatchHUDView: View {
     var placement: PlacementController?
 
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.openURL) private var openURL
     @Environment(AppModel.self) private var appModel
 
@@ -394,6 +395,38 @@ struct OnlineMatchHUDView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
             }
+
+            // Toggle between AR (passthrough) and the bundled virtual
+            // chess room. Triggers a dismiss + re-open of the immersive
+            // since immersionStyle + scene contents need to rebuild.
+            // The active Lichess match session is preserved across the
+            // re-open via `appModel.pendingReopen` (see ChessSceneView).
+            Button {
+                Task { await toggleEnvironment() }
+            } label: {
+                Label(
+                    appModel.virtualEnvironmentEnabled ? "Switch to AR" : "Virtual room",
+                    systemImage: appModel.virtualEnvironmentEnabled ? "arkit" : "cube.transparent"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+        }
+    }
+
+    private func toggleEnvironment() async {
+        let willBeVirtual = !appModel.virtualEnvironmentEnabled
+        appModel.virtualEnvironmentEnabled = willBeVirtual
+        appModel.pendingReopen = true
+        appModel.immersiveSpaceState = .inTransition
+        await dismissImmersiveSpace()
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.immersiveSpaceState = .closed
+            appModel.pendingReopen = false
         }
     }
 

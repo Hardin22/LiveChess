@@ -19,6 +19,20 @@ class AppModel {
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
 
+    /// Whether the immersive scene replaces real-world passthrough with
+    /// the bundled virtual environment (a small chess room with table +
+    /// chairs). Off by default so first-time users see the chessboard
+    /// floating in their actual room (the AR experience). Toggling at
+    /// runtime requires the immersive scene to rebuild — the toggle
+    /// flow dismisses + re-opens the immersive space.
+    var virtualEnvironmentEnabled: Bool = false
+
+    /// Set briefly by the env-toggle flow so `ChessSceneView.onDisappear`
+    /// keeps the active session alive across the dismiss + re-open.
+    /// Cleared by the next `onAppear` so subsequent ordinary closes
+    /// behave as before (clearing the session).
+    var pendingReopen: Bool = false
+
     /// Lobby choices the user makes before opening the board.
     var matchSettings = MatchSettings()
 

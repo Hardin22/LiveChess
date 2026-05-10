@@ -11,6 +11,12 @@ import SwiftUI
 struct LiveChessApp: App {
 
     @State private var appModel = AppModel()
+    /// Source of truth for the immersive's style. Mirrored to
+    /// `appModel.virtualEnvironmentEnabled` so the HUD's toggle
+    /// button can drive it (see `.onChange` below). `ImmersionStyle`
+    /// without `any`/`some` is the existential the modifier expects
+    /// for multi-style selection.
+    @State private var immersionStyle: ImmersionStyle = MixedImmersionStyle()
 
     var body: some Scene {
         WindowGroup {
@@ -27,7 +33,12 @@ struct LiveChessApp: App {
                 .onDisappear {
                     appModel.immersiveSpaceState = .closed
                 }
+                .onChange(of: appModel.virtualEnvironmentEnabled) { _, isVirtual in
+                    immersionStyle = isVirtual
+                        ? FullImmersionStyle()
+                        : MixedImmersionStyle()
+                }
         }
-        .immersionStyle(selection: .constant(.mixed), in: .mixed)
-     }
+        .immersionStyle(selection: $immersionStyle, in: .mixed, .full)
+    }
 }

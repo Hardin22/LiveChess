@@ -25,6 +25,10 @@ struct LocalMatchHUDView: View {
     /// always set up by `ChessSceneView.make`.
     var placement: PlacementController?
 
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+
     /// Wall-clock time the current match started. Reset on `newGame()`.
     @State private var matchStartedAt: Date = .now
     @State private var now: Date = .now
@@ -164,6 +168,44 @@ struct LocalMatchHUDView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
             }
+
+            environmentToggleButton
+        }
+    }
+
+    /// Switches the immersive between AR (mixed reality, real
+    /// passthrough) and the bundled virtual room. The scene needs to
+    /// rebuild to pick up the new immersionStyle + environment, so the
+    /// toggle dismisses + re-opens the immersive.
+    private var environmentToggleButton: some View {
+        Button {
+            Task { await toggleEnvironment() }
+        } label: {
+            Label(
+                appModel.virtualEnvironmentEnabled ? "Switch to AR" : "Virtual room",
+                systemImage: appModel.virtualEnvironmentEnabled ? "arkit" : "cube.transparent"
+            )
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+    }
+
+    private func toggleEnvironment() async {
+        let willBeVirtual = !appModel.virtualEnvironmentEnabled
+        appModel.virtualEnvironmentEnabled = willBeVirtual
+        // Tell the scene's onDisappear to keep the active session
+        // alive across the dismiss-and-reopen — we're not really
+        // closing the game, just rebuilding the immersive shell.
+        appModel.pendingReopen = true
+        appModel.immersiveSpaceState = .inTransition
+        await dismissImmersiveSpace()
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.immersiveSpaceState = .closed
+            appModel.pendingReopen = false
         }
     }
 
