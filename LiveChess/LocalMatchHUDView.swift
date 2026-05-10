@@ -90,7 +90,7 @@ struct LocalMatchHUDView: View {
         if case .check(let side) = coordinator.match.status, !coordinator.match.status.isGameOver {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                Text(side == .white ? "Bianco è sotto scacco" : "Nero è sotto scacco")
+                Text(side == .white ? "White is in check" : "Black is in check")
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.orange)
@@ -109,7 +109,7 @@ struct LocalMatchHUDView: View {
     private var moveLog: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Mossa")
+                Text("Move")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Text("#\(coordinator.match.moves.count)")
@@ -143,7 +143,7 @@ struct LocalMatchHUDView: View {
         Button {
             coordinator.newGame()
         } label: {
-            Label("Nuova partita", systemImage: "arrow.clockwise")
+            Label("New game", systemImage: "arrow.clockwise")
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
@@ -153,18 +153,18 @@ struct LocalMatchHUDView: View {
     // MARK: - Derived strings / styles
 
     private var turnTitle: String {
-        if coordinator.match.status.isGameOver { return "Partita conclusa" }
-        if coordinator.isAIThinking { return "Stockfish sta pensando…" }
+        if coordinator.match.status.isGameOver { return "Game over" }
+        if coordinator.isAIThinking { return "Stockfish is thinking…" }
         let side = coordinator.match.currentPosition.sideToMove
         let isHuman = isHumanSide(side)
-        if isHuman { return "Tocca a te" }
-        return "Tocca a Stockfish"
+        if isHuman { return "Your turn" }
+        return "Stockfish's turn"
     }
 
     private var turnDetail: String? {
         if coordinator.match.status.isGameOver { return nil }
         let side = coordinator.match.currentPosition.sideToMove
-        return side == .white ? "Bianco" : "Nero"
+        return side == .white ? "White" : "Black"
     }
 
     private func isHumanSide(_ side: Side) -> Bool {
@@ -192,27 +192,27 @@ struct LocalMatchHUDView: View {
     private var gameOverTitle: String {
         switch coordinator.match.status {
         case .checkmate(let winner):
-            return winner == .white ? "Scaccomatto — Vince Bianco" : "Scaccomatto — Vince Nero"
-        case .stalemate:                  return "Stallo"
-        case .drawByInsufficientMaterial: return "Patta"
-        case .drawByFiftyMoveRule:        return "Patta"
-        case .drawByThreefoldRepetition:  return "Patta"
-        default:                          return "Partita conclusa"
+            return winner == .white ? "Checkmate — White wins" : "Checkmate — Black wins"
+        case .stalemate:                  return "Stalemate"
+        case .drawByInsufficientMaterial: return "Draw"
+        case .drawByFiftyMoveRule:        return "Draw"
+        case .drawByThreefoldRepetition:  return "Draw"
+        default:                          return "Game over"
         }
     }
 
     private var gameOverReason: String {
         switch coordinator.match.status {
         case .checkmate:
-            return "Il re avversario non ha più mosse legali ed è sotto scacco."
+            return "The opponent's king has no legal moves and is in check."
         case .stalemate:
-            return "Il giocatore di turno non ha mosse legali ma il re non è sotto scacco."
+            return "The player to move has no legal moves but the king is not in check."
         case .drawByInsufficientMaterial:
-            return "Sul tavolo non ci sono pezzi sufficienti per scaccomatto."
+            return "Insufficient material to deliver checkmate."
         case .drawByFiftyMoveRule:
-            return "50 mosse senza catture o spinte di pedone."
+            return "50 moves without a capture or a pawn advance."
         case .drawByThreefoldRepetition:
-            return "La stessa posizione si è ripetuta 3 volte."
+            return "The same position has been reached three times."
         default:
             return ""
         }

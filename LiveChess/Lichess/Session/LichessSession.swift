@@ -157,18 +157,18 @@ final class LichessSession {
     private func humanReadable(_ error: any Error) -> String {
         if let lichess = error as? LichessError {
             switch lichess {
-            case .notAuthenticated: return "Sessione non autenticata."
-            case .tokenExpired:     return "Sessione Lichess scaduta."
-            case .scopeInsufficient: return "Permessi Lichess insufficienti."
-            case .rateLimited:      return "Lichess sta limitando le richieste — riprova tra un minuto."
-            case .clientError(let s, _): return "Errore Lichess (\(s))."
-            case .serverError:      return "Lichess al momento non risponde."
-            case .decoding:         return "Risposta Lichess non riconosciuta."
-            case .network:          return "Nessuna connessione a Lichess."
-            case .invalidResponse:  return "Risposta Lichess non valida."
+            case .notAuthenticated:  return "Not signed in."
+            case .tokenExpired:      return "Lichess session expired."
+            case .scopeInsufficient: return "Insufficient Lichess permissions."
+            case .rateLimited:       return "Lichess is rate-limiting — try again in a minute."
+            case .clientError(let s, _): return "Lichess error (\(s))."
+            case .serverError:       return "Lichess is not responding right now."
+            case .decoding:          return "Unrecognized Lichess response."
+            case .network:           return "No connection to Lichess."
+            case .invalidResponse:   return "Invalid Lichess response."
             }
         }
-        return "Errore: \(error.localizedDescription)"
+        return "Error: \(error.localizedDescription)"
     }
 }
 

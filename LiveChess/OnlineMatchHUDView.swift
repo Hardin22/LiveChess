@@ -68,17 +68,17 @@ struct OnlineMatchHUDView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "hand.raised.fill")
-                Text("\(opponentName) offre patta")
+                Text("\(opponentName) offers a draw")
             }
             .font(.callout.weight(.medium))
             .foregroundStyle(.orange)
             HStack(spacing: 8) {
-                Button("Accetta") {
+                Button("Accept") {
                     Task { await session.offerOrAcceptDraw() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                Button("Rifiuta") {
+                Button("Decline") {
                     Task { await session.declineDraw() }
                 }
                 .buttonStyle(.bordered)
@@ -93,17 +93,17 @@ struct OnlineMatchHUDView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.uturn.backward")
-                Text("\(opponentName) chiede di annullare")
+                Text("\(opponentName) requests a takeback")
             }
             .font(.callout.weight(.medium))
             .foregroundStyle(.orange)
             HStack(spacing: 8) {
-                Button("Accetta") {
+                Button("Accept") {
                     Task { await session.offerOrAcceptTakeback() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                Button("Rifiuta") {
+                Button("Decline") {
                     Task { await session.declineTakeback() }
                 }
                 .buttonStyle(.bordered)
@@ -134,15 +134,15 @@ struct OnlineMatchHUDView: View {
 
     private func humanReadable(_ error: LichessError) -> String {
         switch error {
-        case .notAuthenticated: return "Sessione non autenticata."
-        case .tokenExpired: return "Sessione scaduta — torna in lobby per riaccedere."
-        case .scopeInsufficient: return "Permessi Lichess insufficienti."
-        case .rateLimited: return "Lichess sta limitando — riprova tra un minuto."
-        case .clientError: return "Mossa rifiutata da Lichess."
-        case .serverError: return "Lichess al momento non risponde."
-        case .decoding: return "Risposta non riconosciuta."
-        case .network: return "Connessione a Lichess persa."
-        case .invalidResponse: return "Risposta Lichess non valida."
+        case .notAuthenticated: return "Not signed in."
+        case .tokenExpired: return "Session expired — back to lobby to sign in again."
+        case .scopeInsufficient: return "Insufficient Lichess permissions."
+        case .rateLimited: return "Lichess is rate-limiting — try again in a minute."
+        case .clientError: return "Move rejected by Lichess."
+        case .serverError: return "Lichess is not responding right now."
+        case .decoding: return "Unrecognized response."
+        case .network: return "Lost connection to Lichess."
+        case .invalidResponse: return "Invalid Lichess response."
         }
     }
 
@@ -175,7 +175,7 @@ struct OnlineMatchHUDView: View {
     private var clockSection: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Bianco")
+                Text("White")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(format(milliseconds: displayedMillis(forSide: .white)))
@@ -184,7 +184,7 @@ struct OnlineMatchHUDView: View {
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 2) {
-                Text("Nero")
+                Text("Black")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(format(milliseconds: displayedMillis(forSide: .black)))
@@ -235,7 +235,7 @@ struct OnlineMatchHUDView: View {
         if case .check(let side) = session.match.status, !session.match.status.isGameOver {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                Text(side == .white ? "Bianco è sotto scacco" : "Nero è sotto scacco")
+                Text(side == .white ? "White is in check" : "Black is in check")
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.orange)
@@ -244,7 +244,7 @@ struct OnlineMatchHUDView: View {
         if let countdown = session.opponentGoneClaimWinInSeconds {
             HStack(spacing: 6) {
                 Image(systemName: "clock.badge.exclamationmark.fill")
-                Text("Avversario assente — reclama in \(countdown)s")
+                Text("Opponent gone — claim in \(countdown)s")
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.orange)
@@ -255,7 +255,7 @@ struct OnlineMatchHUDView: View {
     private var moveLog: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Mossa")
+                Text("Move")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Text("#\(session.match.moves.count)")
@@ -304,7 +304,7 @@ struct OnlineMatchHUDView: View {
                     Button {
                         Task { await session.offerOrAcceptDraw() }
                     } label: {
-                        Label("Patta", systemImage: "hand.raised")
+                        Label("Draw", systemImage: "hand.raised")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -314,7 +314,7 @@ struct OnlineMatchHUDView: View {
                     Button {
                         Task { await session.offerOrAcceptTakeback() }
                     } label: {
-                        Label("Annulla", systemImage: "arrow.uturn.backward")
+                        Label("Takeback", systemImage: "arrow.uturn.backward")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -326,7 +326,7 @@ struct OnlineMatchHUDView: View {
                     Button(role: .destructive) {
                         Task { await session.abort() }
                     } label: {
-                        Label("Annulla partita", systemImage: "xmark.circle")
+                        Label("Abort game", systemImage: "xmark.circle")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -335,7 +335,7 @@ struct OnlineMatchHUDView: View {
                     Button(role: .destructive) {
                         Task { await session.resign() }
                     } label: {
-                        Label("Abbandona", systemImage: "flag.checkered")
+                        Label("Resign", systemImage: "flag.checkered")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -346,7 +346,7 @@ struct OnlineMatchHUDView: View {
                     Button {
                         Task { await session.claimVictory() }
                     } label: {
-                        Label("Reclama vittoria", systemImage: "trophy.fill")
+                        Label("Claim victory", systemImage: "trophy.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -360,7 +360,7 @@ struct OnlineMatchHUDView: View {
                 Button {
                     openURL(session.analysisURL)
                 } label: {
-                    Label("Analizza su Lichess", systemImage: "chart.line.uptrend.xyaxis")
+                    Label("Analyze on Lichess", systemImage: "chart.line.uptrend.xyaxis")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -369,7 +369,7 @@ struct OnlineMatchHUDView: View {
                 Button {
                     Task { await leaveMatch() }
                 } label: {
-                    Label("Torna alla lobby", systemImage: "arrow.left.circle")
+                    Label("Back to lobby", systemImage: "arrow.left.circle")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -386,15 +386,15 @@ struct OnlineMatchHUDView: View {
     }
 
     private var turnTitle: String {
-        if session.result != nil { return "Partita conclusa" }
-        if session.connection != .live { return "Riconnessione…" }
-        return session.isHumanTurn ? "Tocca a te" : "In attesa…"
+        if session.result != nil { return "Game over" }
+        if session.connection != .live { return "Reconnecting…" }
+        return session.isHumanTurn ? "Your turn" : "Waiting…"
     }
 
     private var turnDetail: String? {
         if session.result != nil { return nil }
         let side = session.match.currentPosition.sideToMove
-        return side == .white ? "Bianco" : "Nero"
+        return side == .white ? "White" : "Black"
     }
 
     private var highlightWhite: Bool {
@@ -452,23 +452,23 @@ struct OnlineMatchHUDView: View {
         switch result.status {
         case .mate, .resign, .timeout, .outoftime:
             let userColor: LichessColor = session.humanColor == .white ? .white : .black
-            if result.winner == nil { return "Patta" }
-            return result.winner == userColor ? "Vittoria" : "Sconfitta"
-        case .stalemate: return "Stallo"
-        case .draw: return "Patta"
-        case .aborted: return "Partita abortita"
-        default: return "Partita conclusa"
+            if result.winner == nil { return "Draw" }
+            return result.winner == userColor ? "Victory" : "Defeat"
+        case .stalemate: return "Stalemate"
+        case .draw: return "Draw"
+        case .aborted: return "Aborted"
+        default: return "Game over"
         }
     }
 
     private func gameOverReason(_ result: LichessMatchSession.Result) -> String {
         switch result.status {
-        case .mate: return "Per scaccomatto."
-        case .resign: return "Per abbandono."
-        case .stalemate: return "Per stallo."
-        case .draw: return "Per accordo o regola."
-        case .timeout, .outoftime: return "Per tempo scaduto."
-        case .aborted: return "Partita interrotta prima della prima mossa."
+        case .mate: return "By checkmate."
+        case .resign: return "By resignation."
+        case .stalemate: return "By stalemate."
+        case .draw: return "By agreement or rule."
+        case .timeout, .outoftime: return "On time."
+        case .aborted: return "Aborted before the first move."
         default: return ""
         }
     }
