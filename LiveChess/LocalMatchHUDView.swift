@@ -170,6 +170,21 @@ struct LocalMatchHUDView: View {
             }
 
             environmentToggleButton
+
+            // Dismissing the immersive triggers `ImmersiveSceneHost`'s
+            // `onDisappear`, which re-opens the Main Menu window — the
+            // user lands back on Home automatically.
+            Button(role: .destructive) {
+                Task {
+                    appModel.activeSession = nil
+                    await dismissImmersiveSpace()
+                }
+            } label: {
+                Label("Main menu", systemImage: "house.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
         }
     }
 

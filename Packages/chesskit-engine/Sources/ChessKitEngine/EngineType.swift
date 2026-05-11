@@ -9,13 +9,11 @@ import ChessKitEngineCore
 public enum EngineType: Int, Sendable {
 
   case stockfish
-  case lc0
 
   /// Internal mapping from Swift to Obj-C type.
   var objc: EngineType_objc {
     switch self {
     case .stockfish: .stockfish
-    case .lc0: .lc0
     }
   }
 
@@ -23,7 +21,6 @@ public enum EngineType: Int, Sendable {
   public var name: String {
     switch self {
     case .stockfish: "Stockfish"
-    case .lc0: "LeelaChessZero (Lc0)"
     }
   }
 
@@ -31,7 +28,6 @@ public enum EngineType: Int, Sendable {
   public var version: String {
     switch self {
     case .stockfish: "17"
-    case .lc0: "0.31.1"
     }
   }
 
@@ -44,14 +40,6 @@ public enum EngineType: Int, Sendable {
         "EvalFileSmall": "nn-37f18f62d772"
       ].compactMapValues {
         Bundle.main.url(forResource: $0, withExtension: "nnue")?.path()
-      }
-
-      return fileOptions.map(EngineCommand.setoption)
-    case .lc0:
-      let fileOptions = [
-        "WeightsFile": "192x15_network"
-      ].compactMapValues {
-        Bundle.main.url(forResource: $0, withExtension: nil)?.path()
       }
 
       return fileOptions.map(EngineCommand.setoption)

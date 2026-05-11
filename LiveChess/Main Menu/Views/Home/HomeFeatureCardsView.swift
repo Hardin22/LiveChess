@@ -1,0 +1,298 @@
+// Views/Home/HomeFeatureCardsView.swift
+// The two large floating cards: "Daily Puzzle" and "Game Review".
+// These are the most prominent interactive elements on the home screen.
+
+import SwiftUI
+
+struct HomeFeatureCardsView: View {
+    
+    let viewModel: HomeViewModel
+    @State private var isVisible = false
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            
+            // LEFT CARD: Daily Puzzle
+            PuzzleFeatureCard(puzzle: viewModel.puzzle)
+                .onTapGesture {
+                    viewModel.navigate(to: .puzzles)
+                }
+            
+            // RIGHT CARD: Game Review
+            GameReviewFeatureCard(game: viewModel.latestGame, username: viewModel.displayUsername)
+                .onTapGesture {
+                    viewModel.navigate(to: .gameReview)
+                }
+        }
+        .frame(maxWidth: .infinity)
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: isVisible ? 0 : 20)
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2)) {
+                isVisible = true
+            }
+        }
+    }
+}
+
+// MARK: - Puzzle Feature Card
+struct PuzzleFeatureCard: View {
+    let puzzle: LichessPuzzle?
+    
+    var body: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                
+                // Card header row
+                HStack {
+                    // Icon with colored background
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(.purple.opacity(0.2))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "puzzlepiece.fill")
+                            .foregroundStyle(.purple)
+                            .font(.callout)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Daily Puzzle")
+                            .font(.callout)
+                            .fontWeight(.semibold)
+                        
+                        if let rating = puzzle?.puzzle.rating {
+                            Text("Rating: \(rating)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Rating: —")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    // Mini chess board preview (decorative)
+                    MiniChessBoardView()
+                        .frame(width: 70, height: 70)
+                }
+                
+                // Stats row
+                HStack(spacing: 8) {
+                    MiniStatTag(label: "Streak", value: "7")
+                    MiniStatTag(label: "Solved", value: "12")
+                    if let themes = puzzle?.puzzle.themes.first {
+                        MiniStatTag(label: "Theme", value: themes.capitalized)
+                    }
+                }
+                
+                // CTA Button
+                FeatureCardButton(
+                    title: "Continue Puzzle",
+                    icon: "play.fill",
+                    color: .purple
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Game Review Feature Card
+struct GameReviewFeatureCard: View {
+    let game: LichessGame?
+    let username: String
+    
+    var body: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                
+                // Card header
+                HStack {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(.blue.opacity(0.2))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.blue)
+                            .font(.callout)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Game Review")
+                            .font(.callout)
+                            .fontWeight(.semibold)
+                        
+                        if let opponent = game?.opponent(for: username) {
+                            Text("vs \(opponent)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Text("Last game")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    MiniChessBoardView(variant: .review)
+                        .frame(width: 70, height: 70)
+                }
+                
+                // Stats
+                HStack(spacing: 8) {
+                    if let acc = game?.accuracy(for: username) {
+                        MiniStatTag(label: "Accuracy", value: String(format: "%.0f%%", acc))
+                    } else {
+                        MiniStatTag(label: "Accuracy", value: "—")
+                    }
+                    
+                    // Blunder count from analysis (if available)
+                    MiniStatTag(label: "Blunders", value: "2")
+                    MiniStatTag(label: "Moves", value: game.map { "\($0.moveCount)" } ?? "—")
+                }
+                
+                FeatureCardButton(
+                    title: "Review Game",
+                    icon: "eye.fill",
+                    color: .blue
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Supporting Components
+
+// Generic glass card container
+// Other cards can reuse this for consistent styling
+struct GlassCard<Content: View>: View {
+    let content: () -> Content
+    
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+    
+    var body: some View {
+        content()
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            )
+            // visionOS: lift effect on hover (gaze-based interaction)
+            .hoverEffect(.lift)
+    }
+}
+
+// Small tag showing a label + value pair
+struct MiniStatTag: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption2)
+                .fontWeight(.semibold)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+// Tappable CTA button at the bottom of feature cards
+struct FeatureCardButton: View {
+    let title: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+            Text(title)
+                .font(.caption)
+                .fontWeight(.medium)
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(color.opacity(0.3), lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Mini Chess Board
+// A decorative 4x4 chessboard pattern with chess piece emojis.
+// NOT a real chess engine — purely visual decoration.
+enum MiniBoardVariant { case puzzle, review }
+
+struct MiniChessBoardView: View {
+    var variant: MiniBoardVariant = .puzzle
+    
+    // Different piece positions for puzzle vs review
+    private var layout: [(Bool, String?)] {
+        switch variant {
+        case .puzzle:
+            return [
+                (true, "♚"), (false, nil), (true, nil), (false, "♜"),
+                (false, nil), (true, nil), (false, "♟"), (true, nil),
+                (true, nil), (false, "♙"), (true, nil), (false, nil),
+                (false, "♔"), (true, nil), (false, nil), (true, "♕")
+            ]
+        case .review:
+            return [
+                (false, nil), (true, "♞"), (false, "♛"), (true, nil),
+                (true, "♜"), (false, nil), (true, nil), (false, "♝"),
+                (false, "♙"), (true, nil), (false, "♗"), (true, nil),
+                (true, nil), (false, "♔"), (true, "♖"), (false, nil)
+            ]
+        }
+    }
+    
+    var body: some View {
+        // 4x4 grid of squares
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 4),
+            spacing: 0
+        ) {
+            ForEach(layout.indices, id: \.self) { index in
+                let (isLight, piece) = layout[index]
+                ZStack {
+                    // Square color
+                    Rectangle()
+                        .fill(isLight ? Color(red: 0.94, green: 0.85, blue: 0.71) : Color(red: 0.71, green: 0.53, blue: 0.39))
+                    
+                    // Piece emoji if present
+                    if let piece = piece {
+                        Text(piece)
+                            .font(.system(size: 11))
+                    }
+                }
+                .aspectRatio(1, contentMode: .fit)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+        )
+    }
+}
+
+#Preview {
+    HomeFeatureCardsView(viewModel: HomeViewModel())
+        .padding()
+}

@@ -25,8 +25,17 @@ struct LobbyView: View {
 
     /// Currently selected mode (drives which configuration card is
     /// visible). Defaults to `.local` so first-time users without a
-    /// Lichess account can play immediately.
-    @State private var selectedMode: GameMode = .local
+    /// Lichess account can play immediately. The Main Menu sidebar
+    /// can override this via the `initialMode` initializer parameter
+    /// so deep-linking to a specific Play sub-item works.
+    @State private var selectedMode: GameMode
+
+    /// Designated initializer. The optional `initialMode` overrides the
+    /// default landing card — used by the Main Menu sidebar's
+    /// Online Game / Local Game / Play with Bot entries.
+    init(initialMode: GameMode? = nil) {
+        _selectedMode = State(initialValue: initialMode ?? .local)
+    }
 
     /// Selected time control for the online configuration cards.
     @State private var selectedTimeControl: LichessTimeControlSpec =
