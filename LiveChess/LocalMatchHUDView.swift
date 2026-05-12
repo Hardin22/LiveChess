@@ -35,6 +35,10 @@ struct LocalMatchHUDView: View {
     /// Drives the elapsed-time read-out.
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    /// Controls the game-over popup. Set to true automatically when
+    /// the match ends; dismissed by the user tapping "New Game" inside it.
+    @State private var showGameOverPopup = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -60,6 +64,40 @@ struct LocalMatchHUDView: View {
             if count == 0 {
                 matchStartedAt = .now
                 now = .now
+            }
+        }
+        // Watch for game-over: as soon as the match ends, show the popup.
+        // We ignore subsequent changes (e.g. new game clears isGameOver)
+        // because showGameOverPopup resets to false in the popup's button.
+        .onChange(of: coordinator.match.status.isGameOver) { _, isOver in
+            if isOver { showGameOverPopup = true }
+        }
+        // The popup is an overlay so it floats above the HUD panel itself.
+        // It is NOT a .sheet — sheets don't work well in visionOS immersive
+        // spaces. The overlay fills the whole screen and centers the card.
+        .overlay {
+            if showGameOverPopup {
+                GameOverPopupView(
+                    status: coordinator.match.status,
+                    humanSide: humanSide,
+                    elapsedText: elapsedText,
+                    moveCount: coordinator.match.moves.count,
+                    onNewGame: {
+                        showGameOverPopup = false
+                        coordinator.newGame()
+                    },
+                    onMainMenu: {
+                        showGameOverPopup = false
+                        Task {
+                            appModel.activeSession = nil
+                            await dismissImmersiveSpace()
+                        }
+                    }
+                )
+                // The popup needs to escape the 320pt HUD frame,
+                // so we ignore it and expand to the full window.
+                .frame(width: 480)
+                .offset(x: 80) // centers it roughly over the board
             }
         }
     }
@@ -171,9 +209,6 @@ struct LocalMatchHUDView: View {
 
             environmentToggleButton
 
-            // Dismissing the immersive triggers `ImmersiveSceneHost`'s
-            // `onDisappear`, which re-opens the Main Menu window — the
-            // user lands back on Home automatically.
             Button(role: .destructive) {
                 Task {
                     appModel.activeSession = nil
@@ -188,10 +223,6 @@ struct LocalMatchHUDView: View {
         }
     }
 
-    /// Switches the immersive between AR (mixed reality, real
-    /// passthrough) and the bundled virtual room. The scene needs to
-    /// rebuild to pick up the new immersionStyle + environment, so the
-    /// toggle dismisses + re-opens the immersive.
     private var environmentToggleButton: some View {
         Button {
             Task { await toggleEnvironment() }
@@ -209,9 +240,6 @@ struct LocalMatchHUDView: View {
     private func toggleEnvironment() async {
         let willBeVirtual = !appModel.virtualEnvironmentEnabled
         appModel.virtualEnvironmentEnabled = willBeVirtual
-        // Tell the scene's onDisappear to keep the active session
-        // alive across the dismiss-and-reopen — we're not really
-        // closing the game, just rebuilding the immersive shell.
         appModel.pendingReopen = true
         appModel.immersiveSpaceState = .inTransition
         await dismissImmersiveSpace()
@@ -224,7 +252,14 @@ struct LocalMatchHUDView: View {
         }
     }
 
-    // MARK: - Derived strings / styles
+    // MARK: - Helpers
+
+    /// Returns the Side the human is playing, or nil for draw/unknown.
+    private var humanSide: Side? {
+        if case .human = coordinator.white { return .white }
+        if case .human = coordinator.black { return .black }
+        return nil
+    }
 
     private var turnTitle: String {
         if coordinator.match.status.isGameOver { return "Game over" }
@@ -306,5 +341,169 @@ struct LocalMatchHUDView: View {
             .fill(side == .white ? Color.white : Color.black)
             .frame(width: 14, height: 14)
             .overlay(Circle().stroke(.secondary.opacity(0.6), lineWidth: 0.5))
+    }
+}
+
+// MARK: - Game Over Popup
+
+/// Full-screen centered card that appears when the match ends.
+///
+/// Shows:
+///  - A large emoji + "You Won" / "You Lost" / "Draw"
+///  - The reason (checkmate, stalemate, …)
+///  - Move count + elapsed time
+///  - "New Game" (primary) and "Main Menu" (destructive) buttons
+///
+/// It is presented as an `.overlay` on the HUD, not as a `.sheet`,
+/// because visionOS immersive spaces don't support sheet presentation
+/// from attachment views reliably.
+@MainActor
+private struct GameOverPopupView: View {
+
+    let status: GameStatus
+    let humanSide: Side?
+    let elapsedText: String
+    let moveCount: Int
+    let onNewGame: () -> Void
+    let onMainMenu: () -> Void
+
+    // Controls the entry animation: the card fades + slides up on appear.
+    @State private var isVisible = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Top: result emoji + headline ──────────────────────────
+            VStack(spacing: 12) {
+                Text(resultEmoji)
+                    .font(.system(size: 64))
+
+                Text(resultHeadline)
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(resultColor)
+
+                Text(resultSubtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.top, 36)
+            .padding(.horizontal, 28)
+
+            Divider()
+                .padding(.vertical, 20)
+
+            // ── Middle: stats row ─────────────────────────────────────
+            HStack(spacing: 0) {
+                statCell(value: "\(moveCount)", label: "Moves")
+                Divider().frame(height: 36)
+                statCell(value: elapsedText, label: "Time")
+            }
+            .padding(.horizontal, 28)
+
+            Divider()
+                .padding(.vertical, 20)
+
+            // ── Bottom: action buttons ────────────────────────────────
+            VStack(spacing: 10) {
+                Button {
+                    onNewGame()
+                } label: {
+                    Label("New Game", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button(role: .destructive) {
+                    onMainMenu()
+                } label: {
+                    Label("Main Menu", systemImage: "house.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 28)
+        }
+        .frame(width: 380)
+        .glassBackgroundEffect()
+        // Entry animation
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: isVisible ? 0 : 24)
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+                isVisible = true
+            }
+        }
+    }
+
+    // MARK: - Derived values
+
+    /// Figures out if the human won, lost, or drew.
+    /// - If it's checkmate and the winner matches humanSide → won.
+    /// - If it's checkmate and winner is the other side → lost.
+    /// - Everything else (stalemate, draws, unknown) → draw.
+    private enum Outcome { case won, lost, draw }
+
+    private var outcome: Outcome {
+        guard case .checkmate(let winner) = status else { return .draw }
+        guard let human = humanSide else { return .draw }
+        return winner == human ? .won : .lost
+    }
+
+    private var resultEmoji: String {
+        switch outcome {
+        case .won:  "🏆"
+        case .lost: "💀"
+        case .draw: "🤝"
+        }
+    }
+
+    private var resultHeadline: String {
+        switch outcome {
+        case .won:  "You Won!"
+        case .lost: "You Lost"
+        case .draw: "Draw"
+        }
+    }
+
+    private var resultSubtitle: String {
+        switch status {
+        case .checkmate(let winner):
+            return winner == humanSide
+                ? "Checkmate — your king is safe."
+                : "Checkmate — your king has no escape."
+        case .stalemate:
+            return "No legal moves, but the king is not in check."
+        case .drawByInsufficientMaterial:
+            return "Not enough pieces to deliver checkmate."
+        case .drawByFiftyMoveRule:
+            return "50 moves without a capture or pawn advance."
+        case .drawByThreefoldRepetition:
+            return "The same position repeated three times."
+        default:
+            return ""
+        }
+    }
+
+    private var resultColor: Color {
+        switch outcome {
+        case .won:  .green
+        case .lost: .red
+        case .draw: .secondary
+        }
+    }
+
+    @ViewBuilder
+    private func statCell(value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.title2.monospacedDigit().weight(.semibold))
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
