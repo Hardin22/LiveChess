@@ -301,3 +301,24 @@ struct SettingsPlaceholderView: View {
         .navigationTitle("Settings")
     }
 }
+
+/// Notifications — shown when the user taps the bell icon in the sidebar footer.
+/// Replace the ComingSoonView body with the real implementation when ready.
+struct NotificationsPlaceholderView: View {
+    var body: some View {
+        LichessGate(
+            icon: "bell.fill",
+            title: "Notifications",
+            signedOutMessage: "Sign in with Lichess to see your notifications.",
+            accentColor: .indigo
+        ) {
+            ComingSoonView(
+                icon: "bell.fill",
+                title: "Notifications",
+                description: "Challenges, game alerts, and messages from Lichess will appear here.",
+                accentColor: .indigo
+            )
+        }
+        .navigationTitle("Notifications")
+    }
+}

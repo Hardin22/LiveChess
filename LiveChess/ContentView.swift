@@ -74,6 +74,7 @@ struct ContentView: View {
         case .history:    HistoryPlaceholderView()
         case .profile:    ProfilePlaceholderView()
         case .settings:   SettingsPlaceholderView()
+        case .notifications: NotificationsPlaceholderView()
         }
     }
 }

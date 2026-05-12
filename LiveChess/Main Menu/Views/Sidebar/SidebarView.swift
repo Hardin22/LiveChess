@@ -18,9 +18,7 @@ struct SidebarView: View {
 
             // MARK: - Game section
             Section {
-                // Play with three sub-modes — wired straight to the
-                // existing LobbyView via specific destinations so each
-                // sub-item lands in the right card.
+                // Play with two sub-modes (bot removed)
                 DisclosureGroup(isExpanded: $viewModel.isPlayExpanded) {
                     NavigationLink(value: AppDestination.playOnline) {
                         Label("Online Game", systemImage: "globe")
@@ -30,10 +28,7 @@ struct SidebarView: View {
                         Label("Local Game", systemImage: "person.2.fill")
                             .font(.subheadline)
                     }
-                    NavigationLink(value: AppDestination.playBot) {
-                        Label("Play with Bot", systemImage: "cpu")
-                            .font(.subheadline)
-                    }
+                    // "Play with Bot" intentionally removed
                 } label: {
                     SidebarRowLabel(
                         title: "Play",
@@ -69,6 +64,7 @@ struct SidebarView: View {
             }
 
             // MARK: - Account Section
+            // Profile and Settings removed here — they live in the footer card below.
             Section("Account") {
                 NavigationLink(value: AppDestination.history) {
                     SidebarRowLabel(
@@ -77,28 +73,13 @@ struct SidebarView: View {
                         color: .orange
                     )
                 }
-
-                NavigationLink(value: AppDestination.profile) {
-                    SidebarRowLabel(
-                        title: "Profile",
-                        systemImage: "person.fill",
-                        color: .teal
-                    )
-                }
-
-                NavigationLink(value: AppDestination.settings) {
-                    SidebarRowLabel(
-                        title: "Settings",
-                        systemImage: "gearshape.fill",
-                        color: .gray
-                    )
-                }
             }
         }
         .listStyle(.sidebar)
         .glassBackgroundEffect()
         .safeAreaInset(edge: .bottom) {
-            SidebarProfileView()
+            // Pass viewModel so the footer can trigger navigation
+            SidebarProfileView(viewModel: viewModel)
                 .padding()
         }
         .toolbar {
@@ -153,21 +134,31 @@ struct SidebarRowLabel: View {
 }
 
 // MARK: - Sidebar Profile Footer
-// Reflects `LichessSession` state — shows real account when signed in,
-// "Guest" + sign-in CTA otherwise. Tap signs out / in respectively.
+// Shows a compact card at the bottom of the sidebar.
+//
+// When signed in, the card has three zones:
+//   [Avatar]  [Name + rating]  [Spacer]  [🔔]  [⚙️]
+//
+// Tapping the avatar/name area navigates to Profile.
+// Tapping 🔔 navigates to Notifications.
+// Tapping ⚙️ navigates to Settings.
+//
+// Other states (guest, loading, error) show a simpler row as before.
 struct SidebarProfileView: View {
     @Environment(AppModel.self) private var appModel
 
+    // Needed to call viewModel.navigate(to:) for Profile / Settings / Notifications
+    @Bindable var viewModel: HomeViewModel
+
     var body: some View {
         switch appModel.lichess.status {
+
         case .unknown:
             profileShell(initial: "?", color: .gray) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Checking…")
-                        .font(.callout)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                }
+                Text("Checking…")
+                    .font(.callout)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
             }
 
         case .signedOut:
@@ -203,56 +194,99 @@ struct SidebarProfileView: View {
 
         case .signingOut:
             profileShell(initial: "…", color: .gray) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Signing out…")
-                        .font(.callout)
-                        .fontWeight(.medium)
-                }
+                Text("Signing out…")
+                    .font(.callout)
+                    .fontWeight(.medium)
             }
 
         case .signedIn(let account):
-            Menu {
-                Button(role: .destructive) {
-                    Task { await appModel.lichess.signOut() }
+            // ── The redesigned card ──────────────────────────────────
+            HStack(spacing: 10) {
+
+                // LEFT: Avatar + name/rating → tapping opens Profile
+                Button {
+                    viewModel.navigate(to: .profile)
                 } label: {
-                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                }
-            } label: {
-                profileShell(
-                    initial: String(account.username.prefix(1)).uppercased(),
-                    color: .green
-                ) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            if let title = account.title {
-                                Text(title)
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(.orange)
-                            }
-                            Text(account.username)
-                                .font(.callout)
-                                .fontWeight(.medium)
-                                .lineLimit(1)
-                        }
-                        HStack(spacing: 4) {
+                    HStack(spacing: 10) {
+                        // Avatar circle
+                        ZStack {
                             Circle()
-                                .fill(.green)
-                                .frame(width: 6, height: 6)
-                            if let rating = account.rating(forPerfKey: "rapid") {
-                                Text("Online · \(rating)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("Online")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                .fill(Color.green.gradient)
+                                .frame(width: 38, height: 38)
+                            Text(String(account.username.prefix(1)).uppercased())
+                                .font(.callout)
+                                .fontWeight(.bold)
+                                .foregroundStyle(.white)
+                        }
+
+                        // Name + online status + rating
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                if let title = account.title {
+                                    Text(title)
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.orange)
+                                }
+                                Text(account.username)
+                                    .font(.callout)
+                                    .fontWeight(.medium)
+                                    .lineLimit(1)
+                            }
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(.green)
+                                    .frame(width: 6, height: 6)
+                                if let rating = account.rating(forPerfKey: "rapid") {
+                                    Text("Online · \(rating)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("Online")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 }
+                .buttonStyle(.plain)
+                .hoverEffect(.lift)
+
+                Spacer()
+
+                // RIGHT: Notifications icon → opens Notifications screen
+                Button {
+                    viewModel.navigate(to: .notifications)
+                } label: {
+                    Image(systemName: "bell.fill")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+
+                // Settings icon → opens Settings screen
+                Button {
+                    viewModel.navigate(to: .settings)
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
             }
-            .menuStyle(.borderlessButton)
-            .hoverEffect(.lift)
+            .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            )
+            // ────────────────────────────────────────────────────────
 
         case .error(let message):
             Button {
@@ -276,8 +310,8 @@ struct SidebarProfileView: View {
         }
     }
 
-    /// Shared row chrome: avatar circle + content. Keeps each status
-    /// branch a one-liner of layout.
+    // Shared chrome for non-signedIn states (guest, loading, error).
+    // Keeps those branches to a single call instead of repeating layout code.
     @ViewBuilder
     private func profileShell<Content: View>(
         initial: String,
