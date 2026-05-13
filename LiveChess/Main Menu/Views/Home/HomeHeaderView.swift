@@ -29,29 +29,26 @@ struct HomeHeaderView: View {
                         .foregroundStyle(.primary)
                 }
                 
-                // Stats row: streak, rating, games played
-                HStack(spacing: 10) {
-                    StatChipView(
-                        icon: "flame.fill",
-                        value: "18",
-                        label: "day streak",
-                        color: .orange
-                    )
-                    
-                    StatChipView(
-                        icon: "trophy.fill",
-                        value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
-                        label: "rapid",
-                        color: .yellow
-                    )
-                    
-                    if let games = viewModel.displayGamesPlayed, games > 0 {
+                // Stats row: rating + games played from the live Lichess
+                // account. Hidden entirely for guests — no auth means no
+                // stats, and we'd otherwise show meaningless placeholders.
+                if viewModel.isSignedIn {
+                    HStack(spacing: 10) {
                         StatChipView(
-                            icon: "square.grid.3x3.fill",
-                            value: "\(games)",
-                            label: "games",
-                            color: .green
+                            icon: "trophy.fill",
+                            value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
+                            label: "rapid",
+                            color: .yellow
                         )
+
+                        if let games = viewModel.displayGamesPlayed, games > 0 {
+                            StatChipView(
+                                icon: "square.grid.3x3.fill",
+                                value: "\(games)",
+                                label: "games",
+                                color: .green
+                            )
+                        }
                     }
                 }
             }

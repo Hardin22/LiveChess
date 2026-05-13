@@ -65,11 +65,28 @@ final class LichessService {
     // MARK: - Daily puzzle
 
     /// `/api/puzzle/daily` — public, no token required.
+    /// Sending our bearer would 403 because the token lacks `puzzle:read`
+    /// scope, so we explicitly skip auth on all puzzle endpoints.
     func fetchDailyPuzzle() async throws -> LichessPuzzle {
-        try await apiClient.request(endpoint: "/api/puzzle/daily")
+        try await apiClient.request(endpoint: "/api/puzzle/daily", skipAuth: true)
     }
 
     func fetchPuzzle(id: String) async throws -> LichessPuzzle {
-        try await apiClient.request(endpoint: "/api/puzzle/\(id)")
+        try await apiClient.request(endpoint: "/api/puzzle/\(id)", skipAuth: true)
+    }
+
+    /// `/api/puzzle/next` — a fresh puzzle. Called unauthenticated to
+    /// avoid the 403 our `board:play` token returns on `puzzle:read`
+    /// endpoints.
+    func fetchNextPuzzle(difficulty: String? = nil) async throws -> LichessPuzzle {
+        var items: [URLQueryItem] = []
+        if let difficulty {
+            items.append(URLQueryItem(name: "difficulty", value: difficulty))
+        }
+        return try await apiClient.request(
+            endpoint: "/api/puzzle/next",
+            queryItems: items.isEmpty ? nil : items,
+            skipAuth: true
+        )
     }
 }

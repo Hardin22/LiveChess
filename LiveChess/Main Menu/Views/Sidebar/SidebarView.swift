@@ -78,9 +78,11 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .glassBackgroundEffect()
         .safeAreaInset(edge: .bottom) {
-            // Pass viewModel so the footer can trigger navigation
+            // Pass viewModel so the footer can trigger navigation.
+            // Horizontal inset is zero — the outer `.padding(.horizontal)`
+            // on the List below already insets us to match the list rows.
             SidebarProfileView(viewModel: viewModel)
-                .padding()
+                .padding(.bottom, 12)
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -88,14 +90,16 @@ struct SidebarView: View {
                     Image(systemName: "crown.fill")
                         .foregroundStyle(.green)
                         .font(.title3)
-                    Text("ChessVision")
+                    Text("MetaChess")
                         .font(.headline)
                         .fontWeight(.semibold)
                 }
             }
         }
+        .padding(.horizontal)
     }
 }
+
 
 // MARK: - Sidebar Row Label
 // Reusable component for each navigation row.
@@ -153,15 +157,11 @@ struct SidebarProfileView: View {
     var body: some View {
         switch appModel.lichess.status {
 
-        case .unknown:
-            profileShell(initial: "?", color: .gray) {
-                Text("Checking…")
-                    .font(.callout)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-            }
-
-        case .signedOut:
+        // `.unknown` means bootstrap hasn't resolved yet. Rather than
+        // leave the user staring at "Checking…", surface the same
+        // Guest / Sign-in CTA — if bootstrap finds a valid token the
+        // view will flip to `.signedIn` and re-render automatically.
+        case .unknown, .signedOut:
             Button {
                 Task { await appModel.lichess.signIn() }
             } label: {
@@ -280,8 +280,8 @@ struct SidebarProfileView: View {
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
             }
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .padding(15)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)

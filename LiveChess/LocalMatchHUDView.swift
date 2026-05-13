@@ -106,7 +106,7 @@ struct LocalMatchHUDView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("LiveChess")
+            Text("MetaChess")
                 .font(.title3.weight(.semibold))
             Text("vs Stockfish")
                 .font(.caption)

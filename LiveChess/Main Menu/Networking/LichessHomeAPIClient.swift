@@ -32,12 +32,13 @@ actor LichessHomeAPIClient {
     /// are appended to the URL.
     func request<T: Decodable>(
         endpoint: String,
-        queryItems: [URLQueryItem]? = nil
+        queryItems: [URLQueryItem]? = nil,
+        skipAuth: Bool = false
     ) async throws -> T {
         let url = try buildURL(endpoint: endpoint, queryItems: queryItems)
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        applyAuth(to: &req)
+        if !skipAuth { applyAuth(to: &req) }
 
         let (data, response) = try await session.data(for: req)
         try Self.validate(response: response, data: data)

@@ -1,12 +1,15 @@
 // Views/Placeholders.swift
-// Placeholder views for sections not yet implemented.
-// These are "coming soon" screens that compile and run correctly.
-// Replace each with the real implementation as you build them out.
+// Secondary-menu screens. Each one drives its own data load from Lichess
+// via `LichessService`; nothing here is hardcoded. The file keeps the
+// historical `*PlaceholderView` names so `ContentView`'s switch keeps
+// resolving without touching the Xcode project.
 
 import SwiftUI
 
-// MARK: - Reusable Placeholder
-// Generic placeholder with an icon, title, and description.
+// MARK: - Shared chrome
+
+/// Generic "no content yet" view — used by sections that successfully
+/// loaded but came back empty (e.g. account with no games on Lichess).
 struct ComingSoonView: View {
     let icon: String
     let title: String
@@ -46,10 +49,8 @@ struct ComingSoonView: View {
     }
 }
 
-// MARK: - Lichess Sign-in Gate
-// Wraps a placeholder/feature in a guard: when the user is signed out
-// it swaps in a "Sign in with Lichess" CTA; otherwise it renders the
-// gated content unchanged.
+/// Wraps a Lichess-gated screen: when the user is signed out it swaps
+/// in a sign-in CTA; otherwise it renders the gated content unchanged.
 struct LichessGate<Gated: View>: View {
     let icon: String
     let title: String
@@ -105,31 +106,303 @@ struct LichessGate<Gated: View>: View {
     }
 }
 
-// MARK: - Section Placeholders
-// Each Lichess-dependent section wraps a "coming soon" body inside a
-// `LichessGate` so unauthenticated users see a friendly sign-in CTA
-// instead of a teaser they can't actually use.
+// MARK: - Puzzles
+// Real data: `/api/puzzle/daily` + `/api/puzzle/next`. Both public, so
+// the screen works for guests too.
+
+@Observable
+@MainActor
+final class PuzzlesViewModel {
+    var dailyPuzzle: LichessPuzzle?
+    var recentPuzzles: [LichessPuzzle] = []
+    var isLoading = false
+    var isLoadingMore = false
+    var errorMessage: String?
+
+    private let service = LichessService()
+    private var hasLoaded = false
+
+    func load(token: String?) async {
+        guard !hasLoaded else { return }
+        hasLoaded = true
+        await service.authenticate(token: token)
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            async let daily = service.fetchDailyPuzzle()
+            async let next = service.fetchNextPuzzle()
+            let (d, n) = try await (daily, next)
+            dailyPuzzle = d
+            recentPuzzles = [n]
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func loadMore(token: String?) async {
+        guard !isLoadingMore else { return }
+        await service.authenticate(token: token)
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let next = try await service.fetchNextPuzzle()
+            // Avoid duplicates if the API hands us the same puzzle back.
+            if !recentPuzzles.contains(where: { $0.puzzle.id == next.puzzle.id }) {
+                recentPuzzles.append(next)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
 
 struct PuzzlesPlaceholderView: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var viewModel = PuzzlesViewModel()
+
     var body: some View {
-        LichessGate(
-            icon: "puzzlepiece.fill",
-            title: "Puzzles",
-            signedOutMessage: "Sign in with Lichess to unlock thousands of puzzles tailored to your rating.",
-            accentColor: .purple
-        ) {
-            ComingSoonView(
-                icon: "puzzlepiece.fill",
-                title: "Puzzles",
-                description: "Sharpen your tactics with thousands of puzzles from real Lichess games.",
-                accentColor: .purple
-            )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if viewModel.isLoading && viewModel.dailyPuzzle == nil {
+                    VStack(spacing: 12) {
+                        ForEach(0..<3, id: \.self) { _ in PuzzleCardSkeleton() }
+                    }
+                } else if let error = viewModel.errorMessage,
+                          viewModel.dailyPuzzle == nil {
+                    PuzzlesErrorState(message: error) {
+                        Task { await reload() }
+                    }
+                } else {
+                    if let daily = viewModel.dailyPuzzle {
+                        SectionHeader(title: "Daily Puzzle")
+                        PuzzleCard(puzzle: daily, isDaily: true)
+                    }
+
+                    if !viewModel.recentPuzzles.isEmpty {
+                        SectionHeader(title: "More Puzzles")
+                        VStack(spacing: 10) {
+                            ForEach(viewModel.recentPuzzles, id: \.puzzle.id) { p in
+                                PuzzleCard(puzzle: p, isDaily: false)
+                            }
+                        }
+                    }
+
+                    Button {
+                        Task { await viewModel.loadMore(token: appModel.lichess.token) }
+                    } label: {
+                        HStack {
+                            if viewModel.isLoadingMore {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text(viewModel.isLoadingMore ? "Loading…" : "Load another puzzle")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(viewModel.isLoadingMore)
+                    .padding(.top, 8)
+                }
+            }
+            .padding(24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassBackgroundEffect()
         .navigationTitle("Puzzles")
+        .task {
+            await viewModel.load(token: appModel.lichess.token)
+        }
+        .refreshable {
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        viewModel = PuzzlesViewModel()
+        await viewModel.load(token: appModel.lichess.token)
+    }
+}
+
+private struct PuzzleCard: View {
+    let puzzle: LichessPuzzle
+    let isDaily: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.purple.gradient.opacity(0.25))
+                    .frame(width: 56, height: 56)
+                Image(systemName: "puzzlepiece.fill")
+                    .font(.title2)
+                    .foregroundStyle(.purple)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if isDaily {
+                        Text("DAILY")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.orange.opacity(0.15), in: Capsule())
+                    }
+                    Text("#\(puzzle.puzzle.id)")
+                        .font(.callout)
+                        .fontWeight(.semibold)
+                }
+
+                HStack(spacing: 8) {
+                    if let rating = puzzle.puzzle.rating {
+                        Label("\(rating)", systemImage: "chart.bar.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let plays = puzzle.puzzle.plays {
+                        Label(playsString(plays), systemImage: "person.2.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let moves = puzzle.puzzle.solution?.count {
+                        Label("\(moves) moves", systemImage: "arrow.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !puzzle.puzzle.themes.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(puzzle.puzzle.themes.prefix(4), id: \.self) { theme in
+                            Text(theme)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.white.opacity(0.08), in: Capsule())
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            Spacer()
+
+            Link(destination: URL(string: "https://lichess.org/training/\(puzzle.puzzle.id)")!) {
+                Label("Solve", systemImage: "play.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.purple.opacity(0.25), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.lift)
+        }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+        )
+    }
+
+    private func playsString(_ plays: Int) -> String {
+        if plays >= 1_000_000 { return String(format: "%.1fM", Double(plays) / 1_000_000) }
+        if plays >= 1_000 { return String(format: "%.1fk", Double(plays) / 1_000) }
+        return "\(plays)"
+    }
+}
+
+private struct PuzzleCardSkeleton: View {
+    @State private var opacity = 0.4
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.white.opacity(0.12)).frame(width: 56, height: 56)
+            VStack(alignment: .leading, spacing: 6) {
+                Capsule().fill(.white.opacity(0.12)).frame(width: 120, height: 12)
+                Capsule().fill(.white.opacity(0.08)).frame(width: 200, height: 10)
+                Capsule().fill(.white.opacity(0.08)).frame(width: 160, height: 10)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .opacity(opacity)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                opacity = 0.9
+            }
+        }
+    }
+}
+
+private struct PuzzlesErrorState: View {
+    let message: String
+    let onRetry: () -> Void
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.orange)
+            Text("Couldn't load puzzles")
+                .font(.callout.weight(.semibold))
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Retry", action: onRetry)
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+// MARK: - Game Review
+// Real data: `/api/games/user/{username}` filtered to games that have
+// Stockfish analysis attached.
+
+@Observable
+@MainActor
+final class GameReviewViewModel {
+    var games: [LichessGame] = []
+    var isLoading = false
+    var errorMessage: String?
+
+    private let service = LichessService()
+    private var hasLoadedFor: String?
+
+    func load(username: String, token: String?) async {
+        guard hasLoadedFor != username else { return }
+        hasLoadedFor = username
+        await service.authenticate(token: token)
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            games = try await service.fetchRecentGames(
+                username: username,
+                count: 50,
+                withAnalysis: true,
+                withOpening: true
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func analyzedGames(for username: String) -> [LichessGame] {
+        games.filter { $0.accuracy(for: username) != nil }
     }
 }
 
 struct GameReviewPlaceholderView: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var viewModel = GameReviewViewModel()
+
     var body: some View {
         LichessGate(
             icon: "magnifyingglass.circle.fill",
@@ -137,39 +410,171 @@ struct GameReviewPlaceholderView: View {
             signedOutMessage: "Sign in with Lichess to review your games with Stockfish-powered analysis.",
             accentColor: .blue
         ) {
-            ComingSoonView(
-                icon: "magnifyingglass.circle.fill",
-                title: "Game Review",
-                description: "Analyze your recent games with Stockfish-powered computer analysis.",
-                accentColor: .blue
-            )
+            content
         }
         .navigationTitle("Game Review")
+        .task {
+            if let username = appModel.lichess.account?.username {
+                await viewModel.load(username: username, token: appModel.lichess.token)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        let username = appModel.lichess.account?.username ?? ""
+        let analyzed = viewModel.analyzedGames(for: username)
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SectionHeader(title: "Analyzed Games", subtitle: "Games with Stockfish analysis from Lichess")
+
+                if viewModel.isLoading && analyzed.isEmpty {
+                    VStack(spacing: 8) {
+                        ForEach(0..<6, id: \.self) { _ in GameRowSkeleton() }
+                    }
+                } else if let error = viewModel.errorMessage, analyzed.isEmpty {
+                    ErrorStateCard(message: error)
+                } else if analyzed.isEmpty {
+                    EmptyStateCard(
+                        icon: "magnifyingglass.circle.fill",
+                        title: "No analyzed games yet",
+                        message: "Request analysis on a game in Lichess to see it here."
+                    )
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(analyzed) { game in
+                            GameRowView(game: game, username: username)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassBackgroundEffect()
+    }
+}
+
+// MARK: - History
+// Real data: `/api/games/user/{username}`, full list (no analysis
+// filter), with a search field.
+
+@Observable
+@MainActor
+final class HistoryViewModel {
+    var games: [LichessGame] = []
+    var isLoading = false
+    var errorMessage: String?
+    var searchText: String = ""
+
+    private let service = LichessService()
+    private var hasLoadedFor: String?
+
+    func load(username: String, token: String?) async {
+        guard hasLoadedFor != username else { return }
+        hasLoadedFor = username
+        await service.authenticate(token: token)
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            games = try await service.fetchRecentGames(
+                username: username,
+                count: 50,
+                withAnalysis: false,
+                withOpening: true
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func filtered(for username: String) -> [LichessGame] {
+        guard !searchText.isEmpty else { return games }
+        return games.filter { game in
+            game.opponent(for: username).localizedCaseInsensitiveContains(searchText)
+                || (game.opening?.name?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
     }
 }
 
 struct HistoryPlaceholderView: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var viewModel = HistoryViewModel()
+
     var body: some View {
         LichessGate(
             icon: "clock.fill",
             title: "Game History",
-            signedOutMessage: "Sign in with Lichess to browse and filter your past games.",
+            signedOutMessage: "Sign in with Lichess to browse your past games.",
             accentColor: .orange
         ) {
-            ComingSoonView(
-                icon: "clock.fill",
-                title: "Game History",
-                description: "Browse and filter all your past games with full statistics.",
-                accentColor: .orange
-            )
+            content
         }
         .navigationTitle("History")
+        .task {
+            if let username = appModel.lichess.account?.username {
+                await viewModel.load(username: username, token: appModel.lichess.token)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        let username = appModel.lichess.account?.username ?? ""
+        let games = viewModel.filtered(for: username)
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    SectionHeader(title: "Game History", subtitle: "Your most recent \(viewModel.games.count) games from Lichess")
+                    Spacer()
+                }
+
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search opponent or opening", text: Binding(
+                        get: { viewModel.searchText },
+                        set: { viewModel.searchText = $0 }
+                    ))
+                    .textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+
+                if viewModel.isLoading && games.isEmpty {
+                    VStack(spacing: 8) {
+                        ForEach(0..<8, id: \.self) { _ in GameRowSkeleton() }
+                    }
+                } else if let error = viewModel.errorMessage, games.isEmpty {
+                    ErrorStateCard(message: error)
+                } else if games.isEmpty {
+                    EmptyStateCard(
+                        icon: "clock.fill",
+                        title: viewModel.searchText.isEmpty ? "No games yet" : "No matching games",
+                        message: viewModel.searchText.isEmpty
+                            ? "Play a game on Lichess to see it here."
+                            : "Try a different opponent name or opening."
+                    )
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(games) { game in
+                            GameRowView(game: game, username: username)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassBackgroundEffect()
     }
 }
 
-/// Profile is rendered as a real card when the user is signed in (their
-/// account snapshot from `LichessSession`); otherwise the gate prompts
-/// for sign-in.
+// MARK: - Profile (unchanged from before)
+
 struct ProfilePlaceholderView: View {
     @Environment(AppModel.self) private var appModel
 
@@ -195,10 +600,6 @@ struct ProfilePlaceholderView: View {
     }
 }
 
-/// Compact Lichess profile readout: avatar, name, per-speed rating chips,
-/// sign-out affordance. Pulled straight from the session's
-/// `LichessAccount` so it auto-refreshes when bootstrap or sign-in
-/// completes.
 private struct ProfileCardView: View {
     let account: LichessAccount
     @Environment(AppModel.self) private var appModel
@@ -213,7 +614,6 @@ private struct ProfileCardView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                // Avatar + name
                 VStack(spacing: 12) {
                     ZStack {
                         Circle()
@@ -236,7 +636,6 @@ private struct ProfileCardView: View {
                 }
                 .padding(.top, 24)
 
-                // Per-speed rating chips
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
                           spacing: 12) {
                     ForEach(Self.displayedPerfs, id: \.key) { entry in
@@ -245,7 +644,6 @@ private struct ProfileCardView: View {
                 }
                 .padding(.horizontal, 24)
 
-                // Sign-out
                 Button(role: .destructive) {
                     Task { await appModel.lichess.signOut() }
                 } label: {
@@ -289,7 +687,8 @@ private struct ProfileCardView: View {
     }
 }
 
-/// Settings doesn't depend on Lichess — leave it as a plain coming-soon.
+// MARK: - Settings & Notifications (still placeholders)
+
 struct SettingsPlaceholderView: View {
     var body: some View {
         ComingSoonView(
@@ -302,8 +701,6 @@ struct SettingsPlaceholderView: View {
     }
 }
 
-/// Notifications — shown when the user taps the bell icon in the sidebar footer.
-/// Replace the ComingSoonView body with the real implementation when ready.
 struct NotificationsPlaceholderView: View {
     var body: some View {
         LichessGate(
@@ -320,5 +717,67 @@ struct NotificationsPlaceholderView: View {
             )
         }
         .navigationTitle("Notifications")
+    }
+}
+
+// MARK: - Shared UI helpers
+
+private struct SectionHeader: View {
+    let title: String
+    var subtitle: String? = nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.title3)
+                .fontWeight(.semibold)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct EmptyStateCard: View {
+    let icon: String
+    let title: String
+    let message: String
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.callout)
+                .fontWeight(.medium)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+private struct ErrorStateCard: View {
+    let message: String
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.orange)
+            Text("Couldn't load games")
+                .font(.callout.weight(.semibold))
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 }

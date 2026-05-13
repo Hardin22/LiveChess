@@ -173,13 +173,16 @@ final class LichessSession {
 }
 
 private extension LichessSession.Status {
-    /// `signIn()` is allowed from `.signedOut` and `.error(_)`. This
-    /// helper collapses both into `.signedOut` for the guard.
+    /// `signIn()` is allowed from `.signedOut`, `.error(_)`, and
+    /// `.unknown` (bootstrap may have stalled before resolving — we
+    /// don't want the user blocked from signing in just because the
+    /// keychain probe hasn't completed). This helper collapses all
+    /// three into `.signedOut` for the guard.
     var normalizedForSignIn: LichessSession.Status {
         switch self {
-        case .signedOut, .error:
+        case .signedOut, .error, .unknown:
             return .signedOut
-        case .unknown, .signingIn, .signingOut, .signedIn:
+        case .signingIn, .signingOut, .signedIn:
             return self
         }
     }

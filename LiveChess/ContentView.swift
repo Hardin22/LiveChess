@@ -24,6 +24,19 @@ struct ContentView: View {
         } detail: {
             NavigationStack {
                 detailView
+                    .toolbar {
+                        if (homeViewModel.selectedDestination ?? .home) != .home {
+                            ToolbarItem(placement: .navigationBarLeading) {
+                                Button {
+                                    homeViewModel.navigate(to: .home)
+                                } label: {
+                                    Label("Home", systemImage: "chevron.left")
+                                        .labelStyle(.iconOnly)
+                                }
+                                .hoverEffect(.lift)
+                            }
+                        }
+                    }
             }
         }
         .task {
