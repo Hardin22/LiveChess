@@ -396,28 +396,40 @@ struct OnlineMatchHUDView: View {
                 .controlSize(.regular)
             }
 
-            // Toggle between AR (passthrough) and the bundled virtual
-            // chess room. Triggers a dismiss + re-open of the immersive
-            // since immersionStyle + scene contents need to rebuild.
-            // The active Lichess match session is preserved across the
+            // Pick the immersive backdrop: AR passthrough or one of
+            // the bundled virtual environments. Selecting a different
+            // env triggers a dismiss + re-open of the immersive since
+            // immersionStyle + scene contents need to rebuild. The
+            // active Lichess match session is preserved across the
             // re-open via `appModel.pendingReopen` (see ChessSceneView).
-            Button {
-                Task { await toggleEnvironment() }
+            Menu {
+                ForEach(SceneEnvironment.allCases) { env in
+                    Button {
+                        Task { await switchEnvironment(to: env) }
+                    } label: {
+                        Label(env.displayName, systemImage: env.systemImage)
+                        if env == appModel.selectedEnvironment {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                    .disabled(env == appModel.selectedEnvironment)
+                }
             } label: {
                 Label(
-                    appModel.virtualEnvironmentEnabled ? "Switch to AR" : "Virtual room",
-                    systemImage: appModel.virtualEnvironmentEnabled ? "arkit" : "cube.transparent"
+                    appModel.selectedEnvironment.displayName,
+                    systemImage: appModel.selectedEnvironment.systemImage
                 )
                 .frame(maxWidth: .infinity)
             }
+            .menuStyle(.button)
             .buttonStyle(.bordered)
             .controlSize(.regular)
         }
     }
 
-    private func toggleEnvironment() async {
-        let willBeVirtual = !appModel.virtualEnvironmentEnabled
-        appModel.virtualEnvironmentEnabled = willBeVirtual
+    private func switchEnvironment(to env: SceneEnvironment) async {
+        guard env != appModel.selectedEnvironment else { return }
+        appModel.selectedEnvironment = env
         appModel.pendingReopen = true
         appModel.immersiveSpaceState = .inTransition
         await dismissImmersiveSpace()

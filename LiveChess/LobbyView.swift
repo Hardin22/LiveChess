@@ -101,6 +101,8 @@ struct LobbyView: View {
                 } else {
                     modePicker
 
+                    environmentPickerRow
+
                     selectedModeCard
                 }
 
@@ -211,6 +213,48 @@ struct LobbyView: View {
         .buttonStyle(SelectionButtonStyle(isSelected: isSelected, shape: .roundedRect(cornerRadius: 14)))
         .hoverEffect()
         .disabled(!isAvailable)
+    }
+
+    // MARK: - Environment picker
+
+    /// Single-row picker for the immersive backdrop (AR vs one of the
+    /// bundled USDZ environments). Read at the moment the user opens
+    /// the immersive space — `ChessSceneView` dispatches on
+    /// `appModel.selectedEnvironment` to mount the right scene. Also
+    /// drives `immersionStyle` in `LiveChessApp` so virtual envs go
+    /// full-immersion and AR stays mixed.
+    @ViewBuilder
+    private var environmentPickerRow: some View {
+        @Bindable var appModel = appModel
+        HStack(spacing: 10) {
+            Image(systemName: "rectangle.3.group.bubble")
+                .foregroundStyle(.secondary)
+            Text("Environment")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                ForEach(SceneEnvironment.allCases) { env in
+                    Button {
+                        appModel.selectedEnvironment = env
+                    } label: {
+                        Label(env.displayName, systemImage: env.systemImage)
+                        if env == appModel.selectedEnvironment {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            } label: {
+                Label(
+                    appModel.selectedEnvironment.displayName,
+                    systemImage: appModel.selectedEnvironment.systemImage
+                )
+            }
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Mode config cards

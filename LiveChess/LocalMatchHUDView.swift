@@ -207,7 +207,7 @@ struct LocalMatchHUDView: View {
                 .controlSize(.regular)
             }
 
-            environmentToggleButton
+            environmentPickerButton
 
             Button(role: .destructive) {
                 Task {
@@ -223,23 +223,37 @@ struct LocalMatchHUDView: View {
         }
     }
 
-    private var environmentToggleButton: some View {
-        Button {
-            Task { await toggleEnvironment() }
+    private var environmentPickerButton: some View {
+        Menu {
+            ForEach(SceneEnvironment.allCases) { env in
+                Button {
+                    Task { await switchEnvironment(to: env) }
+                } label: {
+                    Label(env.displayName, systemImage: env.systemImage)
+                    if env == appModel.selectedEnvironment {
+                        Image(systemName: "checkmark")
+                    }
+                }
+                .disabled(env == appModel.selectedEnvironment)
+            }
         } label: {
             Label(
-                appModel.virtualEnvironmentEnabled ? "Switch to AR" : "Virtual room",
-                systemImage: appModel.virtualEnvironmentEnabled ? "arkit" : "cube.transparent"
+                appModel.selectedEnvironment.displayName,
+                systemImage: appModel.selectedEnvironment.systemImage
             )
             .frame(maxWidth: .infinity)
         }
+        .menuStyle(.button)
         .buttonStyle(.bordered)
         .controlSize(.regular)
     }
 
-    private func toggleEnvironment() async {
-        let willBeVirtual = !appModel.virtualEnvironmentEnabled
-        appModel.virtualEnvironmentEnabled = willBeVirtual
+    /// Swaps the immersive scene's environment. Same dismiss + re-open
+    /// cycle the old toggle used; `pendingReopen` keeps the active
+    /// session + the main-menu window state alive across the swap.
+    private func switchEnvironment(to env: SceneEnvironment) async {
+        guard env != appModel.selectedEnvironment else { return }
+        appModel.selectedEnvironment = env
         appModel.pendingReopen = true
         appModel.immersiveSpaceState = .inTransition
         await dismissImmersiveSpace()

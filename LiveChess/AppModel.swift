@@ -19,13 +19,20 @@ class AppModel {
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
 
-    /// Whether the immersive scene replaces real-world passthrough with
-    /// the bundled virtual environment (a small chess room with table +
-    /// chairs). Off by default so first-time users see the chessboard
-    /// floating in their actual room (the AR experience). Toggling at
-    /// runtime requires the immersive scene to rebuild — the toggle
-    /// flow dismisses + re-opens the immersive space.
-    var virtualEnvironmentEnabled: Bool = false
+    /// Which backdrop the immersive scene uses. `.ar` keeps Vision Pro
+    /// passthrough on so the board lands on a real-world table via
+    /// ARKit plane detection. The other cases swap passthrough for a
+    /// bundled USDZ environment (dwarven hall, balcony, esports stage)
+    /// with the board pre-seated on the env's table.
+    ///
+    /// Switching at runtime requires the immersive scene to rebuild —
+    /// the picker flow dismisses + re-opens the immersive space.
+    var selectedEnvironment: SceneEnvironment = .ar
+
+    /// Convenience for the immersion-style switch in `LiveChessApp`.
+    var virtualEnvironmentEnabled: Bool {
+        selectedEnvironment.isVirtual
+    }
 
     /// Set briefly by the env-toggle flow so `ChessSceneView.onDisappear`
     /// keeps the active session alive across the dismiss + re-open.
