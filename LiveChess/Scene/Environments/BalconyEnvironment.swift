@@ -13,9 +13,24 @@ import SwiftUI
 enum BalconyEnvironment: EnvironmentScene {
 
     /// The Blender table object (after the joins / decimation in our
-    /// optimizer) lives under `ChairTable_Root` and is the only mesh
-    /// in that subtree, so a recursive name lookup hits it.
-    private static let tableEntityName = "node_0"
+    /// optimizer) lives under `ChairTable_Root`. The combined chair-
+    /// table mesh is exported as `node_0`; a recursive name lookup
+    /// hits it from anywhere in the env tree.
+    private static let chairTableEntityName = "node_0"
+
+    /// Where we'd like the chair+table cluster's centre to land in
+    /// world space, relative to the user's feet (world origin).
+    ///
+    ///   * `y` left at the cluster's own centre — the env's floor is
+    ///     already authored at Blender Z = 0 so it lands on the user's
+    ///     real floor when env Y stays 0.
+    ///   * `z = -0.55` — table centre ~55 cm in front of the user.
+    ///     The cluster's long axis (2.26 m) lies along world Z after
+    ///     the rotation below, so the FAR chair sits ~1.68 m forward
+    ///     and the NEAR chair (the one the user "sits in") lands
+    ///     ~0.58 m *behind* the user's heels — exactly where a chair
+    ///     would be relative to a seated player.
+    private static let targetClusterCenterXZ = SIMD2<Float>(0, -0.55)
 
     static func mount(
         into content: any RealityViewContentProtocol
@@ -28,25 +43,46 @@ enum BalconyEnvironment: EnvironmentScene {
         }
         env.name = "VirtualEnvironment_Balcony"
 
-        // The balcony was authored with the central chair facing -X,
-        // same orientation convention as the dwarven hall. Rotate -π/2
-        // around Y so the chair's forward maps to user-forward (-Z).
-        // The scene origin in the .blend is at the centre of the floor;
-        // pull the env back so the user feels seated at the table at
-        // world origin.
+        // Rotate the env so the chair+table cluster's wide axis
+        // (2.26 m, runs through both seats and the table between
+        // them in the .blend) aligns with the user's forward axis.
+        // Concretely: -π/2 around Y maps Blender's +X → world +Z,
+        // so the "left chair" lands in front of the user and the
+        // "right chair" lands behind them.
         env.transform.rotation = simd_quatf(
             angle: -.pi / 2, axis: SIMD3<Float>(0, 1, 0)
         )
-        env.position = SIMD3<Float>(0, 0.0, -1.6)
+        // Provisional translation — refined below once we can read
+        // the cluster's bounds in world space.
+        env.transform.translation = .zero
 
-        EnvironmentLighting.softenEmbeddedLights(in: env)
+        // Balcony sconce is the env's only authored light and reads
+        // as decoration; we keep its intensity (skip the dwarven-hall
+        // soften pass) so the warm wash on the wall stays visible.
         content.add(env)
 
-        // Try the table first; fall back to scene-bounds centre so the
-        // user still gets a placeable board if the name lookup fails.
+        // Dynamic re-anchor: find the chair+table cluster, read its
+        // world-space centre after the rotation, then shift the env
+        // so that centre lands at the target seated-POV position.
+        if let cluster = env.findEntity(named: chairTableEntityName)
+            ?? env.findEntity(named: "ChairTable_Root") {
+            let b = cluster.visualBounds(relativeTo: nil)
+            let target = SIMD3<Float>(
+                targetClusterCenterXZ.x,
+                b.center.y,
+                targetClusterCenterXZ.y
+            )
+            env.transform.translation += (target - b.center)
+        } else {
+            // No cluster entity — best-effort seated-POV transform.
+            env.transform.translation = SIMD3<Float>(0, 0, -0.55)
+        }
+
+        // Read the table-top position AFTER the final transform so the
+        // board lands correctly on the mesh surface.
         let boardPos = EnvironmentLighting.boardPosition(
-            onTableNamed: tableEntityName, in: env
-        ) ?? SIMD3<Float>(0, 0.78, 0)
+            onTableNamed: chairTableEntityName, in: env
+        ) ?? SIMD3<Float>(0, 0.78, -0.55)
 
         addDaylightLighting(into: content)
 
@@ -61,10 +97,14 @@ enum BalconyEnvironment: EnvironmentScene {
     private static func addDaylightLighting(
         into content: any RealityViewContentProtocol
     ) {
-        // SUN — golden-hour directional key.
+        // SUN — golden-hour directional key. visionOS RealityKit
+        // wants high lumen values for a directional source to read
+        // as "sunlight" against passthrough-free black; 25K is the
+        // floor that makes the floor stone + railing pick up
+        // visible highlights.
         let sun = DirectionalLightComponent(
             color: .init(red: 1.0, green: 0.92, blue: 0.78, alpha: 1.0),
-            intensity: 6_000
+            intensity: 25_000
         )
         let sunEntity = Entity()
         sunEntity.name = "BalconySun"
@@ -82,9 +122,9 @@ enum BalconyEnvironment: EnvironmentScene {
         // SKY FILL — cool diffuse top-down lift, wide attenuation.
         var sky = PointLightComponent(
             color: .init(red: 0.65, green: 0.78, blue: 1.0, alpha: 1.0),
-            intensity: 250_000
+            intensity: 700_000
         )
-        sky.attenuationRadius = 12.0
+        sky.attenuationRadius = 14.0
         let skyEntity = Entity()
         skyEntity.name = "BalconySky"
         skyEntity.components.set(sky)
@@ -95,9 +135,9 @@ enum BalconyEnvironment: EnvironmentScene {
         // pure shadow on the dark stone floor.
         var bounce = PointLightComponent(
             color: .init(red: 1.0, green: 0.85, blue: 0.65, alpha: 1.0),
-            intensity: 60_000
+            intensity: 180_000
         )
-        bounce.attenuationRadius = 3.0
+        bounce.attenuationRadius = 4.0
         let bounceEntity = Entity()
         bounceEntity.name = "BalconyBounce"
         bounceEntity.components.set(bounce)
