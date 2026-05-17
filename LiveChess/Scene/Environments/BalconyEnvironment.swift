@@ -102,6 +102,7 @@ enum BalconyEnvironment: EnvironmentScene {
         // always sees a clean balcony fence between themselves
         // and the sea.
         Self.hideOriginalRailings(in: env)
+        Self.replaceWoodWallMaterial(in: env)
         Self.addFloorSkirt(around: env, into: content)
         Self.addPerimeterRailing(around: env, into: content)
 
@@ -336,6 +337,52 @@ enum BalconyEnvironment: EnvironmentScene {
         m.blending = .transparent(opacity: .init(floatLiteral: 0.35))
         m.faceCulling = .none
         return m
+    }
+
+    // MARK: - Wood wall material override
+
+    /// The wooden plank wall in the .blend ships with a 4K texture
+    /// set that was downscaled + JPG-re-encoded by our optimizer.
+    /// On the device it composites as a splotchy chrome-ish surface
+    /// (the user saw "fake mirror reflections" on the planks). Swap
+    /// the wall's material for a clean warm-walnut PBR so it reads
+    /// as honest wood instead of a corrupted reflective panel.
+    private static func replaceWoodWallMaterial(in root: Entity) {
+        var wood = PhysicallyBasedMaterial()
+        // Warm walnut tone — sits between the chair brown and the
+        // floor stone, makes the wall feel like the obvious "back"
+        // of the balcony.
+        wood.baseColor = .init(
+            tint: .init(red: 0.38, green: 0.24, blue: 0.16, alpha: 1.0)
+        )
+        // Wood is matte-ish; a touch of sheen keeps it from reading flat.
+        wood.roughness = .init(floatLiteral: 0.72)
+        wood.metallic = .init(floatLiteral: 0.0)
+        // Faint clearcoat = subtle varnish highlight along the planks
+        // when the sun catches them, without the chrome blowout.
+        wood.clearcoat = .init(floatLiteral: 0.20)
+        wood.clearcoatRoughness = .init(floatLiteral: 0.55)
+
+        var hits = 0
+        var stack: [Entity] = [root]
+        while let e = stack.popLast() {
+            let n = e.name.lowercased()
+            // Match the .blend's wall mesh names without snagging
+            // the floor's wall-tile texture entities (which use
+            // "balcony_floor" / "tile").
+            let isWall = (n.contains("wall") || n.contains("plank")
+                          || n.contains("wood")) && !n.contains("floor")
+            if isWall, let model = e as? ModelEntity {
+                let count = model.model?.materials.count ?? 1
+                model.model?.materials = Array(
+                    repeating: wood as any RealityKit.Material,
+                    count: max(count, 1)
+                )
+                hits += 1
+            }
+            stack.append(contentsOf: e.children)
+        }
+        print("=== wood wall material override: \(hits) entities ===")
     }
 
     // MARK: - Skybox / IBL
