@@ -40,23 +40,22 @@ struct GameReviewDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: Chess.Space.l) {
                 header
                 progressBanner
                 if !viewModel.moves.isEmpty {
                     summaryRow
-                    Divider().padding(.vertical, 4)
                     moveList
                 }
                 if let error = viewModel.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                        .padding(12)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    ChessCard(.row) {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
                 }
             }
-            .padding(22)
+            .padding(Chess.Space.l)
             .frame(maxWidth: 720, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -74,23 +73,35 @@ struct GameReviewDetailView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text("vs \(game.opponent(for: username))")
-                    .font(.title3.weight(.semibold))
-                if let clock = game.clock {
-                    Text("· \(clock.displayString)")
-                        .foregroundStyle(.secondary)
+        ChessCard(.hero) {
+            HStack(alignment: .top, spacing: Chess.Space.m) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Chess.Palette.info.opacity(0.18))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(Chess.Palette.info)
+                        .font(.title3)
                 }
-                if let opening = game.opening?.name {
-                    Text("· \(opening)")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: Chess.Space.xxs) {
+                    Text("vs \(game.opponent(for: username))")
+                        .font(Chess.Typography.sectionTitle())
+                    HStack(spacing: Chess.Space.xs) {
+                        if let clock = game.clock {
+                            ChessChip(clock.displayString, icon: "clock", tint: Chess.Palette.accent)
+                        }
+                        ChessChip("\(game.moveCount) moves", icon: "square.grid.3x3",
+                                  tint: Chess.Palette.highlight)
+                    }
+                    if let opening = game.opening?.name {
+                        Text(opening)
+                            .font(Chess.Typography.rowDetail())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
+                Spacer()
             }
-            Text("\(game.moveCount) moves")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -99,17 +110,18 @@ struct GameReviewDetailView: View {
     @ViewBuilder
     private var progressBanner: some View {
         if viewModel.isRunning {
-            HStack(spacing: 10) {
-                ProgressView()
-                Text("Analysing move \(viewModel.moves.count) / \(viewModel.totalPlies)…")
-                    .font(.callout)
-                Spacer()
-                Button("Stop") { viewModel.cancel() }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
+            ChessCard(.row) {
+                HStack(spacing: Chess.Space.s) {
+                    ProgressView()
+                        .tint(Chess.Palette.accent)
+                    Text("Analysing move \(viewModel.moves.count) / \(viewModel.totalPlies)…")
+                        .font(.callout)
+                    Spacer()
+                    Button("Stop") { viewModel.cancel() }
+                        .controlSize(.small)
+                        .buttonStyle(.bordered)
+                }
             }
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -117,7 +129,7 @@ struct GameReviewDetailView: View {
 
     private var summaryRow: some View {
         let result = GameAnalysisResult(moves: viewModel.moves)
-        return HStack(spacing: 16) {
+        return HStack(spacing: Chess.Space.m) {
             sidePanel(result: result, side: .white, label: "White")
             sidePanel(result: result, side: .black, label: "Black")
         }
@@ -127,29 +139,44 @@ struct GameReviewDetailView: View {
         result: GameAnalysisResult, side: Side, label: String
     ) -> some View {
         let acc = result.accuracy(for: side)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(label).font(.headline)
-                Spacer()
-                Text(String(format: "%.1f%%", acc))
-                    .font(.headline.monospacedDigit())
-                    .foregroundStyle(.primary)
-            }
-            ForEach(qualitiesInDisplayOrder, id: \.self) { q in
-                HStack(spacing: 6) {
-                    Text(q.glyph).font(.caption.monospaced())
-                        .frame(width: 22)
-                    Text(q.displayName).font(.caption)
+        return ChessCard(.standard) {
+            VStack(alignment: .leading, spacing: Chess.Space.xs) {
+                HStack {
+                    Text(label).font(Chess.Typography.sectionTitle())
                     Spacer()
-                    Text("\(result.count(q, for: side))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    Text(String(format: "%.1f%%", acc))
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(Chess.Palette.highlight)
+                }
+                ForEach(qualitiesInDisplayOrder, id: \.self) { q in
+                    HStack(spacing: 6) {
+                        Text(q.glyph).font(.caption.monospaced())
+                            .frame(width: 22)
+                            .foregroundStyle(colorFor(q))
+                        Text(q.displayName)
+                            .font(Chess.Typography.rowDetail())
+                        Spacer()
+                        Text("\(result.count(q, for: side))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func colorFor(_ q: MoveQuality) -> Color {
+        switch q {
+        case .brilliant:         return .cyan
+        case .best, .great:      return Chess.Palette.accent
+        case .book:              return Chess.Palette.info
+        case .excellent, .good:  return .mint
+        case .inaccuracy:        return Chess.Palette.highlight
+        case .missedWin:         return .purple
+        case .mistake:           return .orange
+        case .blunder:           return .red
+        }
     }
 
     private var qualitiesInDisplayOrder: [MoveQuality] {
@@ -177,76 +204,76 @@ private struct MoveReviewRow: View {
     private var sideMarker: String { move.id % 2 == 0 ? "." : "..." }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text("\(moveNumber)\(sideMarker)")
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .trailing)
+        ChessCard(.row) {
+            HStack(alignment: .top, spacing: Chess.Space.s) {
+                Text("\(moveNumber)\(sideMarker)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .trailing)
 
-            Text(move.san)
-                .font(.callout.monospaced())
-                .frame(minWidth: 60, alignment: .leading)
+                Text(move.san)
+                    .font(.callout.monospaced())
+                    .frame(minWidth: 60, alignment: .leading)
 
-            Text(move.quality.glyph)
-                .font(.callout.weight(.bold))
-                .foregroundStyle(colorFor(move.quality))
-                .frame(width: 28)
+                Text(move.quality.glyph)
+                    .font(.callout.weight(.bold))
+                    .foregroundStyle(colorFor(move.quality))
+                    .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(move.quality.displayName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(colorFor(move.quality))
-                    if move.quality == .book, let name = move.bookOpening {
-                        Text(name)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        if move.winPercentLoss >= 0.5 {
-                            Text(String(format: "−%.1f%% win", move.winPercentLoss))
+                VStack(alignment: .leading, spacing: Chess.Space.xxs) {
+                    HStack(spacing: 6) {
+                        Text(move.quality.displayName)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(colorFor(move.quality))
+                        if move.quality == .book, let name = move.bookOpening {
+                            Text(name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            if move.winPercentLoss >= 0.5 {
+                                Text(String(format: "−%.1f%% win", move.winPercentLoss))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            if move.centipawnLoss > 0 {
+                                Text("(−\(move.centipawnLoss) cp)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("eval \(formatScore(move.bestScoreCp))")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
-                        if move.centipawnLoss > 0 {
-                            Text("(−\(move.centipawnLoss) cp)")
+                    }
+                    ForEach(Array(move.topLines.prefix(3).enumerated()), id: \.offset) { idx, line in
+                        HStack(spacing: 6) {
+                            Text("L\(idx + 1)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text(line.pv.prefix(8).joined(separator: " "))
+                                .font(.caption2.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer()
+                            Text(formatScore(line.scoreCp))
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
-                        Text("eval \(formatScore(move.bestScoreCp))")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
                     }
                 }
-                ForEach(Array(move.topLines.prefix(3).enumerated()), id: \.offset) { idx, line in
-                    HStack(spacing: 6) {
-                        Text("L\(idx + 1)")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                        Text(line.pv.prefix(8).joined(separator: " "))
-                            .font(.caption2.monospaced())
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Spacer()
-                        Text(formatScore(line.scoreCp))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Spacer()
             }
-            Spacer()
         }
-        .padding(10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func colorFor(_ q: MoveQuality) -> Color {
         switch q {
         case .brilliant:         return .cyan
-        case .best, .great:      return .green
-        case .book:              return .blue
+        case .best, .great:      return Chess.Palette.accent
+        case .book:              return Chess.Palette.info
         case .excellent, .good:  return .mint
-        case .inaccuracy:        return .yellow
+        case .inaccuracy:        return Chess.Palette.highlight
         case .missedWin:         return .purple
         case .mistake:           return .orange
         case .blunder:           return .red

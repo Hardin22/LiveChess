@@ -356,6 +356,7 @@ struct OnlineMatchHUDView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(Chess.Palette.accent)
                     .controlSize(.large)
                 }
             } else {
@@ -379,6 +380,7 @@ struct OnlineMatchHUDView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(Chess.Palette.accent)
                 .controlSize(.large)
             }
 

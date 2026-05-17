@@ -86,9 +86,9 @@ struct SidebarView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                HStack(spacing: 8) {
+                HStack(spacing: Chess.Space.xs) {
                     Image(systemName: "crown.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Chess.Palette.accent)
                         .font(.title3)
                     Text(Chess.Brand.name)
                         .font(.headline)
@@ -201,91 +201,62 @@ struct SidebarProfileView: View {
 
         case .signedIn(let account):
             // ── The redesigned card ──────────────────────────────────
-            HStack(spacing: 10) {
-
-                // LEFT: Avatar + name/rating → tapping opens Profile
-                Button {
-                    viewModel.navigate(to: .profile)
-                } label: {
-                    HStack(spacing: 10) {
-                        // Avatar circle
-                        ZStack {
-                            Circle()
-                                .fill(Color.green.gradient)
-                                .frame(width: 38, height: 38)
-                            Text(String(account.username.prefix(1)).uppercased())
-                                .font(.callout)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.white)
-                        }
-
-                        // Name + online status + rating
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                if let title = account.title {
-                                    Text(title)
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(.orange)
-                                }
-                                Text(account.username)
-                                    .font(.callout)
-                                    .fontWeight(.medium)
-                                    .lineLimit(1)
-                            }
-                            HStack(spacing: 4) {
+            ChessCard(.row) {
+                HStack(spacing: Chess.Space.s) {
+                    Button {
+                        viewModel.navigate(to: .profile)
+                    } label: {
+                        HStack(spacing: Chess.Space.s) {
+                            ZStack {
                                 Circle()
-                                    .fill(.green)
-                                    .frame(width: 6, height: 6)
-                                if let rating = account.rating(forPerfKey: "rapid") {
-                                    Text("Online · \(rating)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("Online")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    .fill(Chess.Palette.accent.gradient)
+                                    .frame(width: 38, height: 38)
+                                Text(String(account.username.prefix(1)).uppercased())
+                                    .font(.callout)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(.white)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 4) {
+                                    if let title = account.title {
+                                        Text(title)
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(Chess.Palette.highlight)
+                                    }
+                                    Text(account.username)
+                                        .font(Chess.Typography.rowTitle())
+                                        .lineLimit(1)
+                                }
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(Chess.Palette.accent)
+                                        .frame(width: 6, height: 6)
+                                    if let rating = account.rating(forPerfKey: "rapid") {
+                                        Text("Online · \(rating)")
+                                            .font(Chess.Typography.rowDetail())
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Text("Online")
+                                            .font(Chess.Typography.rowDetail())
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                .buttonStyle(.plain)
-                .hoverEffect(.lift)
+                    .buttonStyle(.plain)
+                    .hoverEffect(.lift)
 
-                Spacer()
+                    Spacer()
 
-                // RIGHT: Notifications icon → opens Notifications screen
-                Button {
-                    viewModel.navigate(to: .notifications)
-                } label: {
-                    Image(systemName: "bell.fill")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    footerIconButton("bell.fill") {
+                        viewModel.navigate(to: .notifications)
+                    }
+                    footerIconButton("gearshape.fill") {
+                        viewModel.navigate(to: .settings)
+                    }
                 }
-                .buttonStyle(.plain)
-                .hoverEffect(.highlight)
-
-                // Settings icon → opens Settings screen
-                Button {
-                    viewModel.navigate(to: .settings)
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                }
-                .buttonStyle(.plain)
-                .hoverEffect(.highlight)
             }
-            .padding(15)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
-            )
             // ────────────────────────────────────────────────────────
 
         case .error(let message):
@@ -308,6 +279,23 @@ struct SidebarProfileView: View {
             .buttonStyle(.plain)
             .hoverEffect(.lift)
         }
+    }
+
+    /// Compact icon button reused for the bell + gear in the footer.
+    @ViewBuilder
+    private func footerIconButton(
+        _ systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip))
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
     }
 
     // Shared chrome for non-signedIn states (guest, loading, error).

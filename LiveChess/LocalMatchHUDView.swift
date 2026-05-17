@@ -105,12 +105,16 @@ struct LocalMatchHUDView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(Chess.Brand.name)
-                .font(.title3.weight(.semibold))
-            Text("vs Stockfish")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(spacing: Chess.Space.xs) {
+            Image(systemName: "crown.fill")
+                .foregroundStyle(Chess.Palette.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Chess.Brand.name)
+                    .font(.title3.weight(.semibold))
+                Text("vs Stockfish")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -186,7 +190,7 @@ struct LocalMatchHUDView: View {
 
     @ViewBuilder
     private var controls: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Chess.Space.xs) {
             Button {
                 coordinator.newGame()
             } label: {
@@ -194,6 +198,7 @@ struct LocalMatchHUDView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .tint(Chess.Palette.accent)
             .controlSize(.large)
 
             if let placement {

@@ -29,32 +29,44 @@ struct PieceCustomizationView: View {
 
         NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
-                    PiecePreviewView(
-                        material: customization.current,
-                        previewSide: $previewSide,
-                        previewKind: $previewKind
-                    )
-
-                    previewControls
-
-                    Divider()
-
-                    presetSection(customization: customization)
-
-                    if customization.current.preset == .wood {
-                        pieceWoodSection(customization: customization)
+                VStack(spacing: Chess.Space.l) {
+                    ChessCard(.hero) {
+                        VStack(spacing: Chess.Space.m) {
+                            PiecePreviewView(
+                                material: customization.current,
+                                previewSide: $previewSide,
+                                previewKind: $previewKind
+                            )
+                            previewControls
+                        }
                     }
 
-                    Divider()
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Material",
+                                               subtitle: "Choose a piece preset.")
+                            presetSection(customization: customization)
+                            if customization.current.preset == .wood {
+                                pieceWoodSection(customization: customization)
+                            }
+                        }
+                    }
 
-                    colorSection(customization: customization)
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Tint",
+                                               subtitle: "Per-side colour adjustments.")
+                            colorSection(customization: customization)
+                        }
+                    }
 
-                    Divider()
-
-                    boardSection(customization: customization)
-
-                    Divider()
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Board",
+                                               subtitle: "Squares and frame palette.")
+                            boardSection(customization: customization)
+                        }
+                    }
 
                     Button("Reset to default") {
                         customization.resetToDefault()
@@ -62,13 +74,14 @@ struct PieceCustomizationView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                 }
-                .padding(24)
-                .frame(maxWidth: 540)
+                .padding(Chess.Space.l)
+                .frame(maxWidth: 600)
             }
-            .navigationTitle("Pieces")
+            .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .tint(Chess.Palette.accent)
                 }
             }
         }
