@@ -59,10 +59,12 @@ final class ReviewSession: MatchSession {
     init?(game: LichessGame,
           username: String,
           rules: any RulesEngine = ChessKitRulesEngine()) {
-        let uci = (game.moves ?? "")
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        let parsed = uci.compactMap { Move(uci: $0) }
+        // Lichess returns the `moves` field as space-separated SAN
+        // ("e4 e5 Nf3 Nc6 …"), not UCI — `Move(uci:)` would never
+        // parse a single token. Route through SANConverter which
+        // also handles UCI as a fast-path so the analyzer tests
+        // keep working.
+        let parsed = SANConverter.parse(game.moves ?? "")
         guard !parsed.isEmpty else { return nil }
 
         var positions: [Position] = [.standardStart]
