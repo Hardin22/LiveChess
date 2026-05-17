@@ -224,6 +224,15 @@ struct ChessSceneView: View {
                 coord.start()
             case .online(let online):
                 await online.start()
+            case .puzzle:
+                // PuzzleSession is ready as soon as it's created — no
+                // engine to start. The board's already at the puzzle's
+                // initial FEN via match.startPosition above.
+                break
+            case .review:
+                // Review is HUD-driven; analysis kicks off when the
+                // HUD attachment appears.
+                break
             }
         } attachments: {
             Attachment(id: "match-hud") {
@@ -239,6 +248,10 @@ struct ChessSceneView: View {
                             session: online,
                             placement: placementController
                         )
+                    case .puzzle(let puzzle):
+                        PuzzleHUDView(session: puzzle)
+                    case .review(let review):
+                        ReviewHUDView(session: review)
                     }
                 }
             }
@@ -289,8 +302,10 @@ struct ChessSceneView: View {
         settings: MatchSettings
     ) -> Side {
         switch active {
-        case .local: return settings.resolvedHumanSide()
-        case .online(let online): return online.humanColor
+        case .local:               return settings.resolvedHumanSide()
+        case .online(let online):  return online.humanColor
+        case .puzzle(let puzzle):  return puzzle.humanSide
+        case .review:              return .white   // review board orientation
         }
     }
 

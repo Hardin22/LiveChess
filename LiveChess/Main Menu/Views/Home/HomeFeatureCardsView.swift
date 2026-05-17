@@ -15,8 +15,7 @@ struct HomeFeatureCardsView: View {
             QuickPlayHeroCard(viewModel: viewModel)
 
             HStack(spacing: Chess.Space.m) {
-                PuzzleFeatureCard(puzzle: viewModel.puzzle)
-                    .onTapGesture { viewModel.navigate(to: .puzzles) }
+                PuzzleLaunchCard(puzzle: viewModel.puzzle)
                 GameReviewFeatureCard(
                     game: viewModel.latestGame,
                     username: viewModel.displayUsername
@@ -128,6 +127,48 @@ private struct QuickPlayChoice: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+    }
+}
+
+// MARK: - Puzzle launch card
+// Wraps the existing PuzzleFeatureCard with an onTapGesture that
+// constructs a PuzzleSession from the daily puzzle and opens the
+// immersive 3-D board to solve it on the real chess set rather
+// than punting to the placeholder list screen.
+@MainActor
+private struct PuzzleLaunchCard: View {
+    let puzzle: LichessPuzzle?
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @State private var isLaunching = false
+
+    var body: some View {
+        PuzzleFeatureCard(puzzle: puzzle)
+            .opacity(isLaunching ? 0.6 : 1)
+            .overlay {
+                if isLaunching {
+                    ProgressView().tint(Chess.Palette.accent)
+                }
+            }
+            .onTapGesture {
+                guard !isLaunching, let p = puzzle else { return }
+                Task { await launch(p) }
+            }
+    }
+
+    private func launch(_ puzzle: LichessPuzzle) async {
+        isLaunching = true
+        defer { isLaunching = false }
+        guard let session = PuzzleSession(puzzle: puzzle) else { return }
+        appModel.activeSession = .puzzle(session)
+        appModel.immersiveSpaceState = .inTransition
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+        }
     }
 }
 

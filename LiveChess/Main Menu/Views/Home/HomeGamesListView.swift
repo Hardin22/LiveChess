@@ -145,26 +145,11 @@ struct GameRowView: View {
                     .foregroundStyle(.secondary)
             }
             
-            // REVIEW BUTTON — pushes the per-move detail view that
-            // runs local Stockfish over the game's PGN and surfaces
-            // brilliant / best / inaccuracy / blunder classifications
-            // plus the top-3 candidate lines per ply.
-            NavigationLink(value: GameReviewRoute(game: game, username: username)) {
-                Text("Review")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-                    )
-            }
-            .buttonStyle(.plain)
-            .hoverEffect(.highlight)
-            // Review fetches the full game (with moves) on demand,
-            // so it's enabled even when the row payload omitted them.
+            // REVIEW BUTTON — opens the immersive 3-D board with the
+            // game pre-loaded for HUD-driven playback. Replaces the
+            // earlier 2-D detail screen — the user explicitly asked
+            // for review on the same board they play on.
+            ReviewLaunchButton(game: game, username: username)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -290,6 +275,77 @@ struct GamesEmptyState: View {
         .frame(maxWidth: .infinity)
         .padding(32)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+// MARK: - Review launch button
+// Resolves the game's moves (the list endpoint omits them to keep
+// NDJSON light), wraps the result in a `ReviewSession`, and opens
+// the immersive 3-D board so the user reviews the game on the same
+// surface they play on.
+@MainActor
+private struct ReviewLaunchButton: View {
+    let game: LichessGame
+    let username: String
+
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @State private var isPreparing = false
+
+    var body: some View {
+        Button {
+            Task { await launchReview() }
+        } label: {
+            HStack(spacing: 4) {
+                if isPreparing {
+                    ProgressView().controlSize(.mini)
+                }
+                Text(isPreparing ? "Loading…" : "Review")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.highlight)
+        .disabled(isPreparing)
+    }
+
+    private func launchReview() async {
+        guard !isPreparing else { return }
+        isPreparing = true
+        defer { isPreparing = false }
+
+        // Pull the full game (with moves) if we don't already have them.
+        var resolved = game
+        if (game.moves ?? "").isEmpty {
+            let svc = LichessService()
+            await svc.authenticate(token: appModel.lichess.token)
+            if let full = try? await svc.fetchGame(id: game.id) {
+                resolved = full
+            }
+        }
+        guard let session = ReviewSession(game: resolved, username: username)
+        else { return }
+
+        // Hand off to the immersive space the same way local / online
+        // play does. `pendingReopen` is left alone so a normal close
+        // tears the session down on `onDisappear` of the scene host.
+        appModel.activeSession = .review(session)
+        appModel.immersiveSpaceState = .inTransition
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+        }
     }
 }
 

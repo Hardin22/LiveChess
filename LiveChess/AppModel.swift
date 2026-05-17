@@ -71,12 +71,16 @@ class AppModel {
 enum ActiveSession {
     case local(MatchCoordinator)
     case online(LichessMatchSession)
+    case puzzle(PuzzleSession)
+    case review(ReviewSession)
 
     /// Scene-host accessor — agnostic of which flow we're in.
     var session: any MatchSession {
         switch self {
-        case .local(let c): return c
+        case .local(let c):  return c
         case .online(let s): return s
+        case .puzzle(let p): return p
+        case .review(let r): return r
         }
     }
 }

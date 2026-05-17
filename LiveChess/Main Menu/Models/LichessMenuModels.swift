@@ -146,5 +146,7 @@ struct LichessPuzzle: Decodable, Sendable {
         let plays: Int?
         let solution: [String]?
         let initialPly: Int?
+        let fen: String?           // FEN of the puzzle starting position
+        let lastMove: String?      // UCI of the opponent's last move
     }
 }
