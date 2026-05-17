@@ -163,7 +163,8 @@ struct GameRowView: View {
             }
             .buttonStyle(.plain)
             .hoverEffect(.highlight)
-            .disabled((game.moves?.isEmpty ?? true))
+            // Review fetches the full game (with moves) on demand,
+            // so it's enabled even when the row payload omitted them.
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)

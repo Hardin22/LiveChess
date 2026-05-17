@@ -1212,7 +1212,9 @@ private struct SelectionButtonStyle: ButtonStyle {
     var shape: Shape = .capsule
 
     func makeBody(configuration: Configuration) -> some View {
-        let fill = isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.gray.opacity(0.18))
+        let fill = isSelected
+            ? AnyShapeStyle(Chess.Palette.accent)
+            : AnyShapeStyle(Color.gray.opacity(0.18))
         let stroke = AnyShapeStyle(Color.secondary.opacity(0.25))
         return configuration.label
             .foregroundStyle(isSelected ? Color.white : Color.primary)
