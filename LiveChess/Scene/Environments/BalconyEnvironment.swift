@@ -92,13 +92,12 @@ enum BalconyEnvironment: EnvironmentScene {
         // doesn't "follow" them.
         await Self.addSkybox(into: content)
 
-        // Glass railings: the .blend material is opaque, and the
-        // Polyhaven texture's alpha doesn't survive the JPG → USDZ
-        // round-trip cleanly. Walk the loaded env and substitute a
-        // transparent PBR material on any entity named *Railing* so
-        // the player can actually see the sea through them.
-        Self.applyTransparentGlass(to: env)
-
+        // Trust the .blend's authored railing materials (steel posts
+        // + glass panels with PBR textures). The previous runtime
+        // override painted EVERY entity named *Railing* with one
+        // glass material, which destroyed the steel post / handrail
+        // textures and left the panels reading as dark blobs instead
+        // of glass. The source materials look correct — let them be.
         addDaylightLighting(into: content)
 
         return EnvironmentMount(boardPosition: boardPos)
