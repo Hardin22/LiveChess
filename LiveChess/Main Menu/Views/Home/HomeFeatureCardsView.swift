@@ -70,7 +70,7 @@ private struct QuickPlayHeroCard: View {
                         title: "Online",
                         subtitle: "Find a Lichess opponent",
                         icon: "globe",
-                        tint: Chess.Palette.info
+                        tint: Chess.Palette.accent
                     ) { viewModel.navigate(to: .playOnline) }
                 }
             }
@@ -185,10 +185,10 @@ struct PuzzleFeatureCard: View {
                     // Icon with colored background
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(.purple.opacity(0.2))
+                            .fill(Chess.Palette.accent.opacity(0.20))
                             .frame(width: 36, height: 36)
                         Image(systemName: "puzzlepiece.fill")
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(Chess.Palette.accent)
                             .font(.callout)
                     }
                     
@@ -228,7 +228,7 @@ struct PuzzleFeatureCard: View {
                 FeatureCardButton(
                     title: "Continue Puzzle",
                     icon: "play.fill",
-                    color: .purple
+                    color: Chess.Palette.accent
                 )
             }
         }
@@ -248,10 +248,10 @@ struct GameReviewFeatureCard: View {
                 HStack {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(.blue.opacity(0.2))
+                            .fill(Chess.Palette.accent.opacity(0.20))
                             .frame(width: 36, height: 36)
                         Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(Chess.Palette.accent)
                             .font(.callout)
                     }
                     
@@ -294,7 +294,7 @@ struct GameReviewFeatureCard: View {
                 FeatureCardButton(
                     title: "Review Game",
                     icon: "eye.fill",
-                    color: .blue
+                    color: Chess.Palette.accent
                 )
             }
         }

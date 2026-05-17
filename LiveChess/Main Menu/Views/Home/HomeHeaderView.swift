@@ -37,7 +37,7 @@ struct HomeHeaderView: View {
                             icon: "trophy.fill",
                             value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
                             label: "rapid",
-                            color: Chess.Palette.highlight
+                            color: Chess.Palette.accent
                         )
                         if let games = viewModel.displayGamesPlayed, games > 0 {
                             StatChipView(

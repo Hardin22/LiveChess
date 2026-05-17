@@ -33,7 +33,7 @@ struct SidebarView: View {
                     SidebarRowLabel(
                         title: "Play",
                         systemImage: "play.circle.fill",
-                        color: .green
+                        color: Chess.Palette.accent
                     )
                 }
             } header: {
@@ -54,7 +54,7 @@ struct SidebarView: View {
                     SidebarRowLabel(
                         title: "Game Review",
                         systemImage: "magnifyingglass.circle.fill",
-                        color: .blue
+                        color: Chess.Palette.accent
                     )
                 }
             }
@@ -66,7 +66,7 @@ struct SidebarView: View {
                     SidebarRowLabel(
                         title: "History",
                         systemImage: "clock.fill",
-                        color: .orange
+                        color: Chess.Palette.accent
                     )
                 }
             }
