@@ -93,81 +93,71 @@ struct PieceCustomizationView: View {
         }
     }
 
-    /// Compact header card pinned at the top of the scroll: stage
-    /// thumbnail on the left, side / piece-kind controls on the right.
-    /// One row, never wraps, always visible above the first content
-    /// card so the preview anchors the page.
+    /// Top-of-sheet preview block — full-width dark stage card with
+    /// the 3-D piece, side / piece-kind controls on a single row
+    /// beneath. Plain VStack instead of an HStack (the HStack version
+    /// had RealityView collapsing to zero width inside a fixed-width
+    /// frame, leaving the controls floating over empty space).
     @ViewBuilder
     private func previewHeader(customization: PieceCustomization) -> some View {
-        ChessCard(.hero) {
-            HStack(alignment: .center, spacing: Chess.Space.m) {
-                previewStage(customization: customization)
-                    .frame(width: 280, height: 300)
-                VStack(alignment: .leading, spacing: Chess.Space.s) {
-                    Text("Preview")
-                        .font(Chess.Typography.eyebrow())
-                        .foregroundStyle(.secondary)
-                    Picker("", selection: $previewSide) {
-                        Text("White").tag(Side.white)
-                        Text("Black").tag(Side.black)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(maxWidth: 220)
+        VStack(spacing: Chess.Space.s) {
+            // Full-width dark stage, fixed tall enough for the piece
+            // to render at readable size on Vision Pro.
+            ZStack {
+                RoundedRectangle(cornerRadius: Chess.Radius.card,
+                                 style: .continuous)
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.black.opacity(0.65),
+                                Color.black.opacity(0.20)
+                            ],
+                            center: .center, startRadius: 60, endRadius: 320
+                        )
+                    )
+                PiecePreviewView(
+                    material: customization.current,
+                    previewSide: $previewSide,
+                    previewKind: $previewKind
+                )
+                .padding(Chess.Space.s)
+            }
+            .frame(height: 320)
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.card,
+                                 style: .continuous)
+                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+            )
 
-                    Menu {
-                        ForEach(PieceKind.allCases, id: \.self) { kind in
-                            Button(displayName(for: kind)) { previewKind = kind }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(displayName(for: previewKind))
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.caption)
-                        }
-                        .frame(maxWidth: 160, alignment: .leading)
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-
-                    Spacer(minLength: 0)
+            // Inline side + piece controls
+            HStack(spacing: Chess.Space.m) {
+                Picker("", selection: $previewSide) {
+                    Text("White").tag(Side.white)
+                    Text("Black").tag(Side.black)
                 }
-                Spacer(minLength: 0)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 240)
+
+                Menu {
+                    ForEach(PieceKind.allCases, id: \.self) { kind in
+                        Button(displayName(for: kind)) { previewKind = kind }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(displayName(for: previewKind))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                    }
+                    .frame(minWidth: 100)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                Spacer()
             }
         }
-    }
-
-    /// Stage card holding the 3-D preview. Dark radial backdrop so
-    /// metals/glass/pearl read against controlled lighting rather
-    /// than the busy passthrough room.
-    @ViewBuilder
-    private func previewStage(customization: PieceCustomization) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Chess.Radius.card,
-                             style: .continuous)
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            Color.black.opacity(0.65),
-                            Color.black.opacity(0.25)
-                        ],
-                        center: .center, startRadius: 30, endRadius: 220
-                    )
-                )
-            PiecePreviewView(
-                material: customization.current,
-                previewSide: $previewSide,
-                previewKind: $previewKind
-            )
-            .padding(Chess.Space.xs)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: Chess.Radius.card,
-                             style: .continuous)
-                .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
-        )
     }
 
     // MARK: - Preview controls (which side / which piece to preview)
