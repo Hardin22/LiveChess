@@ -241,7 +241,7 @@ struct LobbyView: View {
                 RoundedRectangle(cornerRadius: Chess.Radius.row,
                                  style: .continuous)
                     .fill(isSelected
-                          ? AnyShapeStyle(Chess.Palette.accent)
+                          ? AnyShapeStyle(Color.white.opacity(0.18))
                           : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
@@ -342,7 +342,7 @@ struct LobbyView: View {
             .padding(.vertical, 6)
             .background(
                 Capsule().fill(isSelected
-                               ? AnyShapeStyle(Chess.Palette.accent)
+                               ? AnyShapeStyle(Color.white.opacity(0.18))
                                : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
@@ -1302,11 +1302,12 @@ private struct SelectionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let fill = isSelected
-            ? AnyShapeStyle(Chess.Palette.accent)
+            ? AnyShapeStyle(Color.white.opacity(0.22))
             : AnyShapeStyle(Color.gray.opacity(0.18))
         let stroke = AnyShapeStyle(Color.secondary.opacity(0.25))
         return configuration.label
-            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .foregroundStyle(.primary)
+            .fontWeight(isSelected ? .semibold : .regular)
             .background {
                 switch shape {
                 case .capsule:

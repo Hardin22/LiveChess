@@ -112,7 +112,12 @@ struct SidebarRowLabel: View {
                 .font(.callout)
                 .foregroundStyle(.white)
                 .frame(width: 28, height: 28)
-                .background(color.gradient, in: RoundedRectangle(cornerRadius: 7))
+                // White icon on a translucent backdrop — the old
+                // `color.gradient` is now a solid white fill after
+                // the monochrome theme switch, which would make the
+                // white glyph invisible.
+                .background(.thinMaterial,
+                            in: RoundedRectangle(cornerRadius: 7))
 
             Text(title)
                 .font(.callout)
@@ -205,7 +210,7 @@ struct SidebarProfileView: View {
                         HStack(spacing: Chess.Space.s) {
                             ZStack {
                                 Circle()
-                                    .fill(Chess.Palette.accent.gradient)
+                                    .fill(.thinMaterial)
                                     .frame(width: 38, height: 38)
                                 Text(String(account.username.prefix(1)).uppercased())
                                     .font(.callout)
@@ -305,7 +310,7 @@ struct SidebarProfileView: View {
         HStack(spacing: 10) {
             ZStack {
                 Circle()
-                    .fill(color.gradient)
+                    .fill(.thinMaterial)
                     .frame(width: 38, height: 38)
                 Text(initial)
                     .font(.callout)
