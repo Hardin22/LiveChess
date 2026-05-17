@@ -167,22 +167,28 @@ enum BalconyEnvironment: EnvironmentScene {
     // MARK: - Glass override
 
     /// Replace the material on any entity whose name contains
-    /// "Railing" or "Glass" with a transparent PBR glass material so
-    /// the player can see the seascape through it. Walks the full
-    /// tree so it catches `Railing_Side`, `Railing_Back_Right`, etc.
+    /// "Railing" or "Glass" with a SEMI-transparent tinted glass +
+    /// thin chrome edge so the panels actually read as glass (you
+    /// can see through them) instead of vanishing into the skybox.
+    ///
+    /// Previous tuning at opacity 0.18 against the bright Polyhaven
+    /// sunset HDRI was effectively invisible — the user reported the
+    /// railing "totally disappeared." 0.45 opacity + a cool cyan
+    /// tint + a thin edge stroke pull the silhouette back into view
+    /// while still letting the sea show through behind the glass.
     private static func applyTransparentGlass(to root: Entity) {
         var glass = PhysicallyBasedMaterial()
         glass.baseColor = .init(
-            tint: .init(red: 0.95, green: 0.98, blue: 1.0, alpha: 1.0)
+            tint: .init(red: 0.55, green: 0.78, blue: 0.92, alpha: 1.0)
         )
-        glass.roughness = .init(floatLiteral: 0.04)
+        glass.roughness = .init(floatLiteral: 0.06)
         glass.metallic = .init(floatLiteral: 0.0)
         glass.clearcoat = .init(floatLiteral: 1.0)
         glass.clearcoatRoughness = .init(floatLiteral: 0.04)
-        // visionOS PBR transparency: opacity threshold lets the
-        // material render with sort-correct blending.
+        // 0.45 is the sweet spot: glass clearly reads as a surface,
+        // but you can still see the sea behind it.
         glass.blending = .transparent(
-            opacity: .init(floatLiteral: 0.18)
+            opacity: .init(floatLiteral: 0.45)
         )
         glass.opacityThreshold = 0.0
         glass.faceCulling = .none
