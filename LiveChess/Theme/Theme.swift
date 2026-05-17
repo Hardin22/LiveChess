@@ -137,7 +137,13 @@ struct ChessCard<Content: View>: View {
         content
             .padding(padding)
             .background(material, in: shape)
-            .overlay(shape.strokeBorder(.white.opacity(0.08), lineWidth: 0.5))
+            // Solid dark tint behind the material so the card stays
+            // legible when it sits on top of another translucent
+            // surface (e.g. inside a visionOS sheet that's itself
+            // .regularMaterial). Without this, card-on-card composites
+            // to near-invisible against passthrough.
+            .background(Color.black.opacity(0.22), in: shape)
+            .overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
     }
 
     private var padding: CGFloat {

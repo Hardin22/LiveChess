@@ -83,6 +83,7 @@ struct PieceCustomizationView: View {
             // minHeight when sizing the sheet's hosting window.
             .frame(minWidth: 1280, idealWidth: 1280,
                    minHeight: 760, idealHeight: 800)
+            .background(Color.black.opacity(0.55))
             .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -91,6 +92,11 @@ struct PieceCustomizationView: View {
                 }
             }
         }
+        // visionOS sheets render on a translucent glass surface —
+        // when the content cards are ALSO .regularMaterial they
+        // composite to near-invisibility against passthrough. Force
+        // an opaque dark backdrop so every section reads cleanly.
+        .presentationBackground(.thickMaterial)
     }
 
     /// Top-of-sheet preview block — uses PiecePreviewView directly
