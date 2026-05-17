@@ -27,6 +27,20 @@ struct LiveChessApp: App {
                 .environment(appModel)
         }
 
+        // Dedicated window for the Pieces & Board customization
+        // screen. visionOS `.sheet()` ignores `.frame(minWidth:)`
+        // and renders at a fixed iPad-portrait size — totally wrong
+        // for a side-by-side preview + controls layout. A separate
+        // WindowGroup gets its own full visionOS window with
+        // proper sizing + resizability, matching the home window's
+        // footprint.
+        WindowGroup(id: Self.piecesWindowID) {
+            PieceCustomizationView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 1280, height: 800)
+        .windowResizability(.contentSize)
+
         ImmersiveSpace(id: appModel.immersiveSpaceID) {
             ImmersiveSceneHost(appModel: appModel)
                 .onChange(of: appModel.selectedEnvironment) { _, env in
@@ -40,6 +54,8 @@ struct LiveChessApp: App {
 
     /// Window-group id for the Main Menu panel.
     static let menuWindowID = "MainMenu"
+    /// Window-group id for the Pieces & Board customization screen.
+    static let piecesWindowID = "PiecesAndBoard"
 }
 
 /// Wrapper around `ImmersiveView` that owns the window-management

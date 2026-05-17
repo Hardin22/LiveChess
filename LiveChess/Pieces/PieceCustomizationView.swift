@@ -12,7 +12,7 @@ import SwiftUI
 @MainActor
 struct PieceCustomizationView: View {
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppModel.self) private var appModel
 
     /// Local state so the user can flip between previewing the white
@@ -77,26 +77,17 @@ struct PieceCustomizationView: View {
                 .frame(maxWidth: 1080)
             }
             .scrollIndicators(.hidden)
-            // Match the home WindowGroup's footprint so the sheet
-            // doesn't feel like a cramped iPad-sized popup over the
-            // full-width app. visionOS will respect minWidth /
-            // minHeight when sizing the sheet's hosting window.
-            .frame(minWidth: 1280, idealWidth: 1280,
-                   minHeight: 760, idealHeight: 800)
-            .background(Color.black.opacity(0.55))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .buttonStyle(.bordered)
+                    Button("Done") {
+                        dismissWindow(id: LiveChessApp.piecesWindowID)
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
         }
-        // visionOS sheets render on a translucent glass surface —
-        // when the content cards are ALSO .regularMaterial they
-        // composite to near-invisibility against passthrough. Force
-        // an opaque dark backdrop so every section reads cleanly.
-        .presentationBackground(.thickMaterial)
     }
 
     /// Top-of-sheet preview block — uses PiecePreviewView directly

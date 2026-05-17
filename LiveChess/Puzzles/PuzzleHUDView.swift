@@ -103,8 +103,7 @@ struct PuzzleHUDView: View {
                     Label("Try again", systemImage: "arrow.clockwise")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Chess.Palette.accent)
+                .buttonStyle(.bordered)
                 .controlSize(.large)
             } else if session.status == .solving {
                 Button {

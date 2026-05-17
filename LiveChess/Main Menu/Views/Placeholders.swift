@@ -95,7 +95,7 @@ struct LichessGate<Gated: View>: View {
                         .frame(minWidth: 240)
                 }
                 .controlSize(.large)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .disabled(appModel.lichess.status == .signingIn)
 
                 Spacer()

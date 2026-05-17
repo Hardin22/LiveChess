@@ -14,6 +14,7 @@ struct LobbyView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @Environment(\.openWindow) private var openWindow
 
     /// Built lazily after the user signs in to Lichess. Lives across the
     /// lobby's lifetime so the event stream can keep running.
@@ -167,10 +168,10 @@ struct LobbyView: View {
                 lichessLobby?.clearPending()
             }
         }
-        .sheet(isPresented: $showingPieceCustomization) {
-            PieceCustomizationView()
-                .environment(appModel)
-        }
+        // (Pieces & Board uses its own WindowGroup now — see
+        // LiveChessApp.piecesWindowID. The old .sheet() couldn't be
+        // sized wide enough for the side-by-side preview + controls
+        // layout on visionOS.)
     }
 
     // MARK: - Slim header (top bar of the right column)
@@ -187,7 +188,7 @@ struct LobbyView: View {
                 .font(.system(size: 26, weight: .semibold, design: .serif))
             Spacer()
             Button {
-                showingPieceCustomization = true
+                openWindow(id: LiveChessApp.piecesWindowID)
             } label: {
                 Label("Pieces & board", systemImage: "paintbrush.fill")
                     .labelStyle(.titleAndIcon)
@@ -286,8 +287,7 @@ struct LobbyView: View {
                         Text("Sign in")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Chess.Palette.accent)
+                    .buttonStyle(.bordered)
                     .controlSize(.regular)
                     .padding(.top, 2)
                 }
@@ -386,8 +386,7 @@ struct LobbyView: View {
                 .fontWeight(.semibold)
             }
             .controlSize(.large)
-            .buttonStyle(.borderedProminent)
-            .tint(Chess.Palette.accent)
+            .buttonStyle(.bordered)
             .disabled(appModel.immersiveSpaceState == .inTransition)
         }
         .padding(Chess.Space.m)
@@ -415,7 +414,7 @@ struct LobbyView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
             }
         }
     }
@@ -461,7 +460,7 @@ struct LobbyView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .disabled(friendUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -512,7 +511,7 @@ struct LobbyView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
             }
         }
     }
@@ -566,7 +565,7 @@ struct LobbyView: View {
                 } label: {
                     Label("Sign in with Lichess", systemImage: "person.crop.circle.badge.checkmark")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.regular)
             }
             .frame(maxWidth: .infinity)
@@ -858,7 +857,7 @@ struct LobbyView: View {
                     Label("Accept", systemImage: "checkmark")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
                 Button(role: .destructive) {
                     Task { await lobby.declineIncoming(challenge.id, reason: nil) }

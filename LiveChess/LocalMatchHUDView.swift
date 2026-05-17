@@ -197,8 +197,7 @@ struct LocalMatchHUDView: View {
                 Label("New game", systemImage: "arrow.clockwise")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Chess.Palette.accent)
+            .buttonStyle(.bordered)
             .controlSize(.large)
 
             // Draw + Resign — only meaningful while the game is in
@@ -455,7 +454,7 @@ private struct GameOverPopupView: View {
                     Label("New Game", systemImage: "arrow.clockwise")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.large)
 
                 Button(role: .destructive) {

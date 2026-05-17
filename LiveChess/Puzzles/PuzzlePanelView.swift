@@ -230,8 +230,7 @@ struct PuzzlePanelView: View {
                     Label("Try again", systemImage: "arrow.clockwise")
                         .font(.callout.weight(.semibold))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Chess.Palette.accent)
+                .buttonStyle(.bordered)
                 Spacer()
                 Button {
                     Task { await session.revealSolution() }

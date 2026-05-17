@@ -30,18 +30,21 @@ enum Chess {
     // MARK: - Palette
 
     enum Palette {
-        /// Primary brand accent — a deep indigo that feels premium
-        /// and distinctive on the visionOS dark canvas without
-        /// landing on the system-blue / chess.com-green / Lichess-
-        /// black defaults everyone else uses. The ONLY brand colour
-        /// in the app.
+        /// Monochrome accent — pure white. The brand identity is
+        /// "no colour": selection state = lighter material + bolder
+        /// text, primary action = bordered glass pill with crisp
+        /// white text. Reads as Apple-system premium and never
+        /// fights the gold / wood / marble piece previews or the
+        /// passthrough room behind a glass surface.
         ///
-        /// `highlight` + `info` are aliased to `accent` so older
-        /// call sites keep building but the screen reads as a
-        /// single-colour identity. Don't introduce a new hue for
-        /// emphasis — use type weight or material elevation
-        /// instead.
-        static let accent       = Color(red: 0.40, green: 0.38, blue: 0.82)
+        /// All `accent.opacity(X)` call sites become "white at X
+        /// opacity" which is exactly what you want for a tinted
+        /// selection state on a dark canvas.
+        ///
+        /// `highlight` + `info` aliased to `accent` so older call
+        /// sites keep building. Don't introduce a new hue for
+        /// emphasis — use type weight or material elevation.
+        static let accent       = Color.white
         static let highlight    = accent
         static let info         = accent
 

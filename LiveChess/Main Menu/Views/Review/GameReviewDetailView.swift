@@ -313,7 +313,6 @@ struct GameReviewDetailView: View {
                             .foregroundStyle(.orange)
                     } else {
                         ProgressView()
-                            .tint(Chess.Palette.accent)
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                 } else {

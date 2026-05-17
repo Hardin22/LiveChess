@@ -82,7 +82,7 @@ struct OnlineMatchHUDView: View {
                 Button("Accept") {
                     Task { await session.offerOrAcceptDraw() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
                 Button("Decline") {
                     Task { await session.declineDraw() }
@@ -107,7 +107,7 @@ struct OnlineMatchHUDView: View {
                 Button("Accept") {
                     Task { await session.offerOrAcceptTakeback() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
                 Button("Decline") {
                     Task { await session.declineTakeback() }
@@ -355,8 +355,7 @@ struct OnlineMatchHUDView: View {
                         Label("Claim victory", systemImage: "trophy.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Chess.Palette.accent)
+                    .buttonStyle(.bordered)
                     .controlSize(.large)
                 }
             } else {
@@ -379,8 +378,7 @@ struct OnlineMatchHUDView: View {
                     Label("Back to lobby", systemImage: "arrow.left.circle")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Chess.Palette.accent)
+                .buttonStyle(.bordered)
                 .controlSize(.large)
             }
 

@@ -101,7 +101,7 @@ private struct GuestSignInBanner: View {
                 .frame(minWidth: 120)
             }
             .controlSize(.large)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .disabled(isSigningIn)
         }
         .padding(20)
