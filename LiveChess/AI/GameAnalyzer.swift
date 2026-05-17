@@ -24,6 +24,10 @@ struct MoveAnalysis: Identifiable, Sendable, Hashable {
     let winPercentLoss: Double
     let topLines: [AnalysisLine]       // up to MultiPV candidate moves at the prior position
     let quality: MoveQuality
+    /// Opening name if the resulting position was found in
+    /// `OpeningBook` (lichess-org/chess-openings). Shown next to the
+    /// move when `quality == .book`.
+    let bookOpening: String?
 }
 
 /// One candidate move with its evaluation and a short PV.
@@ -42,8 +46,10 @@ struct AnalysisLine: Sendable, Hashable {
 /// `brilliant` would also need material-sacrifice detection so we
 /// leave it out of v1 to avoid false positives.
 enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
-    case best          // engine's top pick
+    case brilliant     // best AND sacrifices ≥3 pts of material AND still winning AND not forced
     case great         // best when alternatives are clearly worse (only-move)
+    case best          // engine's top pick
+    case book          // matches lichess-org/chess-openings DB
     case excellent     // Δwin% < 2
     case good          // Δwin% 2..<5
     case inaccuracy    // Δwin% 5..<10
@@ -53,8 +59,10 @@ enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
 
     var displayName: String {
         switch self {
+        case .brilliant:  return "Brilliant"
         case .best:       return "Best"
         case .great:      return "Great"
+        case .book:       return "Book"
         case .excellent:  return "Excellent"
         case .good:       return "Good"
         case .inaccuracy: return "Inaccuracy"
@@ -67,8 +75,10 @@ enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
     /// Compact glyph for inline display next to the move text.
     var glyph: String {
         switch self {
+        case .brilliant:  return "‼"
         case .best:       return "★"
         case .great:      return "!"
+        case .book:       return "📖"
         case .excellent:  return "✓"
         case .good:       return "✓"
         case .inaccuracy: return "?!"
@@ -137,37 +147,62 @@ actor GameAnalyzer {
                 do {
                     try await ensureStarted()
                     var position = startPosition
+                    let book = OpeningBook.shared
                     for (ply, move) in moves.enumerated() {
                         try Task.checkCancellation()
+                        let mover = position.sideToMove
+                        let playedUCI = move.uci
+
+                        // Compute the position after the played move
+                        // — we need it for book lookup either way and
+                        // for material-delta brilliant detection.
+                        let positionAfter = try rules.apply(move, to: position)
+
+                        // BOOK shortcut — if the resulting position
+                        // is in the lichess-org/chess-openings DB,
+                        // label as theory and skip the engine call
+                        // entirely. Saves ~5-15 s per game on
+                        // typical openings.
+                        if let entry = book.lookup(positionAfter) {
+                            let analysis = MoveAnalysis(
+                                id: ply,
+                                san: move.uci,
+                                playedUCI: playedUCI,
+                                mover: mover,
+                                playedScoreCp: 0,
+                                bestScoreCp: 0,
+                                centipawnLoss: 0,
+                                winPercentLoss: 0,
+                                topLines: [],
+                                quality: .book,
+                                bookOpening: "\(entry.eco) · \(entry.name)"
+                            )
+                            continuation.yield(analysis)
+                            position = positionAfter
+                            continue
+                        }
+
                         // Evaluate the position BEFORE the move with
                         // MultiPV=N — gives us the top-N candidates +
                         // their scores, all from `position.sideToMove`'s
                         // POV at depth `depth`.
-                        let mover = position.sideToMove
                         let lines = try await evaluate(
                             fen: position.fen, depth: depth
                         )
-
-                        // Did the player pick one of the top candidates?
-                        let playedUCI = move.uci
                         let bestLine = lines.first
                         let bestScore = bestLine?.scoreCp ?? 0
 
+                        // Score the played move. If it's in the top-N
+                        // we get it for free; otherwise one more eval
+                        // of the position after the move, negated.
                         let playedScore: Int
                         if let match = lines.first(where: { $0.uci == playedUCI }) {
                             playedScore = match.scoreCp
                         } else {
-                            // Off-top-N: eval position AFTER the move
-                            // and negate (opponent's POV → mover's).
-                            let nextFen = try? rules.apply(move, to: position).fen
-                            if let nextFen {
-                                let oppLines = try await evaluate(
-                                    fen: nextFen, depth: depth
-                                )
-                                playedScore = -(oppLines.first?.scoreCp ?? 0)
-                            } else {
-                                playedScore = bestScore
-                            }
+                            let oppLines = try await evaluate(
+                                fen: positionAfter.fen, depth: depth
+                            )
+                            playedScore = -(oppLines.first?.scoreCp ?? 0)
                         }
 
                         let cpLoss = max(0, min(1000, bestScore - playedScore))
@@ -176,12 +211,21 @@ actor GameAnalyzer {
                             Self.winPercent(fromCp: bestScore)
                               - Self.winPercent(fromCp: playedScore)
                         )
+
+                        // Material delta — own material before vs
+                        // after the player's move. Negative = the
+                        // player sacrificed material on this move.
+                        let materialDelta = Self.materialBalance(
+                            for: mover, in: positionAfter
+                        ) - Self.materialBalance(for: mover, in: position)
+
                         let quality = Self.classify(
                             played: playedUCI,
                             best: bestLine?.uci,
                             bestScoreCp: bestScore,
                             playedScoreCp: playedScore,
                             winPercentLoss: winLoss,
+                            materialDelta: materialDelta,
                             lines: lines
                         )
 
@@ -195,12 +239,11 @@ actor GameAnalyzer {
                             centipawnLoss: cpLoss,
                             winPercentLoss: winLoss,
                             topLines: lines,
-                            quality: quality
+                            quality: quality,
+                            bookOpening: nil
                         )
                         continuation.yield(analysis)
-
-                        // Advance through the actual move played.
-                        position = try rules.apply(move, to: position)
+                        position = positionAfter
                     }
                     continuation.finish()
                 } catch {
@@ -330,6 +373,7 @@ actor GameAnalyzer {
         bestScoreCp: Int,
         playedScoreCp: Int,
         winPercentLoss: Double,
+        materialDelta: Int,
         lines: [AnalysisLine]
     ) -> MoveQuality {
         // Missed-win check first — if the player threw away a clearly
@@ -340,6 +384,22 @@ actor GameAnalyzer {
         }
 
         let isBest = (played == best)
+
+        // BRILLIANT (‼) — best move AND the player gave up ≥3 points
+        // of material (minor piece or more) AND the resulting eval
+        // is still winning (best stays ≥ 0). The "not forced" filter
+        // (alternatives existed that didn't sacrifice) is approximated
+        // by requiring the 2nd-best line to also be at least playable
+        // — otherwise we'd just be detecting any tactical best move
+        // that happens to lose material. Avoids the common false
+        // positive of "Brilliant!" on simple recaptures.
+        if isBest, materialDelta <= -3, bestScoreCp >= 0, lines.count >= 2 {
+            let secondScore = lines[1].scoreCp
+            // Alternative existed and didn't immediately lose — so
+            // the sacrifice was a genuine creative choice, not forced.
+            if secondScore >= -100 { return .brilliant }
+        }
+
         if isBest, lines.count >= 2 {
             let topWin = winPercent(fromCp: lines[0].scoreCp)
             let secondWin = winPercent(fromCp: lines[1].scoreCp)
@@ -354,6 +414,29 @@ actor GameAnalyzer {
         case ..<20:   return .mistake
         default:      return .blunder
         }
+    }
+
+    /// Sum of `side`'s pieces in `position`, using standard piece
+    /// values (pawn=1, knight/bishop=3, rook=5, queen=9, king ignored).
+    /// `materialDelta(after) - materialDelta(before)` gives the net
+    /// material change for the mover across a single move — negative
+    /// means they sacrificed.
+    nonisolated static func materialBalance(
+        for side: Side, in position: Position
+    ) -> Int {
+        var total = 0
+        for square in Square.all {
+            guard let piece = position[square], piece.color == side else { continue }
+            switch piece.kind {
+            case .pawn:   total += 1
+            case .knight: total += 3
+            case .bishop: total += 3
+            case .rook:   total += 5
+            case .queen:  total += 9
+            case .king:   continue
+            }
+        }
+        return total
     }
 
     /// Maps a centipawn score to expected win percentage [0…100] via

@@ -153,7 +153,8 @@ struct GameReviewDetailView: View {
     }
 
     private var qualitiesInDisplayOrder: [MoveQuality] {
-        [.great, .best, .excellent, .good, .inaccuracy, .missedWin, .mistake, .blunder]
+        [.brilliant, .great, .best, .book, .excellent, .good,
+         .inaccuracy, .missedWin, .mistake, .blunder]
     }
 
     // MARK: - Move list
@@ -196,19 +197,26 @@ private struct MoveReviewRow: View {
                     Text(move.quality.displayName)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(colorFor(move.quality))
-                    if move.winPercentLoss >= 0.5 {
-                        Text(String(format: "−%.1f%% win", move.winPercentLoss))
+                    if move.quality == .book, let name = move.bookOpening {
+                        Text(name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        if move.winPercentLoss >= 0.5 {
+                            Text(String(format: "−%.1f%% win", move.winPercentLoss))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        if move.centipawnLoss > 0 {
+                            Text("(−\(move.centipawnLoss) cp)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("eval \(formatScore(move.bestScoreCp))")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-                    if move.centipawnLoss > 0 {
-                        Text("(−\(move.centipawnLoss) cp)")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("eval \(formatScore(move.bestScoreCp))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
                 }
                 ForEach(Array(move.topLines.prefix(3).enumerated()), id: \.offset) { idx, line in
                     HStack(spacing: 6) {
@@ -234,7 +242,9 @@ private struct MoveReviewRow: View {
 
     private func colorFor(_ q: MoveQuality) -> Color {
         switch q {
+        case .brilliant:         return .cyan
         case .best, .great:      return .green
+        case .book:              return .blue
         case .excellent, .good:  return .mint
         case .inaccuracy:        return .yellow
         case .missedWin:         return .purple
