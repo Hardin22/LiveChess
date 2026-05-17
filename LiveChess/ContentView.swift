@@ -24,6 +24,9 @@ struct ContentView: View {
         } detail: {
             NavigationStack {
                 detailView
+                    .navigationDestination(for: GameReviewRoute.self) { route in
+                        GameReviewDetailView(game: route.game, username: route.username)
+                    }
                     .toolbar {
                         if (homeViewModel.selectedDestination ?? .home) != .home {
                             ToolbarItem(placement: .navigationBarLeading) {

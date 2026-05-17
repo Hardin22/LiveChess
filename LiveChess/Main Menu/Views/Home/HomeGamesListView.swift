@@ -145,21 +145,25 @@ struct GameRowView: View {
                     .foregroundStyle(.secondary)
             }
             
-            // REVIEW BUTTON
-            Button("Review") {
-                // TODO: Navigate to game review with this game's ID
-                print("Review game: \(game.id)")
+            // REVIEW BUTTON — pushes the per-move detail view that
+            // runs local Stockfish over the game's PGN and surfaces
+            // brilliant / best / inaccuracy / blunder classifications
+            // plus the top-3 candidate lines per ply.
+            NavigationLink(value: GameReviewRoute(game: game, username: username)) {
+                Text("Review")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                    )
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-            )
+            .buttonStyle(.plain)
             .hoverEffect(.highlight)
+            .disabled((game.moves?.isEmpty ?? true))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
