@@ -46,12 +46,14 @@ enum BalconyEnvironment: EnvironmentScene {
         // Rotate the env so the chair+table cluster's wide axis
         // (2.26 m, runs through both seats and the table between
         // them in the .blend) aligns with the user's forward axis.
-        // Concretely: -π/2 around Y maps Blender's +X → world +Z,
-        // so the "left chair" lands in front of the user and the
-        // "right chair" lands behind them.
         env.transform.rotation = simd_quatf(
             angle: -.pi / 2, axis: SIMD3<Float>(0, 1, 0)
         )
+        // Shrink the whole .blend env to ~60% so the floor matches
+        // the scale of the chair / table / chess board — the
+        // original 9 × 5.6 m authored floor felt like an empty
+        // deck around a tiny chair cluster.
+        env.transform.scale = SIMD3<Float>(repeating: 0.60)
         // Provisional translation — refined below once we can read
         // the cluster's bounds in world space.
         env.transform.translation = .zero
