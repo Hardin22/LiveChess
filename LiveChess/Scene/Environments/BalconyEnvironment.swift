@@ -360,44 +360,57 @@ enum BalconyEnvironment: EnvironmentScene {
     /// call is unaffected because we build those entities fresh with
     /// our own material.
     private static func sanitizeBlendMaterials(in root: Entity) {
-        var touched = 0
-        var stack: [Entity] = [root]
-        while let e = stack.popLast() {
-            stack.append(contentsOf: e.children)
-            guard let model = e as? ModelEntity,
-                  let comp = model.model else { continue }
-            let cleaned: [any RealityKit.Material] =
-                comp.materials.map { mat -> any RealityKit.Material in
-                    var clean = PhysicallyBasedMaterial()
-                    if let pbr = mat as? PhysicallyBasedMaterial {
-                        // Preserve baseColor texture + tint — that's
-                        // the only channel that survived the optimizer
-                        // intact for most surfaces.
-                        clean.baseColor = pbr.baseColor
-                    } else if let simple = mat as? SimpleMaterial {
-                        clean.baseColor = .init(
-                            tint: simple.color.tint,
-                            texture: simple.color.texture
-                        )
-                    } else {
-                        // Unknown material type — fall back to a
-                        // neutral warm brown so the surface still
-                        // reads as "wood-ish balcony decor".
-                        clean.baseColor = .init(
-                            tint: .init(red: 0.40, green: 0.27, blue: 0.18,
-                                        alpha: 1.0)
-                        )
-                    }
-                    clean.metallic = .init(floatLiteral: 0.0)
-                    clean.roughness = .init(floatLiteral: 0.72)
-                    // No clearcoat, no normal map — both were the
-                    // sources of the "chrome reflection" artifact.
-                    return clean
-                }
-            model.model?.materials = cleaned
+        // Flat warm walnut for surfaces with corrupted textures.
+        // PBR with roughness=1, metallic=0 → fully matte, no IBL
+        // mirror reflection possible. Drop the baseColor texture
+        // because the user's screenshot showed the blotchy pattern
+        // was BAKED into the texture (not just metallic on top).
+        var walnut = PhysicallyBasedMaterial()
+        walnut.baseColor = .init(
+            tint: .init(red: 0.42, green: 0.28, blue: 0.19, alpha: 1.0)
+        )
+        walnut.roughness = .init(floatLiteral: 1.0)
+        walnut.metallic = .init(floatLiteral: 0.0)
+
+        // Entity names we explicitly want to PRESERVE — these surfaces
+        // looked fine in the user's screenshot (stone floor, foliage,
+        // pot, lantern candle).
+        let keepKeywords = [
+            "balcony_floor", "floor",
+            "plant", "pot", "foliage", "leaf", "fir", "tree",
+            "lantern", "candle",
+            "proceduralrailing", "balconyskirt", "balconyskydome"
+        ]
+
+        var touched = 0, preserved = 0
+        var stack: [(Entity, String)] = [(root, "")]
+        while let (e, parentChain) = stack.popLast() {
+            let chain = parentChain + "/" + e.name
+            for c in e.children {
+                stack.append((c, chain))
+            }
+            // Use COMPONENT access — USD-loaded geometry attaches
+            // ModelComponent to plain Entity, not ModelEntity, which
+            // is why the previous pass skipped the wall + chair.
+            guard var comp = e.components[ModelComponent.self] else {
+                continue
+            }
+            let lower = chain.lowercased()
+            let shouldKeep = keepKeywords.contains { lower.contains($0) }
+            if shouldKeep {
+                preserved += 1
+                continue
+            }
+            let count = max(comp.materials.count, 1)
+            comp.materials = Array(
+                repeating: walnut as any RealityKit.Material,
+                count: count
+            )
+            e.components.set(comp)
             touched += 1
+            print("  walnut → \(chain)")
         }
-        print("=== sanitized materials on \(touched) ModelEntities ===")
+        print("=== sanitize: \(touched) overridden, \(preserved) preserved ===")
     }
 
     // MARK: - Skybox / IBL
