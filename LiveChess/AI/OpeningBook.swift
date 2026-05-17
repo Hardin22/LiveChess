@@ -28,7 +28,10 @@ final class OpeningBook: @unchecked Sendable {
             for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
                 let parts = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
                 guard parts.count == 3 else { continue }
-                let epd = String(parts[0])
+                // Normalise the EPD coming out of the TSV the same way
+                // we'll normalise lookups (3-field key) so the file's
+                // en-passant column doesn't matter for matching.
+                let epd = Self.lookupKey(epd: String(parts[0]))
                 let eco = String(parts[1])
                 let name = String(parts[2])
                 map[epd] = Entry(eco: eco, name: name)
@@ -38,11 +41,25 @@ final class OpeningBook: @unchecked Sendable {
     }
 
     /// Returns the matching opening entry for `position` if its EPD
-    /// is in the book, else nil. Strips the halfmove/fullmove fields
-    /// from `position.fen` before lookup.
+    /// (placement + side + castling) is in the book, else nil.
+    ///
+    /// We intentionally drop the en-passant target before comparing.
+    /// python-chess (which generated the TSV) writes `-` for the EP
+    /// square unless an enemy pawn could legally capture en passant,
+    /// while our `Position.fen` always writes the literal EP target
+    /// after a double pawn push. Comparing the full 4-field EPD
+    /// would miss every "X just moved a pawn 2 squares" position,
+    /// which is most opening positions. Strip EP from both sides.
     func lookup(_ position: Position) -> Entry? {
-        let epd = Self.epd(forFEN: position.fen)
-        return entries[epd]
+        entries[Self.lookupKey(epd: Self.epd(forFEN: position.fen))]
+    }
+
+    /// 3-field EPD key: placement + side + castling. Used both when
+    /// loading the TSV and when looking up at runtime so the source
+    /// of either string can't drift the match.
+    static func lookupKey(epd: String) -> String {
+        let parts = epd.split(separator: " ", omittingEmptySubsequences: true)
+        return parts.prefix(3).joined(separator: " ")
     }
 
     /// Strip the last two FEN fields (halfmove clock, fullmove number)

@@ -78,46 +78,65 @@ struct LobbyView: View {
     var body: some View {
         @Bindable var appModel = appModel
 
-        ScrollView {
-            VStack(spacing: 24) {
-                header
+        // Two-column "settings panel" layout: vertical mode rail on
+        // the left (always visible, like Settings.app on visionOS),
+        // active mode's configuration card on the right.  Replaces
+        // the previous single-column stack that felt like a form
+        // page rather than a "let's play now" surface.
+        HStack(alignment: .top, spacing: Chess.Space.l) {
 
-                lichessCard
-
-                // Incoming challenges + active games surface above the
-                // mode picker so the "someone's waiting on you" signals
-                // always jump out.
-                if let lobby = lichessLobby {
-                    if !lobby.incomingChallenges.isEmpty {
-                        incomingChallengesSection(lobby)
+            // LEFT — mode rail
+            VStack(alignment: .leading, spacing: Chess.Space.s) {
+                ChessSectionHeader("Play",
+                                   subtitle: "Pick how you want to play.")
+                VStack(spacing: Chess.Space.xs) {
+                    ForEach(GameMode.allCases, id: \.self) { mode in
+                        modeRailRow(mode)
                     }
-                    if !lobby.activeGames.isEmpty {
-                        activeGamesSection(lobby)
-                    }
                 }
-
-                if let action = lichessLobby?.pendingAction {
-                    pendingActionRow(action)
-                } else {
-                    modePicker
-
-                    environmentPickerRow
-
-                    selectedModeCard
-                }
-
-                if let error = lichessLobby?.lastError {
-                    Label(humanReadable(error), systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
+                Spacer(minLength: 0)
+                lichessFooterCard
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 32)
-            .padding(.bottom, 48)
-            .frame(maxWidth: 540, alignment: .top)
+            .frame(width: 240)
+
+            // RIGHT — header bar + active card
+            ScrollView {
+                VStack(alignment: .leading, spacing: Chess.Space.m) {
+                    slimHeader
+
+                    // Incoming challenges + active games stay above
+                    // the config card so "someone's waiting on you"
+                    // signals jump out.
+                    if let lobby = lichessLobby {
+                        if !lobby.incomingChallenges.isEmpty {
+                            incomingChallengesSection(lobby)
+                        }
+                        if !lobby.activeGames.isEmpty {
+                            activeGamesSection(lobby)
+                        }
+                    }
+
+                    if let action = lichessLobby?.pendingAction {
+                        pendingActionRow(action)
+                    } else {
+                        environmentToolbar
+                        selectedModeCard
+                    }
+
+                    if let error = lichessLobby?.lastError {
+                        Label(humanReadable(error),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .frame(maxWidth: 620, alignment: .top)
+                .padding(.bottom, Chess.Space.xl)
+            }
+            .scrollIndicators(.hidden)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Chess.Space.l)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task {
             await appModel.lichess.bootstrap()
             ensureLichessLobby()
@@ -154,70 +173,126 @@ struct LobbyView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Slim header (top bar of the right column)
 
-    private var header: some View {
-        VStack(spacing: Chess.Space.xs) {
-            HStack(spacing: Chess.Space.xs) {
-                Image(systemName: "crown.fill")
-                    .foregroundStyle(Chess.Palette.accent)
-                    .font(.title)
-                Text(Chess.Brand.name)
-                    .font(Chess.Typography.brand(size: 40))
-            }
-            Text(Chess.Brand.tagline)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+    /// Brand wordmark on the left, single icon button on the right
+    /// for piece customisation. Compact — leaves vertical room for
+    /// the actual configuration card to breathe.
+    private var slimHeader: some View {
+        HStack(spacing: Chess.Space.s) {
+            Image(systemName: "crown.fill")
+                .foregroundStyle(Chess.Palette.accent)
+                .font(.title3)
+            Text(Chess.Brand.name)
+                .font(.system(size: 26, weight: .semibold, design: .serif))
+            Spacer()
             Button {
                 showingPieceCustomization = true
             } label: {
-                Label("Customize pieces", systemImage: "paintbrush.fill")
+                Label("Pieces & board", systemImage: "paintbrush.fill")
+                    .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
-            .padding(.top, Chess.Space.xs)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    // MARK: - Mode picker
-
-    /// 4 equal-size chips in one row. Tap to switch the config card
-    /// below. Online modes are greyed out (and tap shows a hint) when
-    /// the user isn't signed in.
-    private var modePicker: some View {
-        HStack(spacing: 8) {
-            ForEach(GameMode.allCases, id: \.self) { mode in
-                modeChip(mode)
-            }
         }
     }
 
+    // MARK: - Mode rail (left column)
+
+    /// One full-width row per mode in the left rail. The selected
+    /// mode gets the accent tint + bolder type; unavailable online
+    /// modes (no Lichess auth) are dimmed but still visible so the
+    /// user knows what's there.
     @ViewBuilder
-    private func modeChip(_ mode: GameMode) -> some View {
+    private func modeRailRow(_ mode: GameMode) -> some View {
         let isSelected = mode == selectedMode
         let isAvailable = !mode.requiresSignIn || appModel.lichess.isSignedIn
+
         Button {
             guard isAvailable else { return }
             selectedMode = mode
             syncDefaultsForMode(mode)
         } label: {
-            VStack(spacing: 6) {
+            HStack(spacing: Chess.Space.s) {
                 Image(systemName: mode.icon)
+                    .foregroundStyle(isSelected
+                                     ? .white
+                                     : Chess.Palette.accent)
                     .font(.title3)
-                Text(mode.label)
-                    .font(.caption)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(mode.label)
+                        .font(.callout.weight(isSelected ? .semibold : .regular))
+                        .foregroundStyle(isSelected ? .white : .primary)
+                    Text(modeSubtitle(mode))
+                        .font(.caption)
+                        .foregroundStyle(isSelected
+                                         ? .white.opacity(0.85)
+                                         : .secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 6)
+            .padding(.vertical, Chess.Space.s)
+            .padding(.horizontal, Chess.Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Chess.Radius.row,
+                                 style: .continuous)
+                    .fill(isSelected
+                          ? AnyShapeStyle(Chess.Palette.accent)
+                          : AnyShapeStyle(.thinMaterial))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.row,
+                                 style: .continuous)
+                    .strokeBorder(isSelected
+                                  ? Color.clear
+                                  : .white.opacity(0.10),
+                                  lineWidth: 0.5)
+            )
             .opacity(isAvailable ? 1 : 0.45)
         }
-        .buttonStyle(SelectionButtonStyle(isSelected: isSelected, shape: .roundedRect(cornerRadius: 14)))
-        .hoverEffect()
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
         .disabled(!isAvailable)
+    }
+
+    private func modeSubtitle(_ mode: GameMode) -> String {
+        switch mode {
+        case .local:      return "On-device · Stockfish"
+        case .quickPair:  return "Lichess pool"
+        case .friend:     return "Challenge by name"
+        case .lichessBot: return "Lichess bots"
+        }
+    }
+
+    /// Footer-of-the-rail card so the Lichess sign-in / status sits
+    /// in the same column as the rest of the rail rather than as a
+    /// detached chip at the top of the page.
+    @ViewBuilder
+    private var lichessFooterCard: some View {
+        if !appModel.lichess.isSignedIn {
+            ChessCard(.row) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Lichess", systemImage: "person.crop.circle.badge.questionmark")
+                        .font(.callout.weight(.medium))
+                    Text("Sign in to unlock online modes, ratings, and game review.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        Task { await appModel.lichess.signIn() }
+                    } label: {
+                        Text("Sign in")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Chess.Palette.accent)
+                    .controlSize(.regular)
+                    .padding(.top, 2)
+                }
+            }
+        }
     }
 
     // MARK: - Environment picker
@@ -228,42 +303,57 @@ struct LobbyView: View {
     /// `appModel.selectedEnvironment` to mount the right scene. Also
     /// drives `immersionStyle` in `LiveChessApp` so virtual envs go
     /// full-immersion and AR stays mixed.
+    /// Compact horizontal toolbar that sits directly above the active
+    /// config card. Lists every environment as a small chip so the
+    /// user can scan options at a glance instead of opening a menu.
     @ViewBuilder
-    private var environmentPickerRow: some View {
+    private var environmentToolbar: some View {
         @Bindable var appModel = appModel
-        ChessCard(.row) {
-            HStack(spacing: Chess.Space.s) {
-                Image(systemName: appModel.selectedEnvironment.systemImage)
-                    .foregroundStyle(Chess.Palette.accent)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Environment")
-                        .font(Chess.Typography.eyebrow())
-                        .foregroundStyle(.secondary)
-                    Text(appModel.selectedEnvironment.displayName)
-                        .font(Chess.Typography.rowTitle())
-                }
-                Spacer()
-                Menu {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Environment")
+                .font(Chess.Typography.eyebrow())
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Chess.Space.xs) {
                     ForEach(SceneEnvironment.allCases) { env in
-                        Button {
+                        envChip(env,
+                                isSelected: env == appModel.selectedEnvironment) {
                             appModel.selectedEnvironment = env
-                        } label: {
-                            Label(env.displayName, systemImage: env.systemImage)
-                            if env == appModel.selectedEnvironment {
-                                Image(systemName: "checkmark")
-                            }
                         }
                     }
-                } label: {
-                    Label("Change", systemImage: "chevron.up.chevron.down")
-                        .labelStyle(.iconOnly)
                 }
-                .menuStyle(.button)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
         }
+    }
+
+    @ViewBuilder
+    private func envChip(_ env: SceneEnvironment,
+                         isSelected: Bool,
+                         action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: env.systemImage)
+                Text(env.displayName)
+                    .lineLimit(1)
+            }
+            .font(.caption.weight(isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected ? .white : .primary)
+            .padding(.horizontal, Chess.Space.s)
+            .padding(.vertical, 6)
+            .background(
+                Capsule().fill(isSelected
+                               ? AnyShapeStyle(Chess.Palette.accent)
+                               : AnyShapeStyle(.thinMaterial))
+            )
+            .overlay(
+                Capsule().strokeBorder(isSelected
+                                       ? Color.clear
+                                       : .white.opacity(0.12),
+                                       lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
     }
 
     // MARK: - Mode config cards
