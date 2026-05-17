@@ -41,8 +41,36 @@ enum AuditoriumStageEnvironment: EnvironmentScene {
         ) ?? SIMD3<Float>(0, 0.78, 0)
 
         addAuditoriumLighting(into: content)
+        addArenaBackdrop(into: content)
 
         return EnvironmentMount(boardPosition: boardPos)
+    }
+
+    /// Dim "darkened arena" backdrop — a large inverted-normal sphere
+    /// with a deep navy unlit material so the periphery of the stage
+    /// fades into a stadium-night gradient instead of the pure-black
+    /// passthrough void that the auditorium env would otherwise
+    /// expose at wide viewing angles. Purely procedural — no HDRI
+    /// in the bundle, no IBL added, keeps the asset cost zero.
+    private static func addArenaBackdrop(
+        into content: any RealityViewContentProtocol
+    ) {
+        let sphere = MeshResource.generateSphere(radius: 80)
+        var unlit = UnlitMaterial()
+        // Deep blue-black — reads as "stadium after the house lights
+        // dim for the main event." Bright enough that the silhouettes
+        // of the audience banks at the env's edge merge into it
+        // rather than punching a hole into the dark.
+        unlit.color = .init(
+            tint: .init(red: 0.03, green: 0.04, blue: 0.075, alpha: 1.0)
+        )
+        let dome = ModelEntity(mesh: sphere, materials: [unlit])
+        dome.name = "AuditoriumBackdrop"
+        // Flip on X so the texture (or, here, the unlit fill)
+        // renders on the inside surface.
+        dome.scale = SIMD3<Float>(-1, 1, 1)
+        dome.position = SIMD3<Float>(0, 1.4, 0)
+        content.add(dome)
     }
 
     /// Auditorium / conference stage lighting:
