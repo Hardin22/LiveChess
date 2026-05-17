@@ -157,20 +157,25 @@ struct LobbyView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(spacing: 8) {
-            Text(Chess.Brand.name)
-                .font(.system(size: 44, weight: .semibold, design: .serif))
-            Text("A chess game in mixed reality.")
+        VStack(spacing: Chess.Space.xs) {
+            HStack(spacing: Chess.Space.xs) {
+                Image(systemName: "crown.fill")
+                    .foregroundStyle(Chess.Palette.accent)
+                    .font(.title)
+                Text(Chess.Brand.name)
+                    .font(Chess.Typography.brand(size: 40))
+            }
+            Text(Chess.Brand.tagline)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button {
                 showingPieceCustomization = true
             } label: {
-                Label("Pieces", systemImage: "paintbrush.fill")
+                Label("Customize pieces", systemImage: "paintbrush.fill")
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
-            .padding(.top, 4)
+            .padding(.top, Chess.Space.xs)
         }
         .frame(maxWidth: .infinity)
     }
@@ -226,35 +231,39 @@ struct LobbyView: View {
     @ViewBuilder
     private var environmentPickerRow: some View {
         @Bindable var appModel = appModel
-        HStack(spacing: 10) {
-            Image(systemName: "rectangle.3.group.bubble")
-                .foregroundStyle(.secondary)
-            Text("Environment")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Menu {
-                ForEach(SceneEnvironment.allCases) { env in
-                    Button {
-                        appModel.selectedEnvironment = env
-                    } label: {
-                        Label(env.displayName, systemImage: env.systemImage)
-                        if env == appModel.selectedEnvironment {
-                            Image(systemName: "checkmark")
+        ChessCard(.row) {
+            HStack(spacing: Chess.Space.s) {
+                Image(systemName: appModel.selectedEnvironment.systemImage)
+                    .foregroundStyle(Chess.Palette.accent)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Environment")
+                        .font(Chess.Typography.eyebrow())
+                        .foregroundStyle(.secondary)
+                    Text(appModel.selectedEnvironment.displayName)
+                        .font(Chess.Typography.rowTitle())
+                }
+                Spacer()
+                Menu {
+                    ForEach(SceneEnvironment.allCases) { env in
+                        Button {
+                            appModel.selectedEnvironment = env
+                        } label: {
+                            Label(env.displayName, systemImage: env.systemImage)
+                            if env == appModel.selectedEnvironment {
+                                Image(systemName: "checkmark")
+                            }
                         }
                     }
+                } label: {
+                    Label("Change", systemImage: "chevron.up.chevron.down")
+                        .labelStyle(.iconOnly)
                 }
-            } label: {
-                Label(
-                    appModel.selectedEnvironment.displayName,
-                    systemImage: appModel.selectedEnvironment.systemImage
-                )
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .menuStyle(.button)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
-        .padding(.horizontal, 4)
     }
 
     // MARK: - Mode config cards
@@ -288,10 +297,11 @@ struct LobbyView: View {
             }
             .controlSize(.large)
             .buttonStyle(.borderedProminent)
+            .tint(Chess.Palette.accent)
             .disabled(appModel.immersiveSpaceState == .inTransition)
         }
-        .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(Chess.Space.m)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.card, style: .continuous))
     }
 
     /// Quick Pair — `/api/board/seek` only allows Rapid+/Correspondence
