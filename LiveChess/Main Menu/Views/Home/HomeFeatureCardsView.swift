@@ -10,19 +10,19 @@ struct HomeFeatureCardsView: View {
     @State private var isVisible = false
     
     var body: some View {
-        HStack(spacing: 16) {
-            
-            // LEFT CARD: Daily Puzzle
-            PuzzleFeatureCard(puzzle: viewModel.puzzle)
-                .onTapGesture {
-                    viewModel.navigate(to: .puzzles)
-                }
-            
-            // RIGHT CARD: Game Review
-            GameReviewFeatureCard(game: viewModel.latestGame, username: viewModel.displayUsername)
-                .onTapGesture {
-                    viewModel.navigate(to: .gameReview)
-                }
+        VStack(spacing: Chess.Space.m) {
+            // HERO: Quick Play — the primary CTA. Two paths: Local vs Online.
+            QuickPlayHeroCard(viewModel: viewModel)
+
+            HStack(spacing: Chess.Space.m) {
+                PuzzleFeatureCard(puzzle: viewModel.puzzle)
+                    .onTapGesture { viewModel.navigate(to: .puzzles) }
+                GameReviewFeatureCard(
+                    game: viewModel.latestGame,
+                    username: viewModel.displayUsername
+                )
+                .onTapGesture { viewModel.navigate(to: .gameReview) }
+            }
         }
         .frame(maxWidth: .infinity)
         .opacity(isVisible ? 1 : 0)
@@ -32,6 +32,102 @@ struct HomeFeatureCardsView: View {
                 isVisible = true
             }
         }
+    }
+}
+
+// MARK: - Quick Play hero
+// The primary entry point on the Home screen. Splits "Play locally vs
+// Stockfish" and "Find an online opponent" into two equally-weighted
+// CTAs side-by-side, both lifting to the lobby with the right mode
+// preselected. Mirrors the way chess.com surfaces "Play" as the
+// dominant home action rather than burying it behind a tab switch.
+private struct QuickPlayHeroCard: View {
+    let viewModel: HomeViewModel
+
+    var body: some View {
+        ChessCard(.hero) {
+            VStack(alignment: .leading, spacing: Chess.Space.m) {
+                HStack(spacing: Chess.Space.s) {
+                    iconBadge("play.fill", tint: Chess.Palette.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Play")
+                            .font(Chess.Typography.sectionTitle())
+                        Text("Jump into a match — your room or a virtual environment.")
+                            .font(Chess.Typography.rowDetail())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: Chess.Space.s) {
+                    QuickPlayChoice(
+                        title: "Local match",
+                        subtitle: "Vs. Stockfish 17",
+                        icon: "cpu",
+                        tint: Chess.Palette.accent
+                    ) { viewModel.navigate(to: .playLocal) }
+
+                    QuickPlayChoice(
+                        title: "Online",
+                        subtitle: "Find a Lichess opponent",
+                        icon: "globe",
+                        tint: Chess.Palette.info
+                    ) { viewModel.navigate(to: .playOnline) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func iconBadge(_ name: String, tint: Color) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(tint.opacity(0.18))
+                .frame(width: 38, height: 38)
+            Image(systemName: name)
+                .foregroundStyle(tint)
+                .font(.callout)
+        }
+    }
+}
+
+private struct QuickPlayChoice: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Chess.Space.s) {
+                Image(systemName: icon)
+                    .foregroundStyle(tint)
+                    .font(.title3)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(Chess.Typography.rowTitle())
+                    Text(subtitle)
+                        .font(Chess.Typography.rowDetail())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.tertiary)
+                    .font(.caption)
+            }
+            .padding(Chess.Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.row))
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.row)
+                    .strokeBorder(tint.opacity(0.25), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
     }
 }
 

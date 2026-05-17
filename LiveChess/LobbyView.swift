@@ -158,7 +158,7 @@ struct LobbyView: View {
 
     private var header: some View {
         VStack(spacing: 8) {
-            Text("MetaChess")
+            Text(Chess.Brand.name)
                 .font(.system(size: 44, weight: .semibold, design: .serif))
             Text("A chess game in mixed reality.")
                 .font(.callout)

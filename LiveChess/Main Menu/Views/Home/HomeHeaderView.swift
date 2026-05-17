@@ -12,54 +12,50 @@ struct HomeHeaderView: View {
     @State private var isVisible = false
     
     var body: some View {
-        HStack(alignment: .top, spacing: 20) {
-            
-            // LEFT: Welcome text + stats chips
-            VStack(alignment: .leading, spacing: 12) {
-                
-                // Welcome text with username highlight
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Welcome back,")
-                        .font(.title2)
+        HStack(alignment: .top, spacing: Chess.Space.l) {
+
+            // LEFT: brand wordmark + tagline + stats chips
+            VStack(alignment: .leading, spacing: Chess.Space.s) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: Chess.Space.xs) {
+                        Image(systemName: "crown.fill")
+                            .foregroundStyle(Chess.Palette.accent)
+                            .font(.title)
+                        Text(Chess.Brand.name)
+                            .font(Chess.Typography.brand(size: 38))
+                    }
+                    Text(viewModel.isSignedIn
+                         ? "Welcome back, \(viewModel.displayUsername)"
+                         : Chess.Brand.tagline)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                    
-                    Text(viewModel.displayUsername)
-                        .font(.largeTitle)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
                 }
-                
-                // Stats row: rating + games played from the live Lichess
-                // account. Hidden entirely for guests — no auth means no
-                // stats, and we'd otherwise show meaningless placeholders.
+
                 if viewModel.isSignedIn {
-                    HStack(spacing: 10) {
+                    HStack(spacing: Chess.Space.xs) {
                         StatChipView(
                             icon: "trophy.fill",
                             value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
                             label: "rapid",
-                            color: .yellow
+                            color: Chess.Palette.highlight
                         )
-
                         if let games = viewModel.displayGamesPlayed, games > 0 {
                             StatChipView(
                                 icon: "square.grid.3x3.fill",
                                 value: "\(games)",
                                 label: "games",
-                                color: .green
+                                color: Chess.Palette.accent
                             )
                         }
                     }
                 }
             }
-            
+
             Spacer()
-            
-            // RIGHT: Search bar
+
             SearchBarView(text: $viewModel.searchText)
                 .frame(maxWidth: 240)
         }
-        // Entry animation: slides up and fades in on appear
         .opacity(isVisible ? 1 : 0)
         .offset(y: isVisible ? 0 : 16)
         .onAppear {

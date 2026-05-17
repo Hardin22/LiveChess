@@ -90,7 +90,7 @@ struct SidebarView: View {
                     Image(systemName: "crown.fill")
                         .foregroundStyle(.green)
                         .font(.title3)
-                    Text("MetaChess")
+                    Text(Chess.Brand.name)
                         .font(.headline)
                         .fontWeight(.semibold)
                 }
