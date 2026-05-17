@@ -124,10 +124,10 @@ enum BalconyEnvironment: EnvironmentScene {
         }
     }
 
-    /// Build a chrome + glass railing along the front edge of the
-    /// balcony — corner to corner across the full floor width, so
-    /// it visually anchors into the wooden wall on the left and
-    /// runs cleanly to the right-hand planter on the other end.
+    /// Build a chrome + glass railing along the open edges of the
+    /// balcony — the front (sea-facing) AND the right side, both of
+    /// which drop off to rocks. Left side stays open because that's
+    /// the wooden wall, back stays open because that's the interior.
     private static func addPerimeterRailing(
         around env: Entity,
         into content: any RealityViewContentProtocol
@@ -141,22 +141,27 @@ enum BalconyEnvironment: EnvironmentScene {
         print("=== balcony floor world bounds ===")
         print("  min=\(bounds.min)  max=\(bounds.max)  extents=\(bounds.extents)")
 
-        // Span the FULL floor width, anchored 5 cm in from each
-        // corner so the chrome posts touch the wall/planter
-        // edges cleanly. Use bounds.min.z as the front edge
-        // (the side furthest from the user — sea-facing).
         let inset: Float = 0.05
         let minX = bounds.min.x + inset
         let maxX = bounds.max.x - inset
         let frontZ = bounds.min.z
+        let backZ = bounds.max.z - inset
         let floorY = bounds.max.y
 
         let railingRoot = Entity()
         railingRoot.name = "ProceduralRailing"
         content.add(railingRoot)
 
+        // FRONT (sea-facing) — full width, corner to corner
         addRailingRun(start: SIMD3<Float>(minX, floorY, frontZ),
                       end:   SIMD3<Float>(maxX, floorY, frontZ),
+                      parent: railingRoot)
+
+        // RIGHT side — from the front-right corner back to the
+        // wall. Same chrome + glass treatment, joins seamlessly
+        // with the front run at the corner.
+        addRailingRun(start: SIMD3<Float>(maxX, floorY, frontZ),
+                      end:   SIMD3<Float>(maxX, floorY, backZ),
                       parent: railingRoot)
     }
 
