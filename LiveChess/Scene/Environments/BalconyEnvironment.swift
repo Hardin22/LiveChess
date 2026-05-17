@@ -100,6 +100,7 @@ enum BalconyEnvironment: EnvironmentScene {
         // always sees a clean balcony fence between themselves
         // and the sea.
         Self.hideOriginalRailings(in: env)
+        Self.addFloorSkirt(around: env, into: content)
         Self.addPerimeterRailing(around: env, into: content)
 
         addDaylightLighting(into: content)
@@ -122,6 +123,52 @@ enum BalconyEnvironment: EnvironmentScene {
             }
             stack.append(contentsOf: e.children)
         }
+    }
+
+    /// Drop a thick stone-coloured slab directly beneath the
+    /// Balcony_Floor so the platform reads as a real concrete /
+    /// stone balcony instead of a paper-thin tile pad floating
+    /// over the mountainside. Extends 15 cm beyond each edge so
+    /// the visible "rim" forms a clean shadow line under the
+    /// front + right glass railings.
+    private static func addFloorSkirt(
+        around env: Entity,
+        into content: any RealityViewContentProtocol
+    ) {
+        let floor = env.findEntity(named: "Balcony_Floor")
+        let bounds: BoundingBox = floor.map { $0.visualBounds(relativeTo: nil) }
+            ?? BoundingBox(
+                min: SIMD3<Float>(-3.0, 0, -3.0),
+                max: SIMD3<Float>( 3.0, 0,  0.0)
+            )
+
+        // 30 cm of structural mass under the tile surface.
+        let skirtThickness: Float = 0.30
+        let overhang: Float = 0.05
+        let widthX = (bounds.max.x - bounds.min.x) + overhang * 2
+        let widthZ = (bounds.max.z - bounds.min.z) + overhang * 2
+        let centreX = (bounds.min.x + bounds.max.x) / 2
+        let centreZ = (bounds.min.z + bounds.max.z) / 2
+        // Position the skirt so its TOP is flush with the floor's
+        // underside (bounds.min.y), thickness goes downward.
+        let topY = bounds.min.y - 0.001    // hair below the floor surface
+        let centreY = topY - skirtThickness / 2
+
+        var skirtMaterial = PhysicallyBasedMaterial()
+        skirtMaterial.baseColor = .init(
+            tint: .init(red: 0.16, green: 0.15, blue: 0.14, alpha: 1)
+        )
+        skirtMaterial.roughness = .init(floatLiteral: 0.85)
+        skirtMaterial.metallic = .init(floatLiteral: 0)
+
+        let skirt = ModelEntity(
+            mesh: .generateBox(size: [widthX, skirtThickness, widthZ],
+                               cornerRadius: 0.01),
+            materials: [skirtMaterial]
+        )
+        skirt.position = SIMD3<Float>(centreX, centreY, centreZ)
+        skirt.name = "BalconySkirt"
+        content.add(skirt)
     }
 
     /// Build a chrome + glass railing along the open edges of the
