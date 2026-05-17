@@ -92,77 +92,202 @@ enum BalconyEnvironment: EnvironmentScene {
         // doesn't "follow" them.
         await Self.addSkybox(into: content)
 
-        // Trust the .blend's authored railing materials (steel posts
-        // + glass panels with PBR textures).
-        addDaylightLighting(into: content)
+        // The .blend's bundled railings aren't actually at the
+        // floor perimeter — they're small decorative meshes near
+        // the chair. Hide them and spawn a proper procedural
+        // perimeter railing (chrome posts + tinted glass panels)
+        // around the actual Balcony_Floor edges so the player
+        // always sees a clean balcony fence between themselves
+        // and the sea.
+        Self.hideOriginalRailings(in: env)
+        Self.addPerimeterRailing(around: env, into: content)
 
-        // DEBUG: dump where each Railing entity actually lands in
-        // world coords after the env transform. User has reported
-        // "can't see the railings" multiple times even though the
-        // geometry is in the USDZ — print exact world positions so
-        // we know whether they're out of view, below the floor,
-        // or rendering invisibly.
-        Self.logRailingPositions(in: env)
-        // Backup measure: spawn a small bright marker at each
-        // Railing root's world position so they're impossible to
-        // miss in the immersive scene. If the markers show up but
-        // the actual railing meshes don't, the issue is material
-        // not position.
-        Self.dropRailingMarkers(in: env, into: content)
+        addDaylightLighting(into: content)
 
         return EnvironmentMount(boardPosition: boardPos)
     }
 
-    // MARK: - Debug helpers
+    // MARK: - Perimeter railing (procedural)
 
-    /// Walk the loaded env subtree and log the world position of
-    /// every entity whose name contains "railing". Helps diagnose
-    /// "I can't see the railings" reports — if the log shows them
-    /// at sane world coords (X ~ ±1.5, Y ~ 0..1.5, Z ~ -0.5..-2.0)
-    /// then it's a POV problem; if it shows them at (0, 0, 0) or
-    /// hundreds of metres away, it's a transform problem.
-    private static func logRailingPositions(in root: Entity) {
-        print("=== balcony railing world positions ===")
+    /// Hide the .blend's bundled "Railing_*" entities — they're
+    /// small decorative meshes that don't actually wrap the
+    /// balcony perimeter, which is why the user kept reporting
+    /// "I can't see the railings" even after we verified the
+    /// geometry was in the USDZ.
+    private static func hideOriginalRailings(in root: Entity) {
         var stack: [Entity] = [root]
-        var count = 0
         while let e = stack.popLast() {
             if e.name.lowercased().contains("railing") {
-                let p = e.position(relativeTo: nil)
-                let bounds = e.visualBounds(relativeTo: nil)
-                print("  [\(e.name)] pos=\(p)  bounds.center=\(bounds.center)  bounds.extents=\(bounds.extents)")
-                count += 1
+                e.isEnabled = false
             }
             stack.append(contentsOf: e.children)
         }
-        print("=== \(count) railing entities ===")
     }
 
-    /// Drop a small bright marker sphere at each Railing entity's
-    /// world position so they're unmissable in the immersive scene.
-    /// If markers show up but the railing meshes don't, the
-    /// materials are the problem. If markers DON'T show up either,
-    /// the transform is the problem.
-    private static func dropRailingMarkers(
-        in root: Entity,
+    /// Build a proper chrome + glass perimeter railing around the
+    /// actual `Balcony_Floor` bounds. Three sides only (front +
+    /// left + right — back is the wooden wall with the sconce,
+    /// real balconies don't have a railing flush with their
+    /// interior wall). 1 m tall, posts every ~1.5 m, with a
+    /// continuous top + bottom chrome rail and tinted glass
+    /// panels filling the gaps.
+    private static func addPerimeterRailing(
+        around env: Entity,
         into content: any RealityViewContentProtocol
     ) {
-        var stack: [Entity] = [root]
-        var markerMat = UnlitMaterial(color: .magenta)
-        markerMat.color = .init(tint: .magenta)
-        while let e = stack.popLast() {
-            if e.name.lowercased().contains("railing"),
-               e.children.isEmpty == false || (e as? ModelEntity)?.model != nil {
-                let pos = e.position(relativeTo: nil)
-                let marker = ModelEntity(
-                    mesh: .generateSphere(radius: 0.10),
-                    materials: [markerMat]
-                )
-                marker.name = "DEBUG_RailingMarker"
-                marker.position = pos
-                content.add(marker)
-            }
-            stack.append(contentsOf: e.children)
+        // Find the floor and read its world bounds to figure out
+        // where the perimeter actually is. Fallback to a sane
+        // default if the floor entity can't be found.
+        let floor = env.findEntity(named: "Balcony_Floor")
+        let bounds: BoundingBox = floor.map { $0.visualBounds(relativeTo: nil) }
+            ?? BoundingBox(
+                min: SIMD3<Float>(-2.5, 0, -2.5),
+                max: SIMD3<Float>( 2.5, 0,  0.0)
+            )
+        let minX = bounds.min.x, maxX = bounds.max.x
+        let minZ = bounds.min.z, maxZ = bounds.max.z
+        let floorY = bounds.max.y
+
+        let railingRoot = Entity()
+        railingRoot.name = "ProceduralRailing"
+        content.add(railingRoot)
+
+        // Three sides: front (min Z, toward sea), left (min X),
+        // right (max X). Skip the back (max Z) since that's the
+        // wall side.
+        addRailingRun(start: SIMD3<Float>(minX, floorY, minZ),
+                      end:   SIMD3<Float>(maxX, floorY, minZ),
+                      parent: railingRoot)   // front
+        addRailingRun(start: SIMD3<Float>(minX, floorY, minZ),
+                      end:   SIMD3<Float>(minX, floorY, maxZ),
+                      parent: railingRoot)   // left
+        addRailingRun(start: SIMD3<Float>(maxX, floorY, minZ),
+                      end:   SIMD3<Float>(maxX, floorY, maxZ),
+                      parent: railingRoot)   // right
+    }
+
+    /// One straight run of railing between two world-space points.
+    /// Builds: vertical chrome posts every 1.5 m, a continuous
+    /// top + bottom chrome rail, and a tinted glass panel between
+    /// every pair of posts.
+    private static func addRailingRun(
+        start: SIMD3<Float>,
+        end: SIMD3<Float>,
+        parent: Entity
+    ) {
+        let railingHeight: Float = 1.0
+        let postRadius: Float = 0.012
+        let railRadius: Float = 0.010
+        let postSpacing: Float = 1.5
+
+        let chrome = chromeMaterial()
+        let glass = glassMaterial()
+
+        let dx = end.x - start.x
+        let dz = end.z - start.z
+        let runLength = sqrt(dx * dx + dz * dz)
+        guard runLength > 0.1 else { return }
+        let ux = dx / runLength
+        let uz = dz / runLength
+        // Perpendicular for panel orientation
+        let nx = -uz
+        let nz =  ux
+        _ = (nx, nz) // silence "unused" — kept for future panel-tilt tuning
+
+        // Vertical posts
+        let postCount = max(2, Int(runLength / postSpacing) + 1)
+        let postStep = runLength / Float(postCount - 1)
+        var postPositions: [SIMD3<Float>] = []
+        for i in 0..<postCount {
+            let t = Float(i) * postStep
+            let p = SIMD3<Float>(
+                start.x + ux * t,
+                start.y + railingHeight / 2,
+                start.z + uz * t
+            )
+            postPositions.append(p)
+            let post = ModelEntity(
+                mesh: .generateCylinder(height: railingHeight,
+                                        radius: postRadius),
+                materials: [chrome]
+            )
+            post.position = p
+            parent.addChild(post)
         }
+
+        // Top + bottom continuous rails (chrome boxes along the run)
+        for yOffset in [Float(railingHeight - railRadius),
+                        Float(railRadius)] {
+            let rail = ModelEntity(
+                mesh: .generateBox(
+                    size: [runLength, railRadius * 2, railRadius * 2],
+                    cornerRadius: railRadius
+                ),
+                materials: [chrome]
+            )
+            let mid = SIMD3<Float>(
+                (start.x + end.x) / 2,
+                start.y + yOffset,
+                (start.z + end.z) / 2
+            )
+            rail.position = mid
+            // Rotate so the box's local X aligns with the run direction.
+            let angle = atan2(dx, dz) - .pi / 2
+            rail.transform.rotation = simd_quatf(
+                angle: angle, axis: SIMD3<Float>(0, 1, 0)
+            )
+            parent.addChild(rail)
+        }
+
+        // Glass panels between adjacent posts
+        for i in 0..<(postPositions.count - 1) {
+            let a = postPositions[i]
+            let b = postPositions[i + 1]
+            let panelLen = simd_distance(SIMD3<Float>(a.x, 0, a.z),
+                                         SIMD3<Float>(b.x, 0, b.z))
+                - postRadius * 2
+            guard panelLen > 0.05 else { continue }
+            let panel = ModelEntity(
+                mesh: .generateBox(
+                    size: [panelLen, railingHeight - railRadius * 4, 0.006],
+                    cornerRadius: 0.002
+                ),
+                materials: [glass]
+            )
+            let mid = SIMD3<Float>(
+                (a.x + b.x) / 2,
+                start.y + railingHeight / 2,
+                (a.z + b.z) / 2
+            )
+            panel.position = mid
+            let angle = atan2(b.x - a.x, b.z - a.z) - .pi / 2
+            panel.transform.rotation = simd_quatf(
+                angle: angle, axis: SIMD3<Float>(0, 1, 0)
+            )
+            parent.addChild(panel)
+        }
+    }
+
+    private static func chromeMaterial() -> PhysicallyBasedMaterial {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: .init(white: 0.85, alpha: 1))
+        m.metallic = .init(floatLiteral: 1.0)
+        m.roughness = .init(floatLiteral: 0.18)
+        return m
+    }
+
+    private static func glassMaterial() -> PhysicallyBasedMaterial {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(
+            tint: .init(red: 0.55, green: 0.78, blue: 0.92, alpha: 1)
+        )
+        m.metallic = .init(floatLiteral: 0)
+        m.roughness = .init(floatLiteral: 0.05)
+        m.clearcoat = .init(floatLiteral: 1.0)
+        m.clearcoatRoughness = .init(floatLiteral: 0.05)
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.35))
+        m.faceCulling = .none
+        return m
     }
 
     // MARK: - Skybox / IBL
