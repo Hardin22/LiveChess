@@ -70,9 +70,17 @@ struct ChessSceneView: View {
             setup.add(seat: whiteSeat)
             setup.add(seat: blackSeat)
 
+            // Seed the visual board from the session's CURRENT position,
+            // not the standard start. This matters across env switches
+            // mid-game: pendingReopen preserves `activeSession` so the
+            // session's underlying match still holds every move played
+            // so far, but the scene rebuild was hardcoding the start
+            // position — making the board visually reset to move 1
+            // even though the engine still thought it was move 23.
             Self.populatePieces(
                 into: &setup,
                 renderer: renderer,
+                from: session.match.currentPosition,
                 tableID: table.id,
                 idStart: 100
             )
@@ -307,18 +315,21 @@ struct ChessSceneView: View {
         )
     }
 
-    /// Adds the 32 starting-position pieces and registers them both with
+    /// Adds the 32 pieces of `position` and registers them both with
     /// the renderer and with TabletopKit's `TableSetup`. Used at first
-    /// scene build.
+    /// scene build — pass `Position.standardStart` for a fresh game,
+    /// or `session.match.currentPosition` to rebuild the scene at the
+    /// in-progress board state (env switch mid-game).
     private static func populatePieces(
         into setup: inout TableSetup,
         renderer: ChessRenderer,
+        from position: Position,
         tableID: EquipmentIdentifier,
         idStart: Int
     ) {
         var nextID = idStart
         for square in Square.all {
-            guard let piece = Position.standardStart[square] else { continue }
+            guard let piece = position[square] else { continue }
             let equipment = ChessPieceEquipment(
                 id: EquipmentIdentifier(nextID),
                 piece: piece,
