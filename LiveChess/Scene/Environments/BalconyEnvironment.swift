@@ -124,35 +124,39 @@ enum BalconyEnvironment: EnvironmentScene {
         }
     }
 
-    /// Build a chrome + glass railing ONLY along the front edge
-    /// of the balcony (the side facing the sea). Reference photo
-    /// has nothing on the left + right edges — left has the
-    /// wooden wall + plant + lantern, right has a planter — and
-    /// nothing wraps the back wall either.
+    /// Build a chrome + glass railing along the front edge of the
+    /// balcony — corner to corner across the full floor width, so
+    /// it visually anchors into the wooden wall on the left and
+    /// runs cleanly to the right-hand planter on the other end.
     private static func addPerimeterRailing(
         around env: Entity,
         into content: any RealityViewContentProtocol
     ) {
-        // Find the floor and read its world bounds to figure out
-        // where the front edge actually is. Fallback to a sane
-        // default if the floor entity can't be found.
         let floor = env.findEntity(named: "Balcony_Floor")
         let bounds: BoundingBox = floor.map { $0.visualBounds(relativeTo: nil) }
             ?? BoundingBox(
-                min: SIMD3<Float>(-2.5, 0, -2.5),
-                max: SIMD3<Float>( 2.5, 0,  0.0)
+                min: SIMD3<Float>(-3.0, 0, -3.0),
+                max: SIMD3<Float>( 3.0, 0,  0.0)
             )
-        let minX = bounds.min.x, maxX = bounds.max.x
-        let minZ = bounds.min.z
+        print("=== balcony floor world bounds ===")
+        print("  min=\(bounds.min)  max=\(bounds.max)  extents=\(bounds.extents)")
+
+        // Span the FULL floor width, anchored 5 cm in from each
+        // corner so the chrome posts touch the wall/planter
+        // edges cleanly. Use bounds.min.z as the front edge
+        // (the side furthest from the user — sea-facing).
+        let inset: Float = 0.05
+        let minX = bounds.min.x + inset
+        let maxX = bounds.max.x - inset
+        let frontZ = bounds.min.z
         let floorY = bounds.max.y
 
         let railingRoot = Entity()
         railingRoot.name = "ProceduralRailing"
         content.add(railingRoot)
 
-        // Front (sea-facing) only — matches the reference photo.
-        addRailingRun(start: SIMD3<Float>(minX, floorY, minZ),
-                      end:   SIMD3<Float>(maxX, floorY, minZ),
+        addRailingRun(start: SIMD3<Float>(minX, floorY, frontZ),
+                      end:   SIMD3<Float>(maxX, floorY, frontZ),
                       parent: railingRoot)
     }
 
