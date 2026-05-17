@@ -114,6 +114,18 @@ struct GameAnalysisResult: Sendable {
 /// Drives Stockfish through a game's move list to produce per-move
 /// classifications and PV lines.
 ///
+/// **Single-engine-per-process constraint** — `chesskit-engine` embeds
+/// Stockfish in-process via its C++ `_main` function. Standing up a
+/// `GameAnalyzer` while a `StockfishEngine` is also alive (e.g. mid-
+/// match) collides on Stockfish's global state (option registry,
+/// thread pool, NNUE slots) and crashes the host. In practice this
+/// never happens — review is on the 2-D Home screen which is only
+/// reachable when no immersive match is running, and closing the
+/// immersive deallocs `MatchCoordinator` which deallocs the play
+/// engine — but if we ever surface "review while playing", the two
+/// will need to share a single `Engine` instance via a process-wide
+/// holder. Tracked here so it doesn't get forgotten.
+///
 /// One `GameAnalyzer` owns one `Engine`, started with `multipv: 3`
 /// (configurable). Calling `analyze` runs the engine ply by ply at a
 /// fixed search depth; results stream out via the
