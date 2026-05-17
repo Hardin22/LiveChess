@@ -27,24 +27,60 @@ struct PieceCustomizationView: View {
     var body: some View {
         @Bindable var customization = appModel.pieceCustomization
 
+        // Single-column ScrollView — visionOS sheets size to content
+        // intrinsic width, and a two-column HStack made the sheet
+        // squeeze both columns. One vertical scroll keeps the layout
+        // predictable at any sheet width.
         NavigationStack {
-            HStack(alignment: .top, spacing: Chess.Space.l) {
-                previewColumn(customization: customization)
-                controlsColumn(customization: customization)
+            ScrollView {
+                VStack(spacing: Chess.Space.m) {
+                    previewHeader(customization: customization)
+
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Material")
+                            presetSection(customization: customization)
+                            if customization.current.preset == .wood {
+                                Divider().padding(.top, Chess.Space.xs)
+                                pieceWoodSection(customization: customization)
+                            }
+                        }
+                    }
+
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Tint")
+                            colorSection(customization: customization)
+                        }
+                    }
+
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Board")
+                            boardSection(customization: customization)
+                        }
+                    }
+
+                    Button {
+                        customization.resetToDefault()
+                    } label: {
+                        Label("Reset to default",
+                              systemImage: "arrow.counterclockwise")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .padding(.top, Chess.Space.s)
+                }
+                .padding(Chess.Space.l)
+                .frame(maxWidth: 640)
             }
-            .frame(
-                minWidth: 980,
-                idealWidth: 1080,
-                minHeight: 740,
-                idealHeight: 760
-            )
-            .padding(Chess.Space.l)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .scrollIndicators(.hidden)
+            .frame(minWidth: 720, minHeight: 720)
             .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    // System default tint — reads as "OK / close",
-                    // doesn't compete with the gold/metal piece preview.
                     Button("Done") { dismiss() }
                         .buttonStyle(.bordered)
                 }
@@ -52,39 +88,55 @@ struct PieceCustomizationView: View {
         }
     }
 
-    // MARK: - Two-column layout
-
-    /// Left rail — preview piece pinned in a dark "stage" card so the
-    /// material's highlights and shadows read against a controlled
-    /// background, not the busy passthrough room. Side + piece-kind
-    /// pickers sit on a slim segmented strip beneath. Reset is a
-    /// subtle text link in the corner — secondary action, not a
-    /// red banner.
+    /// Compact header card pinned at the top of the scroll: stage
+    /// thumbnail on the left, side / piece-kind controls on the right.
+    /// One row, never wraps, always visible above the first content
+    /// card so the preview anchors the page.
     @ViewBuilder
-    private func previewColumn(customization: PieceCustomization) -> some View {
-        VStack(alignment: .leading, spacing: Chess.Space.s) {
-            previewStage(customization: customization)
-            previewControlsBar
-            HStack {
-                Spacer()
-                Button {
-                    customization.resetToDefault()
-                } label: {
-                    Label("Reset", systemImage: "arrow.counterclockwise")
-                        .font(.caption)
+    private func previewHeader(customization: PieceCustomization) -> some View {
+        ChessCard(.hero) {
+            HStack(alignment: .center, spacing: Chess.Space.m) {
+                previewStage(customization: customization)
+                    .frame(width: 200, height: 220)
+                VStack(alignment: .leading, spacing: Chess.Space.s) {
+                    Text("Preview")
+                        .font(Chess.Typography.eyebrow())
                         .foregroundStyle(.secondary)
+                    Picker("", selection: $previewSide) {
+                        Text("White").tag(Side.white)
+                        Text("Black").tag(Side.black)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 220)
+
+                    Menu {
+                        ForEach(PieceKind.allCases, id: \.self) { kind in
+                            Button(displayName(for: kind)) { previewKind = kind }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(displayName(for: previewKind))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: 160, alignment: .leading)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .hoverEffect(.highlight)
+                Spacer(minLength: 0)
             }
-            .padding(.top, Chess.Space.xxs)
         }
-        .frame(width: 320)
     }
 
-    /// Stage card holding the 3-D preview. The dark radial backdrop
-    /// makes metals/glass/pearl read correctly — passthrough material
-    /// behind glass was washing out the highlights.
+    /// Stage card holding the 3-D preview. Dark radial backdrop so
+    /// metals/glass/pearl read against controlled lighting rather
+    /// than the busy passthrough room.
     @ViewBuilder
     private func previewStage(customization: PieceCustomization) -> some View {
         ZStack {
@@ -96,7 +148,7 @@ struct PieceCustomizationView: View {
                             Color.black.opacity(0.65),
                             Color.black.opacity(0.25)
                         ],
-                        center: .center, startRadius: 30, endRadius: 280
+                        center: .center, startRadius: 30, endRadius: 220
                     )
                 )
             PiecePreviewView(
@@ -104,84 +156,13 @@ struct PieceCustomizationView: View {
                 previewSide: $previewSide,
                 previewKind: $previewKind
             )
-            .padding(Chess.Space.s)
+            .padding(Chess.Space.xs)
         }
-        .frame(height: 340)
         .overlay(
             RoundedRectangle(cornerRadius: Chess.Radius.card,
                              style: .continuous)
                 .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
         )
-    }
-
-    /// Slim segmented bar beneath the stage — side toggle on the left,
-    /// piece-kind menu on the right. Single row, never wraps.
-    private var previewControlsBar: some View {
-        HStack(spacing: Chess.Space.s) {
-            Picker("", selection: $previewSide) {
-                Text("White").tag(Side.white)
-                Text("Black").tag(Side.black)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-
-            Menu {
-                ForEach(PieceKind.allCases, id: \.self) { kind in
-                    Button(displayName(for: kind)) { previewKind = kind }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(displayName(for: previewKind))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.caption)
-                }
-                .frame(width: 92)
-            }
-            .menuStyle(.button)
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-        }
-    }
-
-    /// Right column — scrollable stack of grouped settings cards.
-    /// Material card holds a VERTICAL LIST of preset rows (no more
-    /// cramped 3-col grid wrapping characters) and folds in wood
-    /// species under a divider when Wood is active.
-    @ViewBuilder
-    private func controlsColumn(customization: PieceCustomization) -> some View {
-        ScrollView {
-            VStack(spacing: Chess.Space.m) {
-                ChessCard(.standard) {
-                    VStack(alignment: .leading, spacing: Chess.Space.s) {
-                        ChessSectionHeader("Material")
-                        presetSection(customization: customization)
-                        if customization.current.preset == .wood {
-                            Divider().padding(.top, Chess.Space.xs)
-                            pieceWoodSection(customization: customization)
-                        }
-                    }
-                }
-
-                ChessCard(.standard) {
-                    VStack(alignment: .leading, spacing: Chess.Space.s) {
-                        ChessSectionHeader("Tint")
-                        colorSection(customization: customization)
-                    }
-                }
-
-                ChessCard(.standard) {
-                    VStack(alignment: .leading, spacing: Chess.Space.s) {
-                        ChessSectionHeader("Board")
-                        boardSection(customization: customization)
-                    }
-                }
-            }
-            .padding(.bottom, Chess.Space.l)
-        }
-        .scrollIndicators(.hidden)
-        .frame(maxWidth: 580)
     }
 
     // MARK: - Preview controls (which side / which piece to preview)
@@ -414,11 +395,21 @@ extension PieceCustomizationView {
     @ViewBuilder
     private func boardSection(customization: PieceCustomization) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Board")
-                .font(.headline)
             Text("Re-skin the playing surface — pick a material and colours that pair well with your pieces. Changes apply live to any open game.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            // LIVE BOARD PREVIEW — 2-D swatch that mirrors the
+            // current customization. Sits at the top of the section
+            // so every chip / colour-picker change underneath
+            // produces a visible result the user can see before
+            // committing.
+            HStack {
+                Spacer()
+                BoardPreviewView(material: customization.current)
+                    .frame(width: 180, height: 180)
+                Spacer()
+            }
 
             // Squares — material chips + light/dark colour pickers.
             VStack(alignment: .leading, spacing: 8) {
