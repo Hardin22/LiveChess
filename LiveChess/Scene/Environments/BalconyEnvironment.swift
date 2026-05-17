@@ -102,6 +102,7 @@ enum BalconyEnvironment: EnvironmentScene {
         // always sees a clean balcony fence between themselves
         // and the sea.
         Self.hideOriginalRailings(in: env)
+        Self.hideOriginalPlants(in: env)
         // MUST run before we add procedural chrome/glass so we don't
         // strip metallic from the railing posts we're about to mount.
         Self.sanitizeBlendMaterials(in: env)
@@ -120,6 +121,26 @@ enum BalconyEnvironment: EnvironmentScene {
     /// balcony perimeter, which is why the user kept reporting
     /// "I can't see the railings" even after we verified the
     /// geometry was in the USDZ.
+    /// Hide the .blend's joined plant cluster. The 131 plants were
+    /// authored across a 9 m floor and joined into a single mesh by
+    /// the optimizer; on the now-scaled-down balcony they overlap
+    /// awkwardly (visible as a single plant cluster clipping into
+    /// the wall in the user's screenshot). Hiding the whole cluster
+    /// gives a clean balcony — we can add ONE procedurally-placed
+    /// pot back later if needed.
+    private static func hideOriginalPlants(in root: Entity) {
+        var stack: [Entity] = [root]
+        while let e = stack.popLast() {
+            let n = e.name.lowercased()
+            if n.contains("plant") || n.contains("pot")
+                || n.contains("foliage") || n.contains("fir")
+                || n.contains("tree") || n.contains("leaf") {
+                e.isEnabled = false
+            }
+            stack.append(contentsOf: e.children)
+        }
+    }
+
     private static func hideOriginalRailings(in root: Entity) {
         var stack: [Entity] = [root]
         while let e = stack.popLast() {
