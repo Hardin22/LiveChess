@@ -93,43 +93,33 @@ struct PieceCustomizationView: View {
         }
     }
 
-    /// Top-of-sheet preview block — full-width dark stage card with
-    /// the 3-D piece, side / piece-kind controls on a single row
-    /// beneath. Plain VStack instead of an HStack (the HStack version
-    /// had RealityView collapsing to zero width inside a fixed-width
-    /// frame, leaving the controls floating over empty space).
+    /// Top-of-sheet preview block — uses PiecePreviewView directly
+    /// (which already brings its own 320 pt frame + .thinMaterial
+    /// backdrop), with .clipped() so the 3-D king can't escape the
+    /// card's bounds, then the inline side / piece-kind controls
+    /// on a single row beneath. No outer ZStack and no second frame
+    /// — the previous wrapping was fighting PiecePreviewView's own
+    /// sizing and letting the piece overflow up past the sheet's
+    /// title bar.
     @ViewBuilder
     private func previewHeader(customization: PieceCustomization) -> some View {
         VStack(spacing: Chess.Space.s) {
-            // Full-width dark stage, fixed tall enough for the piece
-            // to render at readable size on Vision Pro.
-            ZStack {
+            PiecePreviewView(
+                material: customization.current,
+                previewSide: $previewSide,
+                previewKind: $previewKind
+            )
+            .clipped()
+            .clipShape(
                 RoundedRectangle(cornerRadius: Chess.Radius.card,
                                  style: .continuous)
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color.black.opacity(0.65),
-                                Color.black.opacity(0.20)
-                            ],
-                            center: .center, startRadius: 60, endRadius: 320
-                        )
-                    )
-                PiecePreviewView(
-                    material: customization.current,
-                    previewSide: $previewSide,
-                    previewKind: $previewKind
-                )
-                .padding(Chess.Space.s)
-            }
-            .frame(height: 320)
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: Chess.Radius.card,
                                  style: .continuous)
-                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
             )
 
-            // Inline side + piece controls
             HStack(spacing: Chess.Space.m) {
                 Picker("", selection: $previewSide) {
                     Text("White").tag(Side.white)

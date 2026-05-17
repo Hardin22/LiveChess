@@ -30,20 +30,19 @@ enum Chess {
     // MARK: - Palette
 
     enum Palette {
-        /// Primary brand accent — a green that nods to chess.com's
-        /// board green but darker / more saturated so it reads
-        /// crisply on the visionOS dark canvas. The ONLY brand
-        /// colour in the app. The previous `highlight` (amber) and
-        /// `info` (blue) constants are aliased to `accent` so older
+        /// Primary brand accent — a deep indigo that feels premium
+        /// and distinctive on the visionOS dark canvas without
+        /// landing on the system-blue / chess.com-green / Lichess-
+        /// black defaults everyone else uses. The ONLY brand colour
+        /// in the app.
+        ///
+        /// `highlight` + `info` are aliased to `accent` so older
         /// call sites keep building but the screen reads as a
-        /// single-colour brand identity.
-        static let accent       = Color(red: 0.47, green: 0.62, blue: 0.34)
-        /// Alias kept for source compatibility — same colour as
-        /// `accent`. Don't introduce new visual distinctions on
-        /// this colour; if a callout truly needs to stand out, use
-        /// type weight or material elevation, not a new hue.
+        /// single-colour identity. Don't introduce a new hue for
+        /// emphasis — use type weight or material elevation
+        /// instead.
+        static let accent       = Color(red: 0.40, green: 0.38, blue: 0.82)
         static let highlight    = accent
-        /// Alias — same as `accent`. See `highlight`.
         static let info         = accent
 
         /// Material fill behind cards — wraps `Material` so we can
