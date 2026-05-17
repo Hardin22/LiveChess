@@ -45,15 +45,11 @@ struct SidebarView: View {
             }
 
             // MARK: - Learn Section
+            // Puzzles intentionally NOT a sidebar entry — they launch
+            // from the Home → Daily Puzzle card into the immersive
+            // 3-D board, not a separate 2-D screen. Adding a sidebar
+            // route here would re-introduce the placeholder screen.
             Section("Learn") {
-                NavigationLink(value: AppDestination.puzzles) {
-                    SidebarRowLabel(
-                        title: "Puzzles",
-                        systemImage: "puzzlepiece.fill",
-                        color: .purple
-                    )
-                }
-
                 NavigationLink(value: AppDestination.gameReview) {
                     SidebarRowLabel(
                         title: "Game Review",

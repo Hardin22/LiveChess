@@ -273,13 +273,20 @@ struct ChessSceneView: View {
             Attachment(id: "placement-helper") {
                 PlacementHelperOverlay(controller: placementController)
             }
-            // Companion floating moves panel — shows on the opposite
-            // side of the board from the main HUD. Local matches only;
-            // online / puzzle / review have their own dedicated panels.
+            // Companion floating panel — shows on the opposite side of
+            // the board from the main HUD. The view inside differs by
+            // session flavour: local match → MovesPanelView, puzzle →
+            // PuzzlePanelView (online + review have their own surfaces).
             Attachment(id: "moves-panel") {
-                if let session = appModel.activeSession,
-                   case .local(let coord) = session {
-                    MovesPanelView(coordinator: coord)
+                if let session = appModel.activeSession {
+                    switch session {
+                    case .local(let coord):
+                        MovesPanelView(coordinator: coord)
+                    case .puzzle(let puzzle):
+                        PuzzlePanelView(session: puzzle)
+                    case .online, .review:
+                        EmptyView()
+                    }
                 }
             }
         }

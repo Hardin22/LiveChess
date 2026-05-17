@@ -88,9 +88,24 @@ final class PuzzleSession: MatchSession {
         checkSolved()
     }
 
-    // MARK: - Hint / restart
+    // MARK: - Hint / restart / solution reveal
 
     func showHint() { hintsShown += 1 }
+
+    /// Auto-plays the remaining solution from the current state. Used
+    /// by the HUD's "View solution" button when the user wants to see
+    /// the rest of the line instead of solving it themselves. Marks
+    /// the puzzle as solved at the end so the success badge surfaces.
+    func revealSolution() async {
+        guard status == .solving, solveIndex < solution.count else { return }
+        while solveIndex < solution.count {
+            try? await Task.sleep(for: .milliseconds(550))
+            if status != .solving { return }
+            applyValidated(solution[solveIndex])
+            solveIndex += 1
+        }
+        status = .solved
+    }
 
     /// Source square of the next expected user move; the HUD highlights
     /// it (or the renderer pulses it) when the player asks for a hint.
