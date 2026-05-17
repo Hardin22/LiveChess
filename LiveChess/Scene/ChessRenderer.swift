@@ -38,6 +38,14 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// piece isn't over any legal target.
     private var activeMarkerSquare: Square?
 
+    /// Puzzle-hint overlay (`pulseHintSquare(_:)`). Separate from
+    /// `activeOverlay` so a hint pulse can coexist with the player
+    /// already dragging a piece.
+    private var hintOverlay: ModelEntity?
+    /// Task that fades / removes the hint overlay after its beat.
+    /// Cancelled on re-press so a new hint doesn't clear too early.
+    private var hintTask: Task<Void, Never>?
+
     init() {
         self.rootEntity = Entity()
         self.rootEntity.name = "ChessSceneRoot"
@@ -318,6 +326,39 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
                 duration: 0.10,
                 timingFunction: .easeOut
             )
+        }
+    }
+
+    /// Pulses a gold square overlay over `square` for a short beat,
+    /// then fades out. Used by `PuzzleSession.showHint()` to draw
+    /// the player's eye to the source square of the next expected
+    /// move without spoiling the destination.
+    ///
+    /// Re-presses just refresh the same overlay (the previous
+    /// fade-out task is cancelled) — re-tapping Hint keeps the
+    /// pulse visible without piling up duplicate entities.
+    func pulseHintSquare(_ square: Square) {
+        hintTask?.cancel()
+        hintOverlay?.removeFromParent()
+
+        let overlay = makeActiveOverlay(at: square)
+        rootEntity.addChild(overlay)
+        hintOverlay = overlay
+
+        // Quick pop-in
+        overlay.transform.scale = SIMD3<Float>(0.4, 1.0, 0.4)
+        var grown = overlay.transform
+        grown.scale = SIMD3<Float>(repeating: 1.0)
+        overlay.move(to: grown, relativeTo: rootEntity,
+                     duration: 0.15, timingFunction: .easeOut)
+
+        // Auto-fade after 2 s so the hint doesn't linger over the
+        // square the player is trying to drop into.
+        hintTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            if Task.isCancelled { return }
+            self?.hintOverlay?.removeFromParent()
+            self?.hintOverlay = nil
         }
     }
 

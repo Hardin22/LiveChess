@@ -39,6 +39,10 @@ final class PuzzleSession: MatchSession {
 
     var moveAppliedHandler: (@MainActor (Move) -> Void)?
     var matchResetHandler: (@MainActor () -> Void)?
+    /// Fires when the user presses Hint. Carries the source square
+    /// of the move the puzzle expects next so the renderer can
+    /// pulse it. Set by `ChessSceneView` once at scene-build time.
+    var hintHandler: (@MainActor (Square) -> Void)?
 
     /// Returns `nil` if the puzzle payload is missing the fields the
     /// session needs (FEN + at least one solution move).
@@ -90,7 +94,12 @@ final class PuzzleSession: MatchSession {
 
     // MARK: - Hint / restart / solution reveal
 
-    func showHint() { hintsShown += 1 }
+    func showHint() {
+        hintsShown += 1
+        if let square = hintSourceSquare {
+            hintHandler?(square)
+        }
+    }
 
     /// Auto-plays the remaining solution from the current state. Used
     /// by the HUD's "View solution" button when the user wants to see

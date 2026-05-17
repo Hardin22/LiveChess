@@ -28,7 +28,7 @@ struct PieceCustomizationView: View {
         @Bindable var customization = appModel.pieceCustomization
 
         NavigationStack {
-            HStack(alignment: .top, spacing: Chess.Space.m) {
+            HStack(alignment: .top, spacing: Chess.Space.l) {
                 previewColumn(customization: customization)
                 controlsColumn(customization: customization)
             }
@@ -37,8 +37,10 @@ struct PieceCustomizationView: View {
             .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
+                    // System default tint — reads as "OK / close",
+                    // doesn't compete with the gold/metal piece preview.
                     Button("Done") { dismiss() }
-                        .tint(Chess.Palette.accent)
+                        .buttonStyle(.bordered)
                 }
             }
         }
@@ -46,52 +48,111 @@ struct PieceCustomizationView: View {
 
     // MARK: - Two-column layout
 
-    /// Left rail — preview piece pinned at the top of the sheet so it
-    /// stays visible while the user scrolls through material / tint /
-    /// board controls on the right. Includes the side + piece-kind
-    /// toggles inline beneath the preview so changing what you're
-    /// looking at doesn't require leaving the rail.
+    /// Left rail — preview piece pinned in a dark "stage" card so the
+    /// material's highlights and shadows read against a controlled
+    /// background, not the busy passthrough room. Side + piece-kind
+    /// pickers sit on a slim segmented strip beneath. Reset is a
+    /// subtle text link in the corner — secondary action, not a
+    /// red banner.
     @ViewBuilder
     private func previewColumn(customization: PieceCustomization) -> some View {
         VStack(alignment: .leading, spacing: Chess.Space.s) {
-            ChessCard(.hero) {
-                VStack(spacing: Chess.Space.s) {
-                    PiecePreviewView(
-                        material: customization.current,
-                        previewSide: $previewSide,
-                        previewKind: $previewKind
-                    )
-                    .frame(height: 220)
-                    previewControls
+            previewStage(customization: customization)
+            previewControlsBar
+            HStack {
+                Spacer()
+                Button {
+                    customization.resetToDefault()
+                } label: {
+                    Label("Reset", systemImage: "arrow.counterclockwise")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
             }
-            Button(role: .destructive) {
-                customization.resetToDefault()
-            } label: {
-                Label("Reset to default", systemImage: "arrow.counterclockwise")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
+            .padding(.top, Chess.Space.xxs)
         }
         .frame(width: 320)
     }
 
+    /// Stage card holding the 3-D preview. The dark radial backdrop
+    /// makes metals/glass/pearl read correctly — passthrough material
+    /// behind glass was washing out the highlights.
+    @ViewBuilder
+    private func previewStage(customization: PieceCustomization) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: Chess.Radius.card,
+                             style: .continuous)
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.black.opacity(0.65),
+                            Color.black.opacity(0.25)
+                        ],
+                        center: .center, startRadius: 30, endRadius: 280
+                    )
+                )
+            PiecePreviewView(
+                material: customization.current,
+                previewSide: $previewSide,
+                previewKind: $previewKind
+            )
+            .padding(Chess.Space.s)
+        }
+        .frame(height: 340)
+        .overlay(
+            RoundedRectangle(cornerRadius: Chess.Radius.card,
+                             style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+        )
+    }
+
+    /// Slim segmented bar beneath the stage — side toggle on the left,
+    /// piece-kind menu on the right. Single row, never wraps.
+    private var previewControlsBar: some View {
+        HStack(spacing: Chess.Space.s) {
+            Picker("", selection: $previewSide) {
+                Text("White").tag(Side.white)
+                Text("Black").tag(Side.black)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+
+            Menu {
+                ForEach(PieceKind.allCases, id: \.self) { kind in
+                    Button(displayName(for: kind)) { previewKind = kind }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(displayName(for: previewKind))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.caption)
+                }
+                .frame(width: 92)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+        }
+    }
+
     /// Right column — scrollable stack of grouped settings cards.
-    /// Material card includes the wood-species sub-controls only when
-    /// the wood preset is active so the section doesn't visually
-    /// "split" between the preview and an empty wood row.
+    /// Material card holds a VERTICAL LIST of preset rows (no more
+    /// cramped 3-col grid wrapping characters) and folds in wood
+    /// species under a divider when Wood is active.
     @ViewBuilder
     private func controlsColumn(customization: PieceCustomization) -> some View {
         ScrollView {
             VStack(spacing: Chess.Space.m) {
                 ChessCard(.standard) {
                     VStack(alignment: .leading, spacing: Chess.Space.s) {
-                        ChessSectionHeader("Material",
-                                           subtitle: "Choose a piece preset.")
+                        ChessSectionHeader("Material")
                         presetSection(customization: customization)
                         if customization.current.preset == .wood {
-                            Divider().padding(.top, 6)
+                            Divider().padding(.top, Chess.Space.xs)
                             pieceWoodSection(customization: customization)
                         }
                     }
@@ -99,16 +160,14 @@ struct PieceCustomizationView: View {
 
                 ChessCard(.standard) {
                     VStack(alignment: .leading, spacing: Chess.Space.s) {
-                        ChessSectionHeader("Tint",
-                                           subtitle: "Per-side colour adjustments.")
+                        ChessSectionHeader("Tint")
                         colorSection(customization: customization)
                     }
                 }
 
                 ChessCard(.standard) {
                     VStack(alignment: .leading, spacing: Chess.Space.s) {
-                        ChessSectionHeader("Board",
-                                           subtitle: "Squares and frame palette.")
+                        ChessSectionHeader("Board")
                         boardSection(customization: customization)
                     }
                 }
@@ -116,7 +175,7 @@ struct PieceCustomizationView: View {
             .padding(.bottom, Chess.Space.l)
         }
         .scrollIndicators(.hidden)
-        .frame(maxWidth: 480)
+        .frame(maxWidth: 460)
     }
 
     // MARK: - Preview controls (which side / which piece to preview)
@@ -164,24 +223,19 @@ struct PieceCustomizationView: View {
 
     @ViewBuilder
     private func presetSection(customization: PieceCustomization) -> some View {
-        // The card wrapping this section already carries the
-        // "Material" header — we don't repeat it here. Three-column
-        // grid with brand-accent selection so the chips read as a
-        // single coherent control rather than separate floating pills.
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(),
-                                               spacing: Chess.Space.xs),
-                           count: 3),
-            spacing: Chess.Space.xs
-        ) {
+        // Vertical settings-list (like Apple Settings rows) instead
+        // of a cramped 3-col grid. Each row owns a full line so the
+        // text never wraps and the visual swatch on the left gives
+        // an at-a-glance preview of the material.
+        VStack(spacing: 6) {
             ForEach(PieceMaterial.Preset.allCases) { preset in
-                presetChip(preset, customization: customization)
+                presetRow(preset, customization: customization)
             }
         }
     }
 
     @ViewBuilder
-    private func presetChip(
+    private func presetRow(
         _ preset: PieceMaterial.Preset,
         customization: PieceCustomization
     ) -> some View {
@@ -189,30 +243,135 @@ struct PieceCustomizationView: View {
         Button {
             customization.selectPreset(preset)
         } label: {
-            Text(preset.displayName)
-                .font(.callout.weight(isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? .white : .primary)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .padding(.horizontal, Chess.Space.s)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: Chess.Radius.chip,
-                                     style: .continuous)
-                        .fill(isSelected
-                              ? AnyShapeStyle(Chess.Palette.accent)
-                              : AnyShapeStyle(.thinMaterial))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Chess.Radius.chip,
-                                     style: .continuous)
-                        .strokeBorder(isSelected
-                                      ? Color.clear
-                                      : .white.opacity(0.10),
-                                      lineWidth: 0.5)
-                )
+            HStack(spacing: Chess.Space.s) {
+                MaterialSwatch(preset: preset)
+                    .frame(width: 28, height: 28)
+                Text(preset.displayName)
+                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .padding(.horizontal, Chess.Space.s)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Chess.Radius.row,
+                                 style: .continuous)
+                    .fill(isSelected
+                          ? AnyShapeStyle(Color.white.opacity(0.10))
+                          : AnyShapeStyle(Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.row,
+                                 style: .continuous)
+                    .strokeBorder(isSelected
+                                  ? Color.white.opacity(0.25)
+                                  : Color.white.opacity(0.06),
+                                  lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+    }
+}
+
+// MARK: - Material swatch
+
+/// Tiny visual preview of a `PieceMaterial.Preset`, shown to the left
+/// of each row in the material list. Uses solid / gradient fills that
+/// approximate what the material will look like on the 3-D piece, so
+/// the row is scannable at a glance instead of label-only.
+private struct MaterialSwatch: View {
+    let preset: PieceMaterial.Preset
+
+    var body: some View {
+        Circle()
+            .fill(fill)
+            .overlay(
+                Circle().strokeBorder(.white.opacity(0.25),
+                                      lineWidth: 0.5)
+            )
+            .overlay(
+                // Subtle highlight crescent — sells the "sphere"
+                // illusion so each chip reads as a polished material
+                // sample rather than a flat colour blob.
+                Circle()
+                    .trim(from: 0.55, to: 0.85)
+                    .stroke(.white.opacity(0.45), lineWidth: 1.2)
+                    .padding(2)
+            )
+    }
+
+    private var fill: AnyShapeStyle {
+        switch preset {
+        case .plasticMatte:
+            return AnyShapeStyle(Color(red: 0.92, green: 0.92, blue: 0.92))
+        case .plasticGlossy:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color.white, Color(white: 0.78)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .lacquered:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.78, green: 0.16, blue: 0.18),
+                         Color(red: 0.45, green: 0.05, blue: 0.07)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .polishedMetal:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.95), Color(white: 0.55)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .brushedMetal:
+            return AnyShapeStyle(Color(white: 0.70))
+        case .ceramic:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.97, green: 0.96, blue: 0.93),
+                         Color(red: 0.85, green: 0.83, blue: 0.78)],
+                startPoint: .top, endPoint: .bottom
+            ))
+        case .pearl:
+            return AnyShapeStyle(AngularGradient(
+                colors: [.pink.opacity(0.6), .cyan.opacity(0.4),
+                         .white, .yellow.opacity(0.5), .pink.opacity(0.6)],
+                center: .center
+            ))
+        case .glass:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color.cyan.opacity(0.35),
+                         Color.blue.opacity(0.45)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .wood:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.55, green: 0.36, blue: 0.18),
+                         Color(red: 0.32, green: 0.18, blue: 0.08)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .marble:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.96), Color(white: 0.78)],
+                startPoint: .top, endPoint: .bottom
+            ))
+        }
+    }
+}
+
+// Wrapper to put `MaterialSwatch` next to the type above. The struct
+// `PieceCustomizationView` continues below — Swift allows reopening
+// via this extension.
+extension PieceCustomizationView {
+    /// Empty hook — kept so the closing `}` of the main struct above
+    /// doesn't change the surrounding section signatures.
+    @ViewBuilder
+    private func _materialSectionMarker() -> some View {
+        EmptyView()
     }
 
     // MARK: - Color pickers

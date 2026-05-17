@@ -114,6 +114,17 @@ struct ChessSceneView: View {
                 )
             }
 
+            // Puzzle-specific renderer hook: pulse the source square
+            // of the next expected move when the player asks for a
+            // hint. Wired here once at scene build (PuzzleSession's
+            // hintHandler is set to a closure that defers to the
+            // renderer's pulseHintSquare).
+            if case .puzzle(let puzzle) = active {
+                puzzle.hintHandler = { [weak renderer] square in
+                    renderer?.pulseHintSquare(square)
+                }
+            }
+
             // Board orientation: rotate the whole root 180° around Y when
             // the human is playing Black, so the user sits on Black's
             // side and sees their own pieces at the bottom of the board.
@@ -209,17 +220,20 @@ struct ChessSceneView: View {
                 }
                 renderer.rootEntity.addChild(hud)
             }
-            // Companion moves panel — mirrored to the OPPOSITE side
-            // of the board from the action HUD so the chess set sits
-            // centered between them.
+            // Companion moves panel — sits on the OPPOSITE side of
+            // the board from the action HUD so the chess set is
+            // centered between the two surfaces. Slightly raised
+            // (+12 cm Y, vs the HUD's 18 cm) so it floats clearly
+            // separate even if the user turns their head and both
+            // panels enter the same field of view.
             if let panel = attachments.entity(for: "moves-panel") {
                 if needsBlackPerspective {
-                    panel.position = SIMD3<Float>(hudLocalX, 0.18, 0)
+                    panel.position = SIMD3<Float>(hudLocalX, 0.30, 0)
                     panel.transform.rotation = simd_quatf(
                         angle: .pi, axis: SIMD3<Float>(0, 1, 0)
                     ) * baseTilt
                 } else {
-                    panel.position = SIMD3<Float>(-hudLocalX, 0.18, 0)
+                    panel.position = SIMD3<Float>(-hudLocalX, 0.30, 0)
                     panel.transform.rotation = baseTilt
                 }
                 renderer.rootEntity.addChild(panel)
