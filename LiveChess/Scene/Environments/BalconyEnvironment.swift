@@ -93,14 +93,76 @@ enum BalconyEnvironment: EnvironmentScene {
         await Self.addSkybox(into: content)
 
         // Trust the .blend's authored railing materials (steel posts
-        // + glass panels with PBR textures). The previous runtime
-        // override painted EVERY entity named *Railing* with one
-        // glass material, which destroyed the steel post / handrail
-        // textures and left the panels reading as dark blobs instead
-        // of glass. The source materials look correct — let them be.
+        // + glass panels with PBR textures).
         addDaylightLighting(into: content)
 
+        // DEBUG: dump where each Railing entity actually lands in
+        // world coords after the env transform. User has reported
+        // "can't see the railings" multiple times even though the
+        // geometry is in the USDZ — print exact world positions so
+        // we know whether they're out of view, below the floor,
+        // or rendering invisibly.
+        Self.logRailingPositions(in: env)
+        // Backup measure: spawn a small bright marker at each
+        // Railing root's world position so they're impossible to
+        // miss in the immersive scene. If the markers show up but
+        // the actual railing meshes don't, the issue is material
+        // not position.
+        Self.dropRailingMarkers(in: env, into: content)
+
         return EnvironmentMount(boardPosition: boardPos)
+    }
+
+    // MARK: - Debug helpers
+
+    /// Walk the loaded env subtree and log the world position of
+    /// every entity whose name contains "railing". Helps diagnose
+    /// "I can't see the railings" reports — if the log shows them
+    /// at sane world coords (X ~ ±1.5, Y ~ 0..1.5, Z ~ -0.5..-2.0)
+    /// then it's a POV problem; if it shows them at (0, 0, 0) or
+    /// hundreds of metres away, it's a transform problem.
+    private static func logRailingPositions(in root: Entity) {
+        print("=== balcony railing world positions ===")
+        var stack: [Entity] = [root]
+        var count = 0
+        while let e = stack.popLast() {
+            if e.name.lowercased().contains("railing") {
+                let p = e.position(relativeTo: nil)
+                let bounds = e.visualBounds(relativeTo: nil)
+                print("  [\(e.name)] pos=\(p)  bounds.center=\(bounds.center)  bounds.extents=\(bounds.extents)")
+                count += 1
+            }
+            stack.append(contentsOf: e.children)
+        }
+        print("=== \(count) railing entities ===")
+    }
+
+    /// Drop a small bright marker sphere at each Railing entity's
+    /// world position so they're unmissable in the immersive scene.
+    /// If markers show up but the railing meshes don't, the
+    /// materials are the problem. If markers DON'T show up either,
+    /// the transform is the problem.
+    private static func dropRailingMarkers(
+        in root: Entity,
+        into content: any RealityViewContentProtocol
+    ) {
+        var stack: [Entity] = [root]
+        var markerMat = UnlitMaterial(color: .magenta)
+        markerMat.color = .init(tint: .magenta)
+        while let e = stack.popLast() {
+            if e.name.lowercased().contains("railing"),
+               e.children.isEmpty == false || (e as? ModelEntity)?.model != nil {
+                let pos = e.position(relativeTo: nil)
+                let marker = ModelEntity(
+                    mesh: .generateSphere(radius: 0.10),
+                    materials: [markerMat]
+                )
+                marker.name = "DEBUG_RailingMarker"
+                marker.position = pos
+                content.add(marker)
+            }
+            stack.append(contentsOf: e.children)
+        }
     }
 
     // MARK: - Skybox / IBL
