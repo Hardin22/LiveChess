@@ -74,10 +74,15 @@ struct PieceCustomizationView: View {
                     .padding(.top, Chess.Space.s)
                 }
                 .padding(Chess.Space.l)
-                .frame(maxWidth: 640)
+                .frame(maxWidth: 1080)
             }
             .scrollIndicators(.hidden)
-            .frame(minWidth: 720, minHeight: 720)
+            // Match the home WindowGroup's footprint so the sheet
+            // doesn't feel like a cramped iPad-sized popup over the
+            // full-width app. visionOS will respect minWidth /
+            // minHeight when sizing the sheet's hosting window.
+            .frame(minWidth: 1280, idealWidth: 1280,
+                   minHeight: 760, idealHeight: 800)
             .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -97,7 +102,7 @@ struct PieceCustomizationView: View {
         ChessCard(.hero) {
             HStack(alignment: .center, spacing: Chess.Space.m) {
                 previewStage(customization: customization)
-                    .frame(width: 200, height: 220)
+                    .frame(width: 280, height: 300)
                 VStack(alignment: .leading, spacing: Chess.Space.s) {
                     Text("Preview")
                         .font(Chess.Typography.eyebrow())
@@ -407,7 +412,7 @@ extension PieceCustomizationView {
             HStack {
                 Spacer()
                 BoardPreviewView(material: customization.current)
-                    .frame(width: 180, height: 180)
+                    .frame(width: 260, height: 260)
                 Spacer()
             }
 
