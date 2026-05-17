@@ -17,6 +17,11 @@ struct MoveAnalysis: Identifiable, Sendable, Hashable {
     let playedScoreCp: Int             // eval after the player's move, in mover's POV
     let bestScoreCp: Int               // eval of the best move at this position, mover's POV
     let centipawnLoss: Int             // max(0, bestScoreCp - playedScoreCp), clamp 1000
+    /// Δwin% between the best and played move (0…100). This is what
+    /// drives the quality classification — raw cp loss over-flags
+    /// moves in already-decisive positions and under-flags moves
+    /// near 0.0, the win% sigmoid corrects for that.
+    let winPercentLoss: Double
     let topLines: [AnalysisLine]       // up to MultiPV candidate moves at the prior position
     let quality: MoveQuality
 }
@@ -39,11 +44,12 @@ struct AnalysisLine: Sendable, Hashable {
 enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
     case best          // engine's top pick
     case great         // best when alternatives are clearly worse (only-move)
-    case excellent     // CP loss < 30
-    case good          // CP loss 30..<100
-    case inaccuracy    // CP loss 100..<200
-    case mistake       // CP loss 200..<500
-    case blunder       // CP loss >= 500
+    case excellent     // Δwin% < 2
+    case good          // Δwin% 2..<5
+    case inaccuracy    // Δwin% 5..<10
+    case mistake       // Δwin% 10..<20
+    case blunder       // Δwin% >= 20
+    case missedWin     // had ≥+200cp advantage, played a move that drops to ~0 or worse
 
     var displayName: String {
         switch self {
@@ -54,6 +60,7 @@ enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
         case .inaccuracy: return "Inaccuracy"
         case .mistake:    return "Mistake"
         case .blunder:    return "Blunder"
+        case .missedWin:  return "Missed Win"
         }
     }
 
@@ -67,6 +74,7 @@ enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
         case .inaccuracy: return "?!"
         case .mistake:    return "?"
         case .blunder:    return "??"
+        case .missedWin:  return "✕"
         }
     }
 }
@@ -80,15 +88,16 @@ struct GameAnalysisResult: Sendable {
         moves.filter { $0.mover == side && $0.quality == q }.count
     }
 
-    /// Per-Lichess-style accuracy: 100 - mean(CPL clamped to 1000) / 10.
-    /// A rough approximation — not the official Lichess formula but
-    /// produces a comparable 0–100 scale.
+    /// Accuracy in chess.com's win%-loss family: `100 - mean(Δwin%)`.
+    /// Same scale as their displayed accuracy (0–100, higher better).
+    /// A pure-best player scores 100; consistent blunders pull it
+    /// down to the 60s. Lichess uses a different sigmoid weighting
+    /// but the order-of-magnitude matches.
     func accuracy(for side: Side) -> Double {
-        let losses = moves.filter { $0.mover == side }.map { Double($0.centipawnLoss) }
+        let losses = moves.filter { $0.mover == side }.map(\.winPercentLoss)
         guard !losses.isEmpty else { return 100 }
         let mean = losses.reduce(0, +) / Double(losses.count)
-        let raw = 100.0 - (mean / 10.0)
-        return max(0, min(100, raw))
+        return max(0, min(100, 100.0 - mean))
     }
 }
 
@@ -162,10 +171,17 @@ actor GameAnalyzer {
                         }
 
                         let cpLoss = max(0, min(1000, bestScore - playedScore))
+                        let winLoss = max(
+                            0.0,
+                            Self.winPercent(fromCp: bestScore)
+                              - Self.winPercent(fromCp: playedScore)
+                        )
                         let quality = Self.classify(
-                            cpLoss: cpLoss,
                             played: playedUCI,
                             best: bestLine?.uci,
+                            bestScoreCp: bestScore,
+                            playedScoreCp: playedScore,
+                            winPercentLoss: winLoss,
                             lines: lines
                         )
 
@@ -177,6 +193,7 @@ actor GameAnalyzer {
                             playedScoreCp: playedScore,
                             bestScoreCp: bestScore,
                             centipawnLoss: cpLoss,
+                            winPercentLoss: winLoss,
                             topLines: lines,
                             quality: quality
                         )
@@ -292,28 +309,64 @@ actor GameAnalyzer {
 
     // MARK: - Classification
 
-    /// CP-loss based classification with an only-move boost to `great`.
+    /// Win%-loss based classification matching chess.com's family of
+    /// buckets. Uses `winPercent(fromCp:)` to map eval to expected
+    /// score so a 200cp swing at +15 (still totally winning) doesn't
+    /// flag as a "mistake", and a 50cp swing from 0.0 to -0.5 (now
+    /// clearly worse) doesn't get under-counted.
+    ///
+    /// Priority order:
+    ///   * `missedWin` — was ≥+200cp ahead, played a move that drops
+    ///     to ≤+50cp. Beats `mistake`/`blunder` because losing a win
+    ///     is qualitatively different from a positional slip.
+    ///   * `great` — top engine pick AND second-best is ≥10 win%
+    ///     worse (only-good-move tactical find).
+    ///   * `best` — matches engine's top pick.
+    ///   * Δwin% buckets: <2 excellent / <5 good / <10 inaccuracy /
+    ///     <20 mistake / ≥20 blunder.
     nonisolated static func classify(
-        cpLoss: Int, played: String, best: String?, lines: [AnalysisLine]
+        played: String,
+        best: String?,
+        bestScoreCp: Int,
+        playedScoreCp: Int,
+        winPercentLoss: Double,
+        lines: [AnalysisLine]
     ) -> MoveQuality {
-        let isBest = (played == best)
+        // Missed-win check first — if the player threw away a clearly
+        // winning advantage, the move quality is dominated by that
+        // fact regardless of how badly the cp number swung.
+        if bestScoreCp >= 200, playedScoreCp <= 50 {
+            return .missedWin
+        }
 
-        // "Great" = the move played was the best AND the alternative
-        // was significantly worse (200cp gap between top1 and top2).
-        // Catches only-good-move tactical finds without the full
-        // sacrifice-detection of "brilliant".
+        let isBest = (played == best)
         if isBest, lines.count >= 2 {
-            let gap = lines[0].scoreCp - lines[1].scoreCp
-            if gap >= 200 { return .great }
+            let topWin = winPercent(fromCp: lines[0].scoreCp)
+            let secondWin = winPercent(fromCp: lines[1].scoreCp)
+            if (topWin - secondWin) >= 10 { return .great }
         }
         if isBest { return .best }
-        switch cpLoss {
-        case ..<30:   return .excellent
-        case ..<100:  return .good
-        case ..<200:  return .inaccuracy
-        case ..<500:  return .mistake
+
+        switch winPercentLoss {
+        case ..<2:    return .excellent
+        case ..<5:    return .good
+        case ..<10:   return .inaccuracy
+        case ..<20:   return .mistake
         default:      return .blunder
         }
+    }
+
+    /// Maps a centipawn score to expected win percentage [0…100] via
+    /// `50 + 50·tanh(cp/400)`. Tanh saturates near ±100 so deep
+    /// advantages (already winning / already losing) don't punish
+    /// further cp swings — matches chess.com's behaviour where Δwin%
+    /// drives the classification, not raw cp loss.
+    ///
+    /// Mate scores get clamped to ±99.95% via the large cp values
+    /// returned by `mateToCp` (sigmoid saturates well before 10 000).
+    nonisolated static func winPercent(fromCp cp: Int) -> Double {
+        let pawns = Double(cp) / 400.0
+        return 50.0 + 50.0 * tanh(pawns)
     }
 
     /// Map mate-in-N to a large centipawn so comparisons against
