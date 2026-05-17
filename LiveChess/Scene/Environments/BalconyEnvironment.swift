@@ -124,19 +124,17 @@ enum BalconyEnvironment: EnvironmentScene {
         }
     }
 
-    /// Build a proper chrome + glass perimeter railing around the
-    /// actual `Balcony_Floor` bounds. Three sides only (front +
-    /// left + right — back is the wooden wall with the sconce,
-    /// real balconies don't have a railing flush with their
-    /// interior wall). 1 m tall, posts every ~1.5 m, with a
-    /// continuous top + bottom chrome rail and tinted glass
-    /// panels filling the gaps.
+    /// Build a chrome + glass railing ONLY along the front edge
+    /// of the balcony (the side facing the sea). Reference photo
+    /// has nothing on the left + right edges — left has the
+    /// wooden wall + plant + lantern, right has a planter — and
+    /// nothing wraps the back wall either.
     private static func addPerimeterRailing(
         around env: Entity,
         into content: any RealityViewContentProtocol
     ) {
         // Find the floor and read its world bounds to figure out
-        // where the perimeter actually is. Fallback to a sane
+        // where the front edge actually is. Fallback to a sane
         // default if the floor entity can't be found.
         let floor = env.findEntity(named: "Balcony_Floor")
         let bounds: BoundingBox = floor.map { $0.visualBounds(relativeTo: nil) }
@@ -145,25 +143,17 @@ enum BalconyEnvironment: EnvironmentScene {
                 max: SIMD3<Float>( 2.5, 0,  0.0)
             )
         let minX = bounds.min.x, maxX = bounds.max.x
-        let minZ = bounds.min.z, maxZ = bounds.max.z
+        let minZ = bounds.min.z
         let floorY = bounds.max.y
 
         let railingRoot = Entity()
         railingRoot.name = "ProceduralRailing"
         content.add(railingRoot)
 
-        // Three sides: front (min Z, toward sea), left (min X),
-        // right (max X). Skip the back (max Z) since that's the
-        // wall side.
+        // Front (sea-facing) only — matches the reference photo.
         addRailingRun(start: SIMD3<Float>(minX, floorY, minZ),
                       end:   SIMD3<Float>(maxX, floorY, minZ),
-                      parent: railingRoot)   // front
-        addRailingRun(start: SIMD3<Float>(minX, floorY, minZ),
-                      end:   SIMD3<Float>(minX, floorY, maxZ),
-                      parent: railingRoot)   // left
-        addRailingRun(start: SIMD3<Float>(maxX, floorY, minZ),
-                      end:   SIMD3<Float>(maxX, floorY, maxZ),
-                      parent: railingRoot)   // right
+                      parent: railingRoot)
     }
 
     /// One straight run of railing between two world-space points.
