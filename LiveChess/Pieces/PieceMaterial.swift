@@ -192,14 +192,30 @@ struct PieceMaterial: Equatable, Sendable, Codable {
 
     /// Default applied on first launch (and whenever the user hits
     /// "Reset to default"). Glossy Plastic with sober warm-white +
-    /// charcoal pair, plus the legacy maple/walnut/mahogany board
-    /// palette — feels like a freshly-bought tournament set.
+    /// Tournament-classic default — glossy plastic pieces on a
+    /// **wood** board (oak light + walnut dark squares, walnut frame).
+    /// Tapping "Reset to default" snaps every slot back to exactly
+    /// this combination so the user always has a known-good baseline
+    /// to return to after experimenting with metals / glass / marble.
+    ///
+    /// The wood board (instead of the older flat-colour matte board)
+    /// reads as a real tournament set the moment the immersive
+    /// space opens — same first impression a chess.com user gets
+    /// from the default 'Wood' board.
     static let `default`: PieceMaterial = {
         let pair = Preset.plasticGlossy.defaultPair
         return PieceMaterial(
             preset: .plasticGlossy,
             whiteColor: pair.white,
-            blackColor: pair.black
+            blackColor: pair.black,
+            lightSquareColor: defaultLightSquareColor,
+            darkSquareColor: defaultDarkSquareColor,
+            frameColor: defaultFrameColor,
+            squareMaterial: .wood,
+            frameMaterial: .wood,
+            lightSquareWood: .oak,
+            darkSquareWood: .walnut,
+            frameWood: .walnut
         )
     }()
 }
