@@ -102,7 +102,10 @@ enum BalconyEnvironment: EnvironmentScene {
         // always sees a clean balcony fence between themselves
         // and the sea.
         Self.hideOriginalRailings(in: env)
-        Self.hideOriginalPlants(in: env)
+        // Note: don't hide plants anymore — the new balcony.usdz only
+        // has the FirTree (repositioned to the front-right corner in
+        // Blender) and the lantern; the messy 131-plant cluster was
+        // deleted in fix_balcony_layout.py before export.
         // MUST run before we add procedural chrome/glass so we don't
         // strip metallic from the railing posts we're about to mount.
         Self.sanitizeBlendMaterials(in: env)
