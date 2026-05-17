@@ -32,6 +32,12 @@ struct PieceCustomizationView: View {
                 previewColumn(customization: customization)
                 controlsColumn(customization: customization)
             }
+            .frame(
+                minWidth: 980,
+                idealWidth: 1080,
+                minHeight: 740,
+                idealHeight: 760
+            )
             .padding(Chess.Space.l)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle("Pieces & Board")
@@ -175,7 +181,7 @@ struct PieceCustomizationView: View {
             .padding(.bottom, Chess.Space.l)
         }
         .scrollIndicators(.hidden)
-        .frame(maxWidth: 460)
+        .frame(maxWidth: 580)
     }
 
     // MARK: - Preview controls (which side / which piece to preview)
@@ -535,18 +541,20 @@ extension PieceCustomizationView {
                 } label: {
                     Text(wood.displayName)
                         .font(.caption.weight(isSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
                         .background {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(isSelected
-                                      ? AnyShapeStyle(Color.accentColor.opacity(0.20))
+                                      ? AnyShapeStyle(Color.white.opacity(0.10))
                                       : AnyShapeStyle(Color.gray.opacity(0.10)))
                         }
                         .overlay {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.20),
-                                        lineWidth: isSelected ? 1.2 : 0.5)
+                                .stroke(isSelected ? Color.white.opacity(0.25) : Color.secondary.opacity(0.20),
+                                        lineWidth: isSelected ? 1.0 : 0.5)
                         }
                 }
                 .buttonStyle(.plain)
@@ -564,6 +572,10 @@ extension PieceCustomizationView {
         selected: BoardMaterial,
         onPick: @escaping (BoardMaterial) -> Void
     ) -> some View {
+        // Each chip is a fixed-width pill so its label always sits on
+        // one line — the earlier flexible HStack squeezed the labels
+        // until they wrapped character-by-character ('P o l i s h e d'
+        // in the user's screenshot).
         HStack(spacing: 8) {
             ForEach(BoardMaterial.allCases) { material in
                 let isSelected = material == selected
@@ -577,19 +589,21 @@ extension PieceCustomizationView {
                         }
                         Text(material.displayName)
                             .font(.callout.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .background {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(isSelected
-                                  ? AnyShapeStyle(Color.accentColor.opacity(0.20))
+                                  ? AnyShapeStyle(Color.white.opacity(0.10))
                                   : AnyShapeStyle(Color.gray.opacity(0.12)))
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.25),
-                                    lineWidth: isSelected ? 1.5 : 0.5)
+                            .stroke(isSelected ? Color.white.opacity(0.25) : Color.secondary.opacity(0.25),
+                                    lineWidth: isSelected ? 1.0 : 0.5)
                     }
                 }
                 .buttonStyle(.plain)
