@@ -102,7 +102,9 @@ enum BalconyEnvironment: EnvironmentScene {
         // always sees a clean balcony fence between themselves
         // and the sea.
         Self.hideOriginalRailings(in: env)
-        Self.replaceWoodWallMaterial(in: env)
+        // MUST run before we add procedural chrome/glass so we don't
+        // strip metallic from the railing posts we're about to mount.
+        Self.sanitizeBlendMaterials(in: env)
         Self.addFloorSkirt(around: env, into: content)
         Self.addPerimeterRailing(around: env, into: content)
 
@@ -339,50 +341,63 @@ enum BalconyEnvironment: EnvironmentScene {
         return m
     }
 
-    // MARK: - Wood wall material override
+    // MARK: - Material sanitizer
 
-    /// The wooden plank wall in the .blend ships with a 4K texture
-    /// set that was downscaled + JPG-re-encoded by our optimizer.
-    /// On the device it composites as a splotchy chrome-ish surface
-    /// (the user saw "fake mirror reflections" on the planks). Swap
-    /// the wall's material for a clean warm-walnut PBR so it reads
-    /// as honest wood instead of a corrupted reflective panel.
-    private static func replaceWoodWallMaterial(in root: Entity) {
-        var wood = PhysicallyBasedMaterial()
-        // Warm walnut tone — sits between the chair brown and the
-        // floor stone, makes the wall feel like the obvious "back"
-        // of the balcony.
-        wood.baseColor = .init(
-            tint: .init(red: 0.38, green: 0.24, blue: 0.16, alpha: 1.0)
-        )
-        // Wood is matte-ish; a touch of sheen keeps it from reading flat.
-        wood.roughness = .init(floatLiteral: 0.72)
-        wood.metallic = .init(floatLiteral: 0.0)
-        // Faint clearcoat = subtle varnish highlight along the planks
-        // when the sun catches them, without the chrome blowout.
-        wood.clearcoat = .init(floatLiteral: 0.20)
-        wood.clearcoatRoughness = .init(floatLiteral: 0.55)
-
-        var hits = 0
+    /// The .blend's textures were downscaled + JPG re-encoded by our
+    /// optimizer. That pass mangled the **metallic** and **normal**
+    /// maps in particular — on device every wood plank + chair panel
+    /// composites as splotchy chrome with fake mirror reflections of
+    /// the skybox (clearly visible on the wall and the chair).
+    ///
+    /// Walk every ModelEntity under the env and rebuild each material
+    /// from scratch: keep only the baseColor (tint + texture), force
+    /// metallic to 0, give it a believable wood-ish roughness, and
+    /// drop the corrupted normal / clearcoat maps. The result reads
+    /// as plain matte surfaces with their original brown colour, no
+    /// chrome blowout.
+    ///
+    /// The procedural chrome / glass railing we mount AFTER this
+    /// call is unaffected because we build those entities fresh with
+    /// our own material.
+    private static func sanitizeBlendMaterials(in root: Entity) {
+        var touched = 0
         var stack: [Entity] = [root]
         while let e = stack.popLast() {
-            let n = e.name.lowercased()
-            // Match the .blend's wall mesh names without snagging
-            // the floor's wall-tile texture entities (which use
-            // "balcony_floor" / "tile").
-            let isWall = (n.contains("wall") || n.contains("plank")
-                          || n.contains("wood")) && !n.contains("floor")
-            if isWall, let model = e as? ModelEntity {
-                let count = model.model?.materials.count ?? 1
-                model.model?.materials = Array(
-                    repeating: wood as any RealityKit.Material,
-                    count: max(count, 1)
-                )
-                hits += 1
-            }
             stack.append(contentsOf: e.children)
+            guard let model = e as? ModelEntity,
+                  let comp = model.model else { continue }
+            let cleaned: [any RealityKit.Material] =
+                comp.materials.map { mat -> any RealityKit.Material in
+                    var clean = PhysicallyBasedMaterial()
+                    if let pbr = mat as? PhysicallyBasedMaterial {
+                        // Preserve baseColor texture + tint — that's
+                        // the only channel that survived the optimizer
+                        // intact for most surfaces.
+                        clean.baseColor = pbr.baseColor
+                    } else if let simple = mat as? SimpleMaterial {
+                        clean.baseColor = .init(
+                            tint: simple.color.tint,
+                            texture: simple.color.texture
+                        )
+                    } else {
+                        // Unknown material type — fall back to a
+                        // neutral warm brown so the surface still
+                        // reads as "wood-ish balcony decor".
+                        clean.baseColor = .init(
+                            tint: .init(red: 0.40, green: 0.27, blue: 0.18,
+                                        alpha: 1.0)
+                        )
+                    }
+                    clean.metallic = .init(floatLiteral: 0.0)
+                    clean.roughness = .init(floatLiteral: 0.72)
+                    // No clearcoat, no normal map — both were the
+                    // sources of the "chrome reflection" artifact.
+                    return clean
+                }
+            model.model?.materials = cleaned
+            touched += 1
         }
-        print("=== wood wall material override: \(hits) entities ===")
+        print("=== sanitized materials on \(touched) ModelEntities ===")
     }
 
     // MARK: - Skybox / IBL
