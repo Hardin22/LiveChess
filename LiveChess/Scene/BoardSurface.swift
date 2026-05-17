@@ -27,7 +27,90 @@ enum BoardSurface {
         let squares = makeSquares()
         root.addChild(squares)
 
+        let coords = makeCoordinateLabels()
+        root.addChild(coords)
+
         return root
+    }
+
+    // MARK: - Coordinate labels (a-h on the front edge, 1-8 on the left edge)
+
+    /// Builds the tournament-board file (a-h) + rank (1-8) labels
+    /// engraved-style into the visible frame around the playing area.
+    /// Each glyph is a small extruded 3-D text entity painted with a
+    /// dim metallic material so it reads as etched-in-frame rather
+    /// than a label sticker. Sits ~0.5 mm proud of the frame top so
+    /// the camera always catches it from above.
+    private static func makeCoordinateLabels() -> Entity {
+        let group = Entity()
+        group.name = "BoardCoordinates"
+
+        let square = SceneMetrics.squareSize
+        let half = SceneMetrics.boardPlayableSide / 2
+        // Where the frame surface starts beyond the playable area;
+        // we put labels midway between the playable edge and the
+        // outer board edge so they sit centred on the frame.
+        let frameMid = half + SceneMetrics.boardFrameWidth / 2
+        let labelY: Float = SceneMetrics.boardSurfaceY + 0.0008
+
+        var labelMaterial = PhysicallyBasedMaterial()
+        labelMaterial.baseColor = .init(tint: UIColor(white: 0.10, alpha: 1))
+        labelMaterial.roughness = .init(floatLiteral: 0.45)
+        labelMaterial.metallic = .init(floatLiteral: 0.55)
+
+        // Files a-h along the SOUTH frame edge (facing the player at
+        // White's POV). Centred on each square along X.
+        for file in 0..<8 {
+            let glyph = String(Character(UnicodeScalar(97 + file)!))
+            let label = makeLabel(glyph, material: labelMaterial)
+            // Square centre on X
+            let x = -half + square * (Float(file) + 0.5)
+            label.position = [x, labelY, frameMid]
+            // Rotate so text faces up out of the table top
+            label.transform.rotation = simd_quatf(
+                angle: -.pi / 2, axis: [1, 0, 0]
+            )
+            group.addChild(label)
+        }
+
+        // Ranks 1-8 along the WEST frame edge. Centred on each
+        // square along Z. Rank 1 (white's back rank) sits at +Z in
+        // our coordinate system because the board's +Z is "toward
+        // the user" and white starts on the user's side.
+        for rank in 0..<8 {
+            let glyph = String(rank + 1)
+            let label = makeLabel(glyph, material: labelMaterial)
+            let z = half - square * (Float(rank) + 0.5)
+            label.position = [-frameMid, labelY, z]
+            label.transform.rotation = simd_quatf(
+                angle: -.pi / 2, axis: [1, 0, 0]
+            )
+            group.addChild(label)
+        }
+
+        return group
+    }
+
+    /// 3-D text entity sized to fit on the frame. Centred at the
+    /// origin so the caller can position by translating.
+    private static func makeLabel(
+        _ glyph: String,
+        material: PhysicallyBasedMaterial
+    ) -> ModelEntity {
+        let mesh = MeshResource.generateText(
+            glyph,
+            extrusionDepth: 0.0008,
+            font: .systemFont(ofSize: 0.010, weight: .semibold),
+            containerFrame: .zero,
+            alignment: .center,
+            lineBreakMode: .byTruncatingTail
+        )
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        // Re-centre the generated text (text mesh origin is at the
+        // baseline-left corner; we want centre-of-glyph at origin).
+        let bounds = entity.visualBounds(relativeTo: nil)
+        entity.position = -bounds.center
+        return entity
     }
 
     // MARK: - Components

@@ -201,6 +201,31 @@ struct LocalMatchHUDView: View {
             .tint(Chess.Palette.accent)
             .controlSize(.large)
 
+            // Draw + Resign — only meaningful while the game is in
+            // progress. Stockfish doesn't negotiate over UCI, so for
+            // local play both buttons end the match immediately.
+            if !coordinator.match.status.isGameOver {
+                HStack(spacing: Chess.Space.xs) {
+                    Button {
+                        coordinator.agreeDraw()
+                    } label: {
+                        Label("Draw", systemImage: "circle.lefthalf.filled")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+
+                    Button(role: .destructive) {
+                        coordinator.resign(side: humanSide ?? .white)
+                    } label: {
+                        Label("Resign", systemImage: "flag.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
+            }
+
             if let placement {
                 Button {
                     placement.reposition()

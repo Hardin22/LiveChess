@@ -45,6 +45,13 @@ final class Match {
         self.status = status
     }
 
+    /// Force the status without mutating the move history. Used by
+    /// resign / agree-draw flows where the player wants the game to
+    /// END at the current position without playing another move.
+    func setStatus(_ status: GameStatus) {
+        self.status = status
+    }
+
     /// Rolls back the most recent move so the match is back to the state
     /// it was in before that move was applied. `status` is restored to
     /// the snapshot the caller captured *before* applying. No-op if

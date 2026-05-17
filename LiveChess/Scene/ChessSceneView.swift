@@ -192,12 +192,12 @@ struct ChessSceneView: View {
             // an extra π Y rotation so the world-space pose ends up
             // identical to the White case — HUD on the user's right,
             // text reading correctly toward them.
+            let hudLocalX = SceneMetrics.boardOuterSide / 2 + 0.10
+            let baseTilt = simd_quatf(
+                angle: -.pi / 6,         // tilt back ~30° toward the user
+                axis: SIMD3<Float>(1, 0, 0)
+            )
             if let hud = attachments.entity(for: "match-hud") {
-                let hudLocalX = SceneMetrics.boardOuterSide / 2 + 0.10
-                let baseTilt = simd_quatf(
-                    angle: -.pi / 6,         // tilt back ~30° toward the user
-                    axis: SIMD3<Float>(1, 0, 0)
-                )
                 if needsBlackPerspective {
                     hud.position = SIMD3<Float>(-hudLocalX, 0.18, 0)
                     hud.transform.rotation = simd_quatf(
@@ -208,6 +208,21 @@ struct ChessSceneView: View {
                     hud.transform.rotation = baseTilt
                 }
                 renderer.rootEntity.addChild(hud)
+            }
+            // Companion moves panel — mirrored to the OPPOSITE side
+            // of the board from the action HUD so the chess set sits
+            // centered between them.
+            if let panel = attachments.entity(for: "moves-panel") {
+                if needsBlackPerspective {
+                    panel.position = SIMD3<Float>(hudLocalX, 0.18, 0)
+                    panel.transform.rotation = simd_quatf(
+                        angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+                    ) * baseTilt
+                } else {
+                    panel.position = SIMD3<Float>(-hudLocalX, 0.18, 0)
+                    panel.transform.rotation = baseTilt
+                }
+                renderer.rootEntity.addChild(panel)
             }
 
             _ = content.subscribe(to: SceneEvents.Update.self) { @MainActor event in
@@ -257,6 +272,15 @@ struct ChessSceneView: View {
             }
             Attachment(id: "placement-helper") {
                 PlacementHelperOverlay(controller: placementController)
+            }
+            // Companion floating moves panel — shows on the opposite
+            // side of the board from the main HUD. Local matches only;
+            // online / puzzle / review have their own dedicated panels.
+            Attachment(id: "moves-panel") {
+                if let session = appModel.activeSession,
+                   case .local(let coord) = session {
+                    MovesPanelView(coordinator: coord)
+                }
             }
         }
         .gesture(combinedDrag)
