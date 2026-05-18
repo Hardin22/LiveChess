@@ -87,6 +87,13 @@ struct PiecePreviewView: View {
         // doesn't poke out the top.
         piece.scale = SIMD3<Float>(repeating: 1.8)
         turntable.addChild(piece)
+
+        // Pieces author their origin at the base, so tall silhouettes
+        // (king / queen) drift up and clip the top of the frame.
+        // Translate down by the bounding-box centre so every kind sits
+        // vertically centred regardless of its height.
+        let bounds = piece.visualBounds(relativeTo: turntable)
+        piece.position.y -= bounds.center.y
     }
 
     /// The stage holds: pedestal disc, ambient + key lights, and the
