@@ -85,7 +85,7 @@ struct ReviewHUDView: View {
         } else if session.isAnalyzing {
             HStack(spacing: 6) {
                 ProgressView().tint(Chess.Palette.accent)
-                Text("Analysing \(session.analysisResults.count) / \(session.plyMoves.count)")
+                Text("Analysing game…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
