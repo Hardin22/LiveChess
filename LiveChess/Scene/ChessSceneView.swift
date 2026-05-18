@@ -298,7 +298,9 @@ struct ChessSceneView: View {
                         MovesPanelView(coordinator: coord)
                     case .puzzle(let puzzle):
                         PuzzlePanelView(session: puzzle)
-                    case .online, .review:
+                    case .review(let review):
+                        ReviewMovesPanelView(session: review)
+                    case .online:
                         EmptyView()
                     }
                 }
