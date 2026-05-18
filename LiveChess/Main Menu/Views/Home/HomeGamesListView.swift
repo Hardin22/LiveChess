@@ -291,6 +291,7 @@ private struct ReviewLaunchButton: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @State private var isPreparing = false
+    @State private var errorMessage: String?
 
     var body: some View {
         Button {
@@ -315,6 +316,18 @@ private struct ReviewLaunchButton: View {
         .buttonStyle(.plain)
         .hoverEffect(.highlight)
         .disabled(isPreparing)
+        .alert(
+            "Can't open review",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            ),
+            presenting: errorMessage
+        ) { _ in
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: { msg in
+            Text(msg)
+        }
     }
 
     private func launchReview() async {
@@ -323,16 +336,32 @@ private struct ReviewLaunchButton: View {
         defer { isPreparing = false }
 
         // Pull the full game (with moves) if we don't already have them.
+        // The listing endpoint sends `moves=false` to keep NDJSON light,
+        // so essentially every Review click takes this branch.
         var resolved = game
         if (game.moves ?? "").isEmpty {
             let svc = LichessService()
             await svc.authenticate(token: appModel.lichess.token)
-            if let full = try? await svc.fetchGame(id: game.id) {
-                resolved = full
+            do {
+                resolved = try await svc.fetchGame(id: game.id)
+            } catch {
+                print("[Review] fetchGame failed for \(game.id): \(error)")
+                errorMessage = "Couldn't load this game from Lichess.\n\(error.localizedDescription)"
+                return
             }
         }
-        guard let session = ReviewSession(game: resolved, username: username)
-        else { return }
+
+        if (resolved.moves ?? "").isEmpty {
+            print("[Review] game \(game.id) has no moves to review")
+            errorMessage = "This game has no recorded moves to review."
+            return
+        }
+
+        guard let session = ReviewSession(game: resolved, username: username) else {
+            print("[Review] ReviewSession init failed for \(game.id) — couldn't parse moves: \(resolved.moves ?? "")")
+            errorMessage = "Couldn't parse the moves of this game."
+            return
+        }
 
         // Hand off to the immersive space the same way local / online
         // play does. `pendingReopen` is left alone so a normal close
@@ -342,7 +371,14 @@ private struct ReviewLaunchButton: View {
         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
         case .opened:
             break
-        default:
+        case .userCancelled:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+        case .error:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+            errorMessage = "The immersive space failed to open."
+        @unknown default:
             appModel.activeSession = nil
             appModel.immersiveSpaceState = .closed
         }
