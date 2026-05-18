@@ -395,7 +395,20 @@ final class GameReviewViewModel {
     }
 
     func analyzedGames(for username: String) -> [LichessGame] {
-        games.filter { $0.accuracy(for: username) != nil }
+        // Require both the accuracy summary AND the per-ply analysis
+        // array. Lichess will give some games one without the other —
+        // accuracy comes from their cheap pass, the analysis array
+        // only lands when someone requested a deep computer analysis
+        // on the website. Showing summary-only games here makes them
+        // look reviewable, but the immersive HUD then has nothing to
+        // classify against.
+        games.filter { game in
+            guard game.accuracy(for: username) != nil else { return false }
+            guard let analysis = game.analysis, !analysis.isEmpty else {
+                return false
+            }
+            return true
+        }
     }
 }
 

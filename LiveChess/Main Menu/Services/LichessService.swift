@@ -38,6 +38,12 @@ final class LichessService {
             URLQueryItem(name: "moves", value: "false")
         ]
         if withAnalysis {
+            // `evals=true` is what actually drops the per-ply analysis
+            // array into each NDJSON record. `analysis=true` is the
+            // deprecated alias — keeping it for older Lichess clients
+            // costs nothing. `accuracy=true` adds the summary stats
+            // (which is what feeds the listing's accuracy column).
+            queryItems.append(URLQueryItem(name: "evals", value: "true"))
             queryItems.append(URLQueryItem(name: "analysis", value: "true"))
             queryItems.append(URLQueryItem(name: "accuracy", value: "true"))
         }
