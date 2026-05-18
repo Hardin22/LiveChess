@@ -285,11 +285,24 @@ final class ReviewSession: MatchSession {
     // MARK: - Analysis (kicked off by the HUD on first appearance)
 
     func startAnalysisIfNeeded() {
-        // Lichess cloud already populated `analysisResults` in init — no
-        // need to spin up local Stockfish at all. Saves the user ~90 s
-        // per game on a typical 40-move review.
-        guard analysisResults.isEmpty else { return }
         guard analyzer == nil, !plyMoves.isEmpty else { return }
+
+        // Lichess cloud already populated `analysisResults` — skip the
+        // full local pass (saves ~90 s) and run a quick top-up scan
+        // that upgrades cloud-`.best` moves to `.great` when local
+        // Stockfish confirms the alternative was clearly worse. Lichess
+        // doesn't return MultiPV, so this is the only way to detect
+        // only-good-move tactical finds without re-running everything.
+        if !analysisResults.isEmpty {
+            let analyzer = GameAnalyzer(multiPV: 2)
+            self.analyzer = analyzer
+            analysisTask = Task { @MainActor in
+                await self.upgradeBestMovesToGreat(using: analyzer)
+                await analyzer.shutdown()
+            }
+            return
+        }
+
         let analyzer = GameAnalyzer(multiPV: 3)
         self.analyzer = analyzer
         isAnalyzing = true
@@ -309,6 +322,52 @@ final class ReviewSession: MatchSession {
             }
             self.isAnalyzing = false
             await analyzer.shutdown()
+        }
+    }
+
+    /// Background top-up pass for cloud-analyzed games: for every ply
+    /// classified as `.best`, ask local Stockfish for the top-2 MultiPV
+    /// lines at depth 12. If the gap between the best line and the
+    /// second-best line is ≥10 win%, the played move was the *only*
+    /// good move — upgrade `.best` to `.great`. Depth 12 + MultiPV=2
+    /// keeps the whole pass under ~10 s for a typical game.
+    private func upgradeBestMovesToGreat(using analyzer: GameAnalyzer) async {
+        let bestPlies = analysisResults.enumerated()
+            .filter { $0.element.quality == .best }
+            .map(\.offset)
+        guard !bestPlies.isEmpty else { return }
+
+        for ply in bestPlies {
+            if Task.isCancelled { break }
+            guard ply >= 0, ply < positionsByPly.count else { continue }
+            let positionBefore = positionsByPly[ply]
+            do {
+                let lines = try await analyzer.evaluatePosition(
+                    fen: positionBefore.fen, depth: 12
+                )
+                guard lines.count >= 2 else { continue }
+                let topWin = GameAnalyzer.winPercent(fromCp: lines[0].scoreCp)
+                let secondWin = GameAnalyzer.winPercent(fromCp: lines[1].scoreCp)
+                if (topWin - secondWin) >= 10,
+                   ply < analysisResults.count {
+                    let old = analysisResults[ply]
+                    analysisResults[ply] = MoveAnalysis(
+                        id: old.id,
+                        san: old.san,
+                        playedUCI: old.playedUCI,
+                        mover: old.mover,
+                        playedScoreCp: old.playedScoreCp,
+                        bestScoreCp: old.bestScoreCp,
+                        centipawnLoss: old.centipawnLoss,
+                        winPercentLoss: old.winPercentLoss,
+                        topLines: lines,
+                        quality: .great,
+                        bookOpening: old.bookOpening
+                    )
+                }
+            } catch {
+                continue
+            }
         }
     }
 
