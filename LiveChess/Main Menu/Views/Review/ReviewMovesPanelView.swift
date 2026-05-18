@@ -36,17 +36,23 @@ struct ReviewMovesPanelView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Moves")
                     .font(.callout.weight(.semibold))
-                Text("\(session.plyMoves.count) plies")
+                Text(subtitleText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if session.isAnalyzing {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(Chess.Palette.accent)
-            }
         }
+    }
+
+    /// Counter line under the title — communicates whether Lichess
+    /// returned per-ply analysis for the game or not, so an empty
+    /// panel doesn't look like a loading state.
+    private var subtitleText: String {
+        let plies = session.plyMoves.count
+        if session.analysisResults.isEmpty {
+            return "\(plies) plies · no Lichess analysis"
+        }
+        return "\(plies) plies"
     }
 
     // MARK: - Moves list
