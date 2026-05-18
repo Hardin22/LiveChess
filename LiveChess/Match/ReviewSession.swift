@@ -365,6 +365,8 @@ final class ReviewSession: MatchSession {
         // trickle. Empirically ~10 s for a 40-ply game on M-class
         // silicon with 8 threads + 256 MB hash, classification
         // distribution ~88% matches Lichess cloud (depth 22).
+        print("[Review] Starting local Stockfish batch — \(plyMoves.count) plies, depth 10")
+        let started = Date()
         let analyzer = GameAnalyzer(multiPV: 3)
         self.analyzer = analyzer
         isAnalyzing = true
@@ -381,13 +383,15 @@ final class ReviewSession: MatchSession {
                     if Task.isCancelled { break }
                     collected.append(m)
                 }
+                print("[Review] Stream completed with \(collected.count) classifications in \(String(format: "%.1f", -started.timeIntervalSinceNow))s")
             } catch {
-                // Non-fatal — partial results would only confuse the
-                // atomic-swap UX, so we discard them on error too.
+                print("[Review] Local Stockfish failed: \(error) (collected \(collected.count) plies before failure)")
             }
             if !Task.isCancelled, !collected.isEmpty {
                 self.analysisResults = collected
                 self.emitReviewHighlight()
+            } else if !Task.isCancelled {
+                print("[Review] No classifications produced — panel will show empty state.")
             }
             self.isAnalyzing = false
         }
