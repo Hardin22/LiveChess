@@ -239,6 +239,25 @@ struct ChessSceneView: View {
                 renderer.rootEntity.addChild(panel)
             }
 
+            // Floating eval bar (review only). Sits between the moves
+            // panel and the board's near edge, slightly forward so it
+            // doesn't fight the panel surface for the same Z. Empty
+            // attachment for non-review sessions — the SwiftUI body
+            // bails to EmptyView so we don't pay the layout cost.
+            if let evalBar = attachments.entity(for: "eval-bar") {
+                let evalX = -hudLocalX + 0.10
+                if needsBlackPerspective {
+                    evalBar.position = SIMD3<Float>(-evalX, 0.18, 0.06)
+                    evalBar.transform.rotation = simd_quatf(
+                        angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+                    ) * baseTilt
+                } else {
+                    evalBar.position = SIMD3<Float>(evalX, 0.18, 0.06)
+                    evalBar.transform.rotation = baseTilt
+                }
+                renderer.rootEntity.addChild(evalBar)
+            }
+
             _ = content.subscribe(to: SceneEvents.Update.self) { @MainActor event in
                 game.update(deltaTime: event.deltaTime)
             }
@@ -303,6 +322,16 @@ struct ChessSceneView: View {
                     case .online:
                         EmptyView()
                     }
+                }
+            }
+            // Eval bar — only meaningful for review; other sessions
+            // render an empty body so the attachment exists but
+            // contributes nothing.
+            Attachment(id: "eval-bar") {
+                if case .review(let review) = appModel.activeSession {
+                    ReviewEvalBarView(session: review)
+                } else {
+                    EmptyView()
                 }
             }
         }
