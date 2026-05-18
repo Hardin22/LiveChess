@@ -48,6 +48,18 @@ enum Chess {
         static let highlight    = accent
         static let info         = accent
 
+        /// Warm cream sampled from the app icon's light marble.
+        /// Used as a tint behind selection-state fills so chips read as
+        /// "lit marble" rather than plain Apple glass. Don't use as a
+        /// text colour — too low contrast on translucent surfaces.
+        static let cream  = Color(red: 0.929, green: 0.901, blue: 0.831)
+
+        /// Warm bronze sampled from the king's highlights in the app
+        /// icon. Reserved for the brand "+" wordmark, selected-state
+        /// strokes, and rare flourishes (accuracy %, brilliant !!).
+        /// Pure white still owns the general accent role.
+        static let bronze = Color(red: 0.769, green: 0.647, blue: 0.455)
+
         /// Material fill behind cards — wraps `Material` so we can
         /// swap globally if the depth balance ever changes.
         static let cardMaterial: Material = .regularMaterial
@@ -201,6 +213,61 @@ struct ChessChip: View {
         .foregroundStyle(tint)
         .background(tint.opacity(0.16), in: Capsule())
         .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 0.5))
+    }
+}
+
+// MARK: - Brand mark
+
+/// Single source of truth for the Chess+ brand mark. Wherever brand
+/// identity should appear (home header, lobby header, in-match HUD,
+/// sidebar), use one of these two modes instead of hand-rolling a
+/// crown.fill + serif text combo:
+///
+///   * `.wordmark(size:)` — circular app-icon image + serif "Chess"
+///     in accent + serif "+" in bronze. The hero treatment.
+///   * `.iconOnly(size:)` — circular app-icon image alone. Used
+///     where the wordmark would duplicate text already on screen
+///     (e.g. the sidebar when the home header is also visible).
+///
+/// The shared component guarantees that any visual change — bronze
+/// shade, font weight, icon swap — propagates everywhere automatically.
+struct BrandMark: View {
+    enum Style { case wordmark(size: CGFloat); case iconOnly(size: CGFloat) }
+    let style: Style
+
+    init(_ style: Style = .wordmark(size: 38)) { self.style = style }
+
+    var body: some View {
+        switch style {
+        case .wordmark(let size):
+            HStack(spacing: max(4, size * 0.18)) {
+                logo(size: size * 0.95)
+                HStack(spacing: 0) {
+                    Text("Chess").foregroundStyle(Chess.Palette.accent)
+                    Text("+").foregroundStyle(Chess.Palette.bronze)
+                }
+                .font(.system(size: size, weight: .semibold, design: .serif))
+            }
+        case .iconOnly(let size):
+            logo(size: size)
+        }
+    }
+
+    private func logo(size: CGFloat) -> some View {
+        Image("BrandLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            // Subtle bronze rim so the circular logo reads as a coin,
+            // not a flat decal pasted on glass. Same shape language as
+            // the selection chips elsewhere in the UI.
+            .overlay(
+                Circle().strokeBorder(
+                    Chess.Palette.bronze.opacity(0.45),
+                    lineWidth: max(0.5, size * 0.012)
+                )
+            )
+            .clipShape(Circle())
     }
 }
 

@@ -31,24 +31,17 @@ struct HomeView: View {
             .padding(28)
         }
         .scrollIndicators(.hidden)
-        // Refresh gesture (pull down)
+        // Pull-down still refreshes the page silently — we just don't
+        // surface the navigation chrome (title + refresh button) so the
+        // home content fills the full surface. The brand wordmark in
+        // HomeHeaderView already does the "you are here" job better
+        // than a small "Home" title would.
         .refreshable {
             await viewModel.refreshAll()
         }
-        // visionOS: Adds glass background to the entire content area
         .glassBackgroundEffect()
-        .navigationTitle("Home")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    Task { await viewModel.refreshAll() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .hoverEffect(.lift)
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -70,11 +63,11 @@ private struct GuestSignInBanner: View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(.green.gradient.opacity(0.25))
+                    .fill(Chess.Palette.bronze.gradient.opacity(0.25))
                     .frame(width: 52, height: 52)
                 Image(systemName: "person.crop.circle.badge.checkmark")
                     .font(.title2)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Chess.Palette.bronze)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -108,7 +101,7 @@ private struct GuestSignInBanner: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
         .overlay(
             RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(.green.opacity(0.3), lineWidth: 1)
+                .strokeBorder(Chess.Palette.bronze.opacity(0.3), lineWidth: 1)
         )
     }
 }

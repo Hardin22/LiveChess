@@ -76,13 +76,16 @@ struct ContentView: View {
         // `@State selectedMode`) when the user switches between Play
         // sub-items — otherwise the first preselection would stick.
         case .playOnline:
-            LobbyView(initialMode: .quickPair)
+            // Scope to the ONLINE group so the rail hides Local /
+            // Lichess Bot — the sidebar already implies which top-level
+            // bucket the user picked.
+            LobbyView(initialMode: .quickPair, scope: .online)
                 .id(AppDestination.playOnline)
         case .playLocal:
-            LobbyView(initialMode: .local)
+            LobbyView(initialMode: .local, scope: .local)
                 .id(AppDestination.playLocal)
         case .playBot:
-            LobbyView(initialMode: .local)
+            LobbyView(initialMode: .lichessBot, scope: .local)
                 .id(AppDestination.playBot)
 
         case .puzzles:    PuzzlesPlaceholderView()

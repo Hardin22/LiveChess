@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine    // MatchmakingHUDView's elapsed-time ticker uses Timer.publish
 
 /// Pre-match lobby. Lets the user pick a game mode (local Stockfish,
 /// online Quick Pair, friend challenge, Lichess Stockfish) and configures
@@ -31,11 +32,19 @@ struct LobbyView: View {
     /// so deep-linking to a specific Play sub-item works.
     @State private var selectedMode: GameMode
 
+    /// Which rail groups to show. Sidebar's "Online Game" passes
+    /// `.online` to hide the LOCAL group (and vice versa) so the rail
+    /// stays focused on what the user picked at the top level.
+    /// Default `.both` preserves the all-options view for previews.
+    enum Scope { case local, online, both }
+    private let scope: Scope
+
     /// Designated initializer. The optional `initialMode` overrides the
     /// default landing card — used by the Main Menu sidebar's
     /// Online Game / Local Game / Play with Bot entries.
-    init(initialMode: GameMode? = nil) {
+    init(initialMode: GameMode? = nil, scope: Scope = .both) {
         _selectedMode = State(initialValue: initialMode ?? .local)
+        self.scope = scope
     }
 
     /// Selected time control for the online configuration cards.
@@ -90,11 +99,21 @@ struct LobbyView: View {
             VStack(alignment: .leading, spacing: Chess.Space.s) {
                 ChessSectionHeader("Play",
                                    subtitle: "Pick how you want to play.")
-                VStack(spacing: Chess.Space.xs) {
-                    ForEach(GameMode.allCases, id: \.self) { mode in
-                        modeRailRow(mode)
-                    }
+
+                // Two semantic groups — Local (on-device) above Online
+                // (Lichess). Groups are filtered by `scope` so the
+                // sidebar's "Online Game" / "Local Game" destinations
+                // hide the irrelevant group entirely instead of showing
+                // both and forcing the user to scan.
+                if scope == .local || scope == .both {
+                    modeRailGroup(title: "LOCAL",
+                                  modes: [.local, .lichessBot])
                 }
+                if scope == .online || scope == .both {
+                    modeRailGroup(title: "ONLINE",
+                                  modes: [.quickPair, .friend])
+                }
+
                 Spacer(minLength: 0)
                 lichessFooterCard
             }
@@ -181,11 +200,7 @@ struct LobbyView: View {
     /// the actual configuration card to breathe.
     private var slimHeader: some View {
         HStack(spacing: Chess.Space.s) {
-            Image(systemName: "crown.fill")
-                .foregroundStyle(Chess.Palette.accent)
-                .font(.title3)
-            Text(Chess.Brand.name)
-                .font(.system(size: 26, weight: .semibold, design: .serif))
+            BrandMark(.wordmark(size: 26))
             Spacer()
             Button {
                 openWindow(id: LiveChessApp.piecesWindowID)
@@ -199,6 +214,24 @@ struct LobbyView: View {
     }
 
     // MARK: - Mode rail (left column)
+
+    /// One titled group of mode rows. Used to split the rail into
+    /// "Local" (on-device) and "Online" (Lichess) so users scan by
+    /// intent rather than reading every row.
+    @ViewBuilder
+    private func modeRailGroup(title: String, modes: [GameMode]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(Chess.Typography.eyebrow())
+                .foregroundStyle(Chess.Palette.bronze.opacity(0.85))
+                .padding(.horizontal, 4)
+            VStack(spacing: Chess.Space.xs) {
+                ForEach(modes, id: \.self) { mode in
+                    modeRailRow(mode)
+                }
+            }
+        }
+    }
 
     /// One full-width row per mode in the left rail. The selected
     /// mode gets the accent tint + bolder type; unavailable online
@@ -241,16 +274,16 @@ struct LobbyView: View {
                 RoundedRectangle(cornerRadius: Chess.Radius.row,
                                  style: .continuous)
                     .fill(isSelected
-                          ? AnyShapeStyle(Color.white.opacity(0.18))
+                          ? AnyShapeStyle(Chess.Palette.cream.opacity(0.18))
                           : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Chess.Radius.row,
                                  style: .continuous)
                     .strokeBorder(isSelected
-                                  ? Color.clear
+                                  ? Chess.Palette.bronze.opacity(0.45)
                                   : .white.opacity(0.10),
-                                  lineWidth: 0.5)
+                                  lineWidth: isSelected ? 1 : 0.5)
             )
             .opacity(isAvailable ? 1 : 0.45)
         }
@@ -287,7 +320,8 @@ struct LobbyView: View {
                         Text("Sign in")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Chess.Palette.bronze)
                     .controlSize(.regular)
                     .padding(.top, 2)
                 }
@@ -342,14 +376,14 @@ struct LobbyView: View {
             .padding(.vertical, 6)
             .background(
                 Capsule().fill(isSelected
-                               ? AnyShapeStyle(Color.white.opacity(0.18))
+                               ? AnyShapeStyle(Chess.Palette.cream.opacity(0.18))
                                : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
                 Capsule().strokeBorder(isSelected
-                                       ? Color.clear
+                                       ? Chess.Palette.bronze.opacity(0.45)
                                        : .white.opacity(0.12),
-                                       lineWidth: 0.5)
+                                       lineWidth: isSelected ? 1 : 0.5)
             )
         }
         .buttonStyle(.plain)
@@ -386,7 +420,8 @@ struct LobbyView: View {
                 .fontWeight(.semibold)
             }
             .controlSize(.large)
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
+            .tint(Chess.Palette.bronze)
             .disabled(appModel.immersiveSpaceState == .inTransition)
         }
         .padding(Chess.Space.m)
@@ -407,14 +442,18 @@ struct LobbyView: View {
                 timePresets(allowed: .quickPairAllowed)
                 Button {
                     guard let lobby = lichessLobby else { return }
-                    wireOnGameSessionReadyAndOpenImmersive(lobby)
-                    lobby.quickPair(rated: selectedRated, timeControl: selectedTimeControl)
+                    // Open the immersive immediately into the chosen
+                    // environment with the matchmaking HUD overlaid;
+                    // the actual seek + game-ready handoff happen in
+                    // the background.
+                    Task { await startMatchmakingFlow(lobby: lobby) }
                 } label: {
                     Label("Find opponent", systemImage: "person.2.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(Chess.Palette.bronze)
             }
         }
     }
@@ -460,7 +499,8 @@ struct LobbyView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(Chess.Palette.bronze)
                 .disabled(friendUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -511,7 +551,8 @@ struct LobbyView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(Chess.Palette.bronze)
             }
         }
     }
@@ -565,7 +606,8 @@ struct LobbyView: View {
                 } label: {
                     Label("Sign in with Lichess", systemImage: "person.crop.circle.badge.checkmark")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(Chess.Palette.bronze)
                 .controlSize(.regular)
             }
             .frame(maxWidth: .infinity)
@@ -1051,6 +1093,49 @@ struct LobbyView: View {
         }
     }
 
+    /// Matchmaking flow used by the Quick Pair "Find opponent" button.
+    ///
+    /// chess.com-style UX: instead of waiting in the 2D lobby card, we
+    /// dive into the chosen environment immediately and float a
+    /// `MatchmakingHUDView` over the board while the seek runs. When
+    /// Lichess returns a paired game, `wireOnGameSessionReadyAndOpenImmersive`
+    /// clears the matchmaking state and the immersive rebuilds with
+    /// the real online session.
+    private func startMatchmakingFlow(lobby: LichessLobbyController) async {
+        wireOnGameSessionReadyAndOpenImmersive(lobby)
+
+        // Populate the HUD state — what the user picked + their own
+        // identity so the "You" side of the vs panel reads correctly.
+        let label: String = {
+            if case .realTime(let limit, let inc) = selectedTimeControl {
+                return "\(limit/60)+\(inc)"
+            }
+            return "Custom"
+        }()
+        appModel.matchmaking = MatchmakingState(
+            timeControlLabel: label,
+            rated: selectedRated,
+            selfUsername: appModel.lichess.account?.username ?? "You",
+            selfRating: appModel.lichess.account?.perfs?["rapid"]?.rating
+        )
+
+        // Open the immersive into the chosen env. No activeSession yet —
+        // ChessSceneView falls back to a default local renderer so the
+        // user sees their environment + starting board with the HUD on
+        // top. The real game rebuilds the scene when it arrives.
+        appModel.immersiveSpaceState = .inTransition
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            lobby.quickPair(rated: selectedRated, timeControl: selectedTimeControl)
+        case .userCancelled, .error:
+            appModel.immersiveSpaceState = .closed
+            appModel.matchmaking = nil
+        @unknown default:
+            appModel.immersiveSpaceState = .closed
+            appModel.matchmaking = nil
+        }
+    }
+
     /// Sets up `lobby.onGameSessionReady` to flip `appModel.activeSession`
     /// and open the immersive space when the game is built.
     ///
@@ -1078,6 +1163,9 @@ struct LobbyView: View {
                 }
 
                 appModel.activeSession = .online(matchSession)
+                // Game is here — tear down the matchmaking HUD before
+                // we rebuild the scene with the real online session.
+                appModel.matchmaking = nil
                 appModel.immersiveSpaceState = .inTransition
                 switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
                 case .opened:
@@ -1302,9 +1390,11 @@ private struct SelectionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let fill = isSelected
-            ? AnyShapeStyle(Color.white.opacity(0.22))
+            ? AnyShapeStyle(Chess.Palette.cream.opacity(0.20))
             : AnyShapeStyle(Color.gray.opacity(0.18))
-        let stroke = AnyShapeStyle(Color.secondary.opacity(0.25))
+        let stroke: AnyShapeStyle = isSelected
+            ? AnyShapeStyle(Chess.Palette.bronze.opacity(0.45))
+            : AnyShapeStyle(Color.secondary.opacity(0.25))
         return configuration.label
             .foregroundStyle(.primary)
             .fontWeight(isSelected ? .semibold : .regular)
@@ -1317,14 +1407,12 @@ private struct SelectionButtonStyle: ButtonStyle {
                 }
             }
             .overlay {
-                if !isSelected {
-                    switch shape {
-                    case .capsule:
-                        Capsule().stroke(stroke, lineWidth: 0.5)
-                    case .roundedRect(let r):
-                        RoundedRectangle(cornerRadius: r, style: .continuous)
-                            .stroke(stroke, lineWidth: 0.5)
-                    }
+                switch shape {
+                case .capsule:
+                    Capsule().stroke(stroke, lineWidth: isSelected ? 1 : 0.5)
+                case .roundedRect(let r):
+                    RoundedRectangle(cornerRadius: r, style: .continuous)
+                        .stroke(stroke, lineWidth: isSelected ? 1 : 0.5)
                 }
             }
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
@@ -1335,4 +1423,155 @@ private struct SelectionButtonStyle: ButtonStyle {
 #Preview(windowStyle: .automatic) {
     LobbyView()
         .environment(AppModel())
+}
+
+// MARK: - Matchmaking HUD
+
+/// Floating panel rendered over the immersive board while we wait for
+/// Lichess to pair us. chess.com-style: shows the user on the left,
+/// a cycling carousel of placeholder opponents on the right, the time
+/// control + rated flag below, and a cancel button. Auto-disappears
+/// when `appModel.matchmaking` is cleared (which happens either when
+/// `onGameSessionReady` fires or the user cancels).
+@MainActor
+struct MatchmakingHUDView: View {
+    let state: MatchmakingState
+    var onCancel: () -> Void
+
+    /// Cycling fake opponent — purely visual. We don't fetch real
+    /// queued players; the carousel is just to convey "we're looking".
+    @State private var opponentIndex = 0
+    @State private var elapsed: Int = 0
+    private let candidates: [(name: String, rating: Int)] = [
+        ("knightrider22", 1432),
+        ("queensgambit", 1587),
+        ("zugzwangFTW", 1340),
+        ("opening_book", 1654),
+        ("endgame_eric", 1490),
+        ("blunder_proof", 1502),
+        ("pawn_storm", 1421),
+        ("siciliansoul", 1611),
+    ]
+    private let cycleEvery = Duration.milliseconds(700)
+    private let elapsedTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: Chess.Space.m) {
+            Text("Finding opponent…")
+                .font(.system(.title2, design: .serif).weight(.semibold))
+                .foregroundStyle(Chess.Palette.accent)
+
+            HStack(spacing: Chess.Space.l) {
+                avatarColumn(name: state.selfUsername,
+                             rating: state.selfRating,
+                             pulse: true,
+                             tag: "YOU")
+                Text("vs")
+                    .font(.system(.title, design: .serif).weight(.semibold))
+                    .foregroundStyle(Chess.Palette.bronze)
+                avatarColumn(name: candidates[opponentIndex].name,
+                             rating: candidates[opponentIndex].rating,
+                             pulse: false,
+                             tag: "SEEKING")
+                    .id(opponentIndex)   // forces transition rebuild per cycle
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+
+            HStack(spacing: Chess.Space.s) {
+                metaChip(state.timeControlLabel, icon: "clock.fill")
+                metaChip(state.rated ? "Rated" : "Casual",
+                         icon: state.rated ? "trophy.fill" : "circle.dashed")
+                metaChip("\(elapsed)s",
+                         icon: "hourglass")
+            }
+
+            Button(role: .cancel) {
+                onCancel()
+            } label: {
+                Label("Cancel", systemImage: "xmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+        }
+        .padding(Chess.Space.l)
+        .frame(width: 480)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: Chess.Radius.hero,
+                                         style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Chess.Radius.hero,
+                             style: .continuous)
+                .strokeBorder(Chess.Palette.bronze.opacity(0.45), lineWidth: 1)
+        )
+        .task(id: opponentIndex) {
+            try? await Task.sleep(for: cycleEvery)
+            withAnimation(.easeInOut(duration: 0.25)) {
+                opponentIndex = (opponentIndex + 1) % candidates.count
+            }
+        }
+        .onReceive(elapsedTimer) { _ in elapsed += 1 }
+    }
+
+    private func avatarColumn(name: String, rating: Int?, pulse: Bool, tag: String) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(Chess.Palette.cream.opacity(0.18))
+                Circle()
+                    .strokeBorder(Chess.Palette.bronze.opacity(0.55), lineWidth: 1.5)
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                    .foregroundStyle(Chess.Palette.bronze)
+            }
+            .frame(width: 84, height: 84)
+            .scaleEffect(pulse ? 1.0 : 0.96)
+            .modifier(PulseModifier(active: pulse))
+
+            Text(tag)
+                .font(Chess.Typography.eyebrow())
+                .foregroundStyle(.secondary)
+            Text(name)
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+            if let r = rating {
+                Text("\(r)")
+                    .font(.caption)
+                    .foregroundStyle(Chess.Palette.bronze)
+            } else {
+                Text("—")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func metaChip(_ text: String, icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .foregroundStyle(Chess.Palette.bronze)
+            Text(text)
+                .font(.caption.weight(.semibold))
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.thinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Chess.Palette.bronze.opacity(0.35), lineWidth: 0.5))
+    }
+}
+
+/// Slow breathing pulse for the "you" avatar — repeats forever.
+private struct PulseModifier: ViewModifier {
+    let active: Bool
+    @State private var on = false
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(on && active ? 1.04 : 1.0)
+            .onAppear {
+                guard active else { return }
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    on = true
+                }
+            }
+    }
 }

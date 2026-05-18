@@ -9,13 +9,16 @@ struct PuzzleHUDView: View {
     @Bindable var session: PuzzleSession
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @Environment(\.openImmersiveSpace)    private var openImmersiveSpace
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.m) {
             header
-            Divider()
+            Divider().overlay(Chess.Palette.bronze.opacity(0.25))
             statusSection
-            Divider()
+            Divider().overlay(Chess.Palette.bronze.opacity(0.25))
+            environmentMenu
+            Divider().overlay(Chess.Palette.bronze.opacity(0.25))
             controls
         }
         .padding(Chess.Space.m)
@@ -82,15 +85,72 @@ struct PuzzleHUDView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Chess.Palette.bronze)
                     Text("Not the puzzle solution")
                         .font(.callout.weight(.semibold))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Chess.Palette.bronze)
                 }
                 Text("Tap Try again to restart from the puzzle position.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    // MARK: - Environment switcher
+    //
+    // Same dismiss + reopen dance as `LocalMatchHUDView` — sets
+    // `pendingReopen` on AppModel so `ChessSceneView.onDisappear`
+    // doesn't tear down the puzzle session, then opens a fresh
+    // immersive space in the new environment.
+    private var environmentMenu: some View {
+        Menu {
+            ForEach(SceneEnvironment.allCases) { env in
+                Button {
+                    Task { await switchEnvironment(to: env) }
+                } label: {
+                    Label(env.displayName, systemImage: env.systemImage)
+                    if env == appModel.selectedEnvironment {
+                        Image(systemName: "checkmark")
+                    }
+                }
+                .disabled(env == appModel.selectedEnvironment)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "mountain.2.fill")
+                    .foregroundStyle(Chess.Palette.bronze)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Environment")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(appModel.selectedEnvironment.displayName)
+                        .font(.callout.weight(.medium))
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+    }
+
+    private func switchEnvironment(to env: SceneEnvironment) async {
+        guard env != appModel.selectedEnvironment else { return }
+        appModel.selectedEnvironment = env
+        appModel.pendingReopen = true
+        appModel.immersiveSpaceState = .inTransition
+        await dismissImmersiveSpace()
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.immersiveSpaceState = .closed
+            appModel.pendingReopen = false
         }
     }
 
@@ -116,7 +176,10 @@ struct PuzzleHUDView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
 
-                Button(role: .destructive) {
+                // Plain bordered (no destructive role) so the button
+                // doesn't render red — matches the rest of the app's
+                // marble / bronze palette.
+                Button {
                     session.restart()
                 } label: {
                     Label("Restart", systemImage: "arrow.counterclockwise")
@@ -126,7 +189,7 @@ struct PuzzleHUDView: View {
                 .controlSize(.regular)
             }
 
-            Button(role: .destructive) {
+            Button {
                 Task {
                     appModel.activeSession = nil
                     await dismissImmersiveSpace()

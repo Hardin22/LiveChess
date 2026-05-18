@@ -17,13 +17,7 @@ struct HomeHeaderView: View {
             // LEFT: brand wordmark + tagline + stats chips
             VStack(alignment: .leading, spacing: Chess.Space.s) {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: Chess.Space.xs) {
-                        Image(systemName: "crown.fill")
-                            .foregroundStyle(Chess.Palette.accent)
-                            .font(.title)
-                        Text(Chess.Brand.name)
-                            .font(Chess.Typography.brand(size: 38))
-                    }
+                    BrandMark(.wordmark(size: 38))
                     Text(viewModel.isSignedIn
                          ? "Welcome back, \(viewModel.displayUsername)"
                          : Chess.Brand.tagline)
@@ -37,14 +31,14 @@ struct HomeHeaderView: View {
                             icon: "trophy.fill",
                             value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
                             label: "rapid",
-                            color: Chess.Palette.accent
+                            color: Chess.Palette.bronze
                         )
                         if let games = viewModel.displayGamesPlayed, games > 0 {
                             StatChipView(
                                 icon: "square.grid.3x3.fill",
                                 value: "\(games)",
                                 label: "games",
-                                color: Chess.Palette.accent
+                                color: Chess.Palette.bronze
                             )
                         }
                     }

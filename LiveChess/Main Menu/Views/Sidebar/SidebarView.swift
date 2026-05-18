@@ -33,7 +33,7 @@ struct SidebarView: View {
                     SidebarRowLabel(
                         title: "Play",
                         systemImage: "play.circle.fill",
-                        color: Chess.Palette.accent
+                        color: Chess.Palette.bronze
                     )
                 }
             } header: {
@@ -45,16 +45,19 @@ struct SidebarView: View {
             }
 
             // MARK: - Learn Section
-            // Puzzles intentionally NOT a sidebar entry — they launch
-            // from the Home → Daily Puzzle card into the immersive
-            // 3-D board, not a separate 2-D screen. Adding a sidebar
-            // route here would re-introduce the placeholder screen.
             Section("Learn") {
+                NavigationLink(value: AppDestination.puzzles) {
+                    SidebarRowLabel(
+                        title: "Puzzles",
+                        systemImage: "puzzlepiece.fill",
+                        color: Chess.Palette.bronze
+                    )
+                }
                 NavigationLink(value: AppDestination.gameReview) {
                     SidebarRowLabel(
                         title: "Game Review",
                         systemImage: "magnifyingglass.circle.fill",
-                        color: Chess.Palette.accent
+                        color: Chess.Palette.bronze
                     )
                 }
             }
@@ -66,7 +69,7 @@ struct SidebarView: View {
                     SidebarRowLabel(
                         title: "History",
                         systemImage: "clock.fill",
-                        color: Chess.Palette.accent
+                        color: Chess.Palette.bronze
                     )
                 }
             }
@@ -79,18 +82,6 @@ struct SidebarView: View {
             // on the List below already insets us to match the list rows.
             SidebarProfileView(viewModel: viewModel)
                 .padding(.bottom, 12)
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                HStack(spacing: Chess.Space.xs) {
-                    Image(systemName: "crown.fill")
-                        .foregroundStyle(Chess.Palette.accent)
-                        .font(.title3)
-                    Text(Chess.Brand.name)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                }
-            }
         }
         .padding(.horizontal)
     }

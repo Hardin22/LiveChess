@@ -61,6 +61,24 @@ class AppModel {
     /// `MatchCoordinator` or the remote `LichessMatchSession`. Cleared
     /// when the immersive space dismisses.
     var activeSession: ActiveSession?
+
+    /// Set when the user taps "Find opponent" — drives the matchmaking
+    /// HUD that floats over the empty board while we wait for Lichess
+    /// to pair us. Cleared when a real game arrives (which transitions
+    /// the immersive into `.online` mode) or the user cancels.
+    var matchmaking: MatchmakingState?
+}
+
+/// Describes an in-flight matchmaking attempt — what the user picked
+/// in the lobby. Drives the `MatchmakingHUDView` text/animation.
+struct MatchmakingState: Equatable {
+    /// Display string for the time control, e.g. "10+0".
+    let timeControlLabel: String
+    /// Whether the game is rated — surfaced as "Rated" / "Casual".
+    let rated: Bool
+    /// Username + rating to render on the "You" side of the vs panel.
+    let selfUsername: String
+    let selfRating: Int?
 }
 
 /// Discriminated union over the two flavours of session the scene host

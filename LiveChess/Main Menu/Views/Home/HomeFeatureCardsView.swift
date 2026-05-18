@@ -47,7 +47,7 @@ private struct QuickPlayHeroCard: View {
         ChessCard(.hero) {
             VStack(alignment: .leading, spacing: Chess.Space.m) {
                 HStack(spacing: Chess.Space.s) {
-                    iconBadge("play.fill", tint: Chess.Palette.accent)
+                    iconBadge("play.fill", tint: Chess.Palette.bronze)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Play")
                             .font(Chess.Typography.sectionTitle())
@@ -63,14 +63,14 @@ private struct QuickPlayHeroCard: View {
                         title: "Local match",
                         subtitle: "Vs. Stockfish 17",
                         icon: "cpu",
-                        tint: Chess.Palette.accent
+                        tint: Chess.Palette.bronze
                     ) { viewModel.navigate(to: .playLocal) }
 
                     QuickPlayChoice(
                         title: "Online",
                         subtitle: "Find a Lichess opponent",
                         icon: "globe",
-                        tint: Chess.Palette.accent
+                        tint: Chess.Palette.bronze
                     ) { viewModel.navigate(to: .playOnline) }
                 }
             }
@@ -122,7 +122,7 @@ private struct QuickPlayChoice: View {
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.row))
             .overlay(
                 RoundedRectangle(cornerRadius: Chess.Radius.row)
-                    .strokeBorder(tint.opacity(0.25), lineWidth: 0.5)
+                    .strokeBorder(Chess.Palette.bronze.opacity(0.35), lineWidth: 0.6)
             )
         }
         .buttonStyle(.plain)
@@ -228,7 +228,7 @@ struct PuzzleFeatureCard: View {
                 FeatureCardButton(
                     title: "Continue Puzzle",
                     icon: "play.fill",
-                    color: Chess.Palette.accent
+                    color: Chess.Palette.bronze
                 )
             }
         }
@@ -294,7 +294,7 @@ struct GameReviewFeatureCard: View {
                 FeatureCardButton(
                     title: "Review Game",
                     icon: "eye.fill",
-                    color: Chess.Palette.accent
+                    color: Chess.Palette.bronze
                 )
             }
         }

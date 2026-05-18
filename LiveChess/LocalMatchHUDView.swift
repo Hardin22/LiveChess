@@ -106,11 +106,13 @@ struct LocalMatchHUDView: View {
 
     private var header: some View {
         HStack(spacing: Chess.Space.xs) {
-            Image(systemName: "crown.fill")
-                .foregroundStyle(Chess.Palette.accent)
+            BrandMark(.iconOnly(size: 22))
             VStack(alignment: .leading, spacing: 2) {
-                Text(Chess.Brand.name)
-                    .font(.title3.weight(.semibold))
+                HStack(spacing: 0) {
+                    Text("Chess").foregroundStyle(Chess.Palette.accent)
+                    Text("+").foregroundStyle(Chess.Palette.bronze)
+                }
+                .font(.system(.title3, design: .serif).weight(.semibold))
                 Text("vs Stockfish")
                     .font(.caption)
                     .foregroundStyle(.secondary)

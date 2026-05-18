@@ -21,6 +21,7 @@ import TabletopKit
 struct ChessSceneView: View {
 
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
     /// `any MatchSession` — set in the make closure after we resolve
     /// `appModel.activeSession`. Used by the drag handler and the HUD
@@ -301,7 +302,21 @@ struct ChessSceneView: View {
             }
         } attachments: {
             Attachment(id: "match-hud") {
-                if let session = appModel.activeSession {
+                // Matchmaking overlay wins precedence — when the user
+                // taps "Find opponent", the immersive opens before any
+                // session arrives. We render the matchmaking HUD until
+                // the game session is built; then this branch becomes
+                // false and the per-session HUD below takes over.
+                if let mm = appModel.matchmaking {
+                    MatchmakingHUDView(state: mm) {
+                        // Cancel — tear down the seek + immersive.
+                        appModel.matchmaking = nil
+                        appModel.immersiveSpaceState = .inTransition
+                        Task { @MainActor in
+                            await dismissImmersiveSpace()
+                        }
+                    }
+                } else if let session = appModel.activeSession {
                     switch session {
                     case .local(let coord):
                         LocalMatchHUDView(
