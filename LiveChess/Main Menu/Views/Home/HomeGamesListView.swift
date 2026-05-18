@@ -259,7 +259,7 @@ struct GameRowSkeleton: View {
 struct GamesEmptyState: View {
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "chess.board")
+            Image(systemName: "square.grid.3x3.fill")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
             
