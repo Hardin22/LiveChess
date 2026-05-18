@@ -151,7 +151,7 @@ actor GameAnalyzer {
     func analyzeStream(
         startPosition: Position = .standardStart,
         moves: [Move],
-        depth: Int = 16,
+        depth: Int = 20,
         rules: any RulesEngine = ChessKitRulesEngine()
     ) -> AsyncThrowingStream<MoveAnalysis, Error> {
         AsyncThrowingStream { continuation in
@@ -278,7 +278,7 @@ actor GameAnalyzer {
     func analyze(
         startPosition: Position = .standardStart,
         moves: [Move],
-        depth: Int = 16,
+        depth: Int = 20,
         rules: any RulesEngine = ChessKitRulesEngine()
     ) async throws -> GameAnalysisResult {
         var collected: [MoveAnalysis] = []
@@ -297,15 +297,33 @@ actor GameAnalyzer {
         isStarted = false
     }
 
+    /// Single-position evaluation — used by the review variation flow
+    /// to grade a one-off branch move without re-running the whole
+    /// game. Returns the top-N MultiPV lines at `depth`.
+    func evaluatePosition(
+        fen: String, depth: Int = 14
+    ) async throws -> [AnalysisLine] {
+        try await ensureStarted()
+        return try await evaluate(fen: fen, depth: depth)
+    }
+
     // MARK: - Engine I/O
 
     private func ensureStarted() async throws {
         if isStarted { return }
         let available = ProcessInfo.processInfo.activeProcessorCount
-        // Leave more headroom for the UI than the play-engine does —
-        // game review is a background task, not a turn-time deadline.
-        let coreCount = max(2, min(4, available - 3))
+        // Review is a background task — there's no turn-time deadline,
+        // so feed Stockfish as many cores as we can spare while leaving
+        // 2 for the UI + system. M-class silicon comfortably hits 6+
+        // here, which roughly halves analysis time vs the previous
+        // 2–4 budget.
+        let coreCount = max(2, min(8, available - 2))
         await engine.start(coreCount: coreCount, multipv: multiPV)
+        // Default hash is 16 MB which thrashes the transposition table
+        // at depth 20+ — 256 MB matches what chess.com / Lichess use
+        // for cloud analysis. Sent post-start so it overrides whatever
+        // the wrapper picked.
+        await engine.send(command: .setoption(id: "Hash", value: "256"))
         // Strength-cap NOT applied here: review wants the full
         // engine strength to evaluate moves correctly.
         for _ in 0..<200 {

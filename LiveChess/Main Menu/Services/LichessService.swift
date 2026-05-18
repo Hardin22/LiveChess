@@ -38,6 +38,12 @@ final class LichessService {
             URLQueryItem(name: "moves", value: "false")
         ]
         if withAnalysis {
+            // `evals=true` is what actually drops the per-ply analysis
+            // array into each NDJSON record. `analysis=true` is the
+            // deprecated alias — keeping it for older Lichess clients
+            // costs nothing. `accuracy=true` adds the summary stats
+            // (which is what feeds the listing's accuracy column).
+            queryItems.append(URLQueryItem(name: "evals", value: "true"))
             queryItems.append(URLQueryItem(name: "analysis", value: "true"))
             queryItems.append(URLQueryItem(name: "accuracy", value: "true"))
         }
@@ -50,14 +56,24 @@ final class LichessService {
     }
 
     /// Single game with full analysis — used by the in-app review flow.
+    ///
+    /// Lichess exposes single-game export at `/game/export/{id}` (NOT
+    /// `/api/game/{id}` — that path 200s on a slim, moves-less payload
+    /// and was the reason every Review click landed on the
+    /// "no recorded moves" branch). Request JSON via Accept header so
+    /// we don't have to parse PGN; default Accept on that path is
+    /// `application/x-chess-pgn`.
     func fetchGame(id: String) async throws -> LichessGame {
         try await apiClient.request(
-            endpoint: "/api/game/\(id)",
+            endpoint: "/game/export/\(id)",
             queryItems: [
                 URLQueryItem(name: "analysis", value: "true"),
                 URLQueryItem(name: "accuracy", value: "true"),
                 URLQueryItem(name: "opening", value: "true"),
-                URLQueryItem(name: "moves", value: "true")
+                URLQueryItem(name: "moves", value: "true"),
+                URLQueryItem(name: "clocks", value: "true"),
+                URLQueryItem(name: "evals", value: "true"),
+                URLQueryItem(name: "pgnInJson", value: "false")
             ]
         )
     }

@@ -24,6 +24,14 @@ struct LichessGame: Identifiable, Decodable, Sendable {
     let moves: String?
     let speed: String?
     let status: String?
+    /// Per-ply analysis array returned by `/game/export/{id}?evals=true`
+    /// (or implicitly when `analysis=true` is requested). One entry per
+    /// ply with the engine's eval after the move, the best move at the
+    /// prior position, and an optional judgment for inaccuracy/mistake/
+    /// blunder. Present whenever the game has been analyzed on Lichess
+    /// — exactly the games we surface in the "Analyzed Games" tab —
+    /// and lets the review HUD skip local Stockfish entirely.
+    let analysis: [LichessMoveEval]?
 
     struct GamePlayers: Decodable, Sendable {
         let white: GamePlayer
@@ -104,6 +112,23 @@ struct GameOpening: Decodable, Sendable {
     let name: String?
     let eco: String?
     let ply: Int?
+}
+
+/// One entry of Lichess's per-ply analysis array. All evals are from
+/// **white's** point of view in centipawns; mate is signed (positive =
+/// white mates). The judgment, when present, names the move quality
+/// the way Lichess labels it ("Inaccuracy" / "Mistake" / "Blunder").
+struct LichessMoveEval: Decodable, Sendable, Hashable {
+    let eval: Int?
+    let mate: Int?
+    let best: String?         // UCI of engine's pick at the prior position
+    let variation: String?    // PV in SAN starting from `best`
+    let judgment: Judgment?
+
+    struct Judgment: Decodable, Sendable, Hashable {
+        let name: String      // "Inaccuracy" | "Mistake" | "Blunder"
+        let comment: String?
+    }
 }
 
 struct GameClock: Decodable, Sendable {

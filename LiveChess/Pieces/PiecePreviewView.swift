@@ -82,11 +82,19 @@ struct PiecePreviewView: View {
         )
         piece.name = "PreviewPiece"
         piece.position = .zero
-        // Chess pieces are ~5 cm tall in-game; 1.8× keeps the king /
-        // queen comfortably inside the 320 pt frame so the silhouette
-        // doesn't poke out the top.
-        piece.scale = SIMD3<Float>(repeating: 1.8)
+        // Chess pieces are ~5 cm tall in-game; 1.4× keeps the king /
+        // queen comfortably inside the 320 pt frame with margin top
+        // and bottom — 1.8 was clipping the king's base after the
+        // visualBounds-centre translate brought it into frame.
+        piece.scale = SIMD3<Float>(repeating: 1.4)
         turntable.addChild(piece)
+
+        // Pieces author their origin at the base, so tall silhouettes
+        // (king / queen) drift up and clip the top of the frame.
+        // Translate down by the bounding-box centre so every kind sits
+        // vertically centred regardless of its height.
+        let bounds = piece.visualBounds(relativeTo: turntable)
+        piece.position.y -= bounds.center.y
     }
 
     /// The stage holds: pedestal disc, ambient + key lights, and the
