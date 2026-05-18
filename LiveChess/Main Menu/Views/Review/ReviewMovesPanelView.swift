@@ -10,9 +10,14 @@ struct ReviewMovesPanelView: View {
 
     @Bindable var session: ReviewSession
 
+    @Environment(\.openURL) private var openURL
+
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.s) {
             header
+            if session.analysisResults.isEmpty {
+                requestAnalysisBanner
+            }
             Divider()
             movesList
         }
@@ -53,6 +58,35 @@ struct ReviewMovesPanelView: View {
             return "\(plies) plies · no Lichess analysis"
         }
         return "\(plies) plies"
+    }
+
+    /// Banner shown above the moves list when Lichess hasn't deep-
+    /// analyzed the game. Explains the situation and links straight
+    /// to the Lichess game page so the user can click "Request a
+    /// computer analysis" — after which our next fetch will pick up
+    /// the per-ply data automatically.
+    private var requestAnalysisBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("This game doesn't have deep Lichess analysis yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                if let url = URL(string: "https://lichess.org/\(session.gameId)") {
+                    openURL(url)
+                }
+            } label: {
+                Label("Request analysis on Lichess", systemImage: "arrow.up.right.square")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(Chess.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Chess.Palette.info.opacity(0.15),
+            in: RoundedRectangle(cornerRadius: Chess.Radius.row)
+        )
     }
 
     // MARK: - Moves list

@@ -22,6 +22,10 @@ final class ReviewSession: MatchSession {
     /// The result string ("1 – 0" / "½ – ½" / etc.) for the matchup
     /// header.
     let resultLine: String
+    /// Lichess game ID — used to deep-link back to the game on
+    /// lichess.org so the user can request a deep computer analysis
+    /// when Lichess hasn't already produced one.
+    let gameId: String
 
     /// Full move sequence, pre-validated against the rules engine.
     let plyMoves: [Move]
@@ -111,6 +115,7 @@ final class ReviewSession: MatchSession {
         self.positionsByPly = positions
         self.rules = rules
         self.match = Match(startPosition: .standardStart)
+        self.gameId = game.id
 
         let opp = game.opponent(for: username)
         let myAcc = game.accuracy(for: username).map { String(format: "%.0f%%", $0) }
