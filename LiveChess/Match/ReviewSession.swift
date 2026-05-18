@@ -93,6 +93,19 @@ final class ReviewSession: MatchSession {
         case "black": self.resultLine = "0 – 1"
         default:      self.resultLine = "½ – ½"
         }
+
+        // Lichess already analyzed this game on their servers — every
+        // entry in `Analyzed Games` carries an `analysis` array. Seed
+        // the HUD directly from Lichess so classifications appear the
+        // instant the immersive board opens, instead of waiting for
+        // local Stockfish to chew through 40 plies at depth 20.
+        if let cloudEvals = game.analysis, !cloudEvals.isEmpty {
+            self.analysisResults = Self.buildAnalysis(
+                from: cloudEvals,
+                plyMoves: parsed,
+                positionsByPly: positions
+            )
+        }
     }
 
     // MARK: - MatchSession
@@ -183,6 +196,10 @@ final class ReviewSession: MatchSession {
     // MARK: - Analysis (kicked off by the HUD on first appearance)
 
     func startAnalysisIfNeeded() {
+        // Lichess cloud already populated `analysisResults` in init — no
+        // need to spin up local Stockfish at all. Saves the user ~90 s
+        // per game on a typical 40-move review.
+        guard analysisResults.isEmpty else { return }
         guard analyzer == nil, !plyMoves.isEmpty else { return }
         let analyzer = GameAnalyzer(multiPV: 3)
         self.analyzer = analyzer
@@ -240,4 +257,138 @@ final class ReviewSession: MatchSession {
 
     var canStepBack: Bool { currentPly >= 0 }
     var canStepForward: Bool { currentPly + 1 < plyMoves.count }
+
+    // MARK: - Lichess-cloud → MoveAnalysis
+
+    /// Maps Lichess's per-ply analysis array into our `MoveAnalysis`
+    /// shape so the HUD can render badges and engine lines without
+    /// re-running Stockfish. Lichess evals are in centipawns from
+    /// **white's** point of view; we re-orient to the mover's POV so
+    /// the existing classifier behaves identically to the local one.
+    ///
+    /// `judgment.name` on Lichess uses three labels — "Inaccuracy",
+    /// "Mistake", "Blunder". Moves without a judgment but where played
+    /// == best get `.best`; everything else gets the win-% bucket
+    /// (`.excellent` / `.good`) the local analyzer would have picked.
+    nonisolated static func buildAnalysis(
+        from cloud: [LichessMoveEval],
+        plyMoves: [Move],
+        positionsByPly: [Position]
+    ) -> [MoveAnalysis] {
+        var out: [MoveAnalysis] = []
+        out.reserveCapacity(min(cloud.count, plyMoves.count))
+
+        // White's POV eval before any move. `0` matches the convention
+        // every UCI engine uses for the start position.
+        var prevEvalWhitePOV = 0
+
+        for (ply, entry) in cloud.enumerated() where ply < plyMoves.count {
+            let mover: Side = (ply % 2 == 0) ? .white : .black
+
+            // Convert Lichess's white-POV eval into mover-POV scores.
+            // For `mate`, fold into a large signed cp so the existing
+            // win-% sigmoid saturates correctly without a special path.
+            let evalAfterWhite: Int
+            if let mate = entry.mate {
+                evalAfterWhite = GameAnalyzer.mateToCp(mate)
+            } else {
+                evalAfterWhite = entry.eval ?? prevEvalWhitePOV
+            }
+            let evalBeforeMover = (mover == .white) ?  prevEvalWhitePOV : -prevEvalWhitePOV
+            let evalAfterMover  = (mover == .white) ?  evalAfterWhite   : -evalAfterWhite
+
+            // Lichess doesn't tell us "what eval would the best move
+            // have produced". The standard assumption — also what
+            // Lichess uses internally — is that the best move would
+            // have maintained the eval as it was BEFORE the move
+            // (mover's POV). Anything worse than that is the player's
+            // loss for this ply.
+            let bestScoreCp = evalBeforeMover
+            let playedScoreCp = evalAfterMover
+            let cpLoss = max(0, min(1000, bestScoreCp - playedScoreCp))
+            let winLoss = max(
+                0.0,
+                GameAnalyzer.winPercent(fromCp: bestScoreCp)
+                  - GameAnalyzer.winPercent(fromCp: playedScoreCp)
+            )
+
+            // Build a single-line `topLines` from Lichess's best/
+            // variation pair so the HUD's engine-line card has
+            // something to show. PV is in SAN on Lichess; the HUD
+            // already renders SAN tokens directly.
+            var topLines: [AnalysisLine] = []
+            if let best = entry.best {
+                let pv = entry.variation?
+                    .split(separator: " ")
+                    .map(String.init) ?? [best]
+                topLines.append(AnalysisLine(
+                    uci: best,
+                    scoreCp: bestScoreCp,
+                    mate: (mover == .white) ? entry.mate : entry.mate.map { -$0 },
+                    pv: pv
+                ))
+            }
+
+            let quality = qualityFromLichess(
+                entry: entry,
+                playedUCI: plyMoves[ply].uci,
+                winPercentLoss: winLoss,
+                bestScoreCp: bestScoreCp,
+                playedScoreCp: playedScoreCp
+            )
+
+            out.append(MoveAnalysis(
+                id: ply,
+                san: plyMoves[ply].uci,
+                playedUCI: plyMoves[ply].uci,
+                mover: mover,
+                playedScoreCp: playedScoreCp,
+                bestScoreCp: bestScoreCp,
+                centipawnLoss: cpLoss,
+                winPercentLoss: winLoss,
+                topLines: topLines,
+                quality: quality,
+                bookOpening: nil
+            ))
+
+            prevEvalWhitePOV = evalAfterWhite
+        }
+        return out
+    }
+
+    /// Map a Lichess judgment to our `MoveQuality`. When the entry
+    /// carries no judgment Lichess considers the move "in book" —
+    /// either an opening line or simply unannotated. We pick the
+    /// closest bucket from the win-% loss so the HUD still shows a
+    /// classification (best / excellent / good) instead of leaving
+    /// those moves blank.
+    nonisolated static func qualityFromLichess(
+        entry: LichessMoveEval,
+        playedUCI: String,
+        winPercentLoss: Double,
+        bestScoreCp: Int,
+        playedScoreCp: Int
+    ) -> MoveQuality {
+        if bestScoreCp >= 200, playedScoreCp <= 50 {
+            return .missedWin
+        }
+        if let name = entry.judgment?.name {
+            switch name {
+            case "Inaccuracy": return .inaccuracy
+            case "Mistake":    return .mistake
+            case "Blunder":    return .blunder
+            default:           break
+            }
+        }
+        if let best = entry.best, best == playedUCI {
+            return .best
+        }
+        switch winPercentLoss {
+        case ..<2:    return .excellent
+        case ..<5:    return .good
+        case ..<10:   return .inaccuracy
+        case ..<20:   return .mistake
+        default:      return .blunder
+        }
+    }
 }

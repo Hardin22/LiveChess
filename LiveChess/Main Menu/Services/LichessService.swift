@@ -66,6 +66,7 @@ final class LichessService {
                 URLQueryItem(name: "opening", value: "true"),
                 URLQueryItem(name: "moves", value: "true"),
                 URLQueryItem(name: "clocks", value: "true"),
+                URLQueryItem(name: "evals", value: "true"),
                 URLQueryItem(name: "pgnInJson", value: "false")
             ]
         )
