@@ -63,19 +63,20 @@ enum BalconyEnvironment: EnvironmentScene {
         // soften pass) so the warm wash on the wall stays visible.
         content.add(env)
 
-        // Dynamic re-anchor: find the chair+table cluster, read its
-        // world-space centre after the rotation, then shift the env
-        // so that centre lands at the target seated-POV position.
-        if let cluster = env.findEntity(named: chairTableEntityName)
-            ?? env.findEntity(named: "ChairTable_Root") {
-            let b = cluster.visualBounds(relativeTo: nil)
-            let target = SIMD3<Float>(
-                targetClusterCenterXZ.x,
-                b.center.y,
-                targetClusterCenterXZ.y
-            )
-            env.transform.translation += (target - b.center)
-        } else {
+        // Dynamic re-anchor: pin the chair+table cluster centre directly
+        // in front of the user via the shared helper. Same approach used
+        // by every other env so the player always spawns "seated" facing
+        // the board regardless of which backdrop they pick.
+        let anchored = EnvironmentLighting.anchorEnvByTable(
+            env,
+            tableNamed: chairTableEntityName,
+            frontDistance: 0.55
+        ) || EnvironmentLighting.anchorEnvByTable(
+            env,
+            tableNamed: "ChairTable_Root",
+            frontDistance: 0.55
+        )
+        if !anchored {
             // No cluster entity — best-effort seated-POV transform.
             env.transform.translation = SIMD3<Float>(0, 0, -0.55)
         }

@@ -27,27 +27,31 @@ enum DwarvenHallEnvironment: EnvironmentScene {
         // Seated-POV transform from the env author's reference scene.
         // Black chair sits at (9, 0, 0.62) facing -X toward the table.
         // Rotating -π/2 around Y maps chair-forward (-X) to user-forward
-        // (-Z), and translating by (0, +0.3, -9.15) lands the chair eye
-        // at the user's natural standing eye level near world origin.
+        // (-Z); the env's Y is lifted so the floor plane lands at the
+        // user's feet. The X/Z translation is then refined dynamically
+        // by `anchorEnvByTable(...)` so the AntiqueTable lands directly
+        // in front of the user — guarantees the player spawns "seated"
+        // at the board no matter how the asset was authored.
         env.transform.rotation = simd_quatf(
             angle: -.pi / 2, axis: SIMD3<Float>(0, 1, 0)
         )
-        env.position = SIMD3<Float>(0, 0.3, -9.15)
+        env.position = SIMD3<Float>(0, 0.3, 0)
 
         EnvironmentLighting.softenEmbeddedLights(in: env)
         content.add(env)
 
-        guard let table = env.findEntity(named: "AntiqueTable") else {
+        guard env.findEntity(named: "AntiqueTable") != nil else {
             return nil
         }
-        let bounds = table.visualBounds(relativeTo: nil)
-        let tableTopY = bounds.center.y + bounds.extents.y / 2
-        // ~6 mm lift above the table mesh so the board frame doesn't
-        // z-fight the table surface.
-        let lift: Float = 0.006
-        let boardPosition = SIMD3<Float>(
-            bounds.center.x, tableTopY + lift, bounds.center.z
+        // Pin the table in front of the user. The black chair authored
+        // adjacent to the table in the .blend trails behind world origin
+        // as a side effect, putting the player seated in it.
+        EnvironmentLighting.anchorEnvByTable(
+            env, tableNamed: "AntiqueTable", frontDistance: 0.55
         )
+        guard let boardPosition = EnvironmentLighting.boardPosition(
+            onTableNamed: "AntiqueTable", in: env
+        ) else { return nil }
 
         addNoirLighting(into: content)
         addDustMotes(into: content)

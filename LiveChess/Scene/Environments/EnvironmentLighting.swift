@@ -71,4 +71,37 @@ enum EnvironmentLighting {
         let topY = bounds.center.y + bounds.extents.y / 2
         return SIMD3<Float>(bounds.center.x, topY + lift, bounds.center.z)
     }
+
+    /// Shifts the env's translation so the named table entity's world-space
+    /// centre lands at `(0, currentY, -frontDistance)` — i.e. directly in
+    /// front of the user at the requested distance. The chair authored
+    /// adjacent to the table in the source `.blend` falls into place
+    /// behind the user as a side effect, so the player always spawns
+    /// "seated" facing the board regardless of which env they pick.
+    ///
+    /// Call **after** any rotation / scale on the env is set (so the
+    /// world-space bounds reflect the final orientation) and **before**
+    /// reading `boardPosition(onTableNamed:in:)` (the board must land
+    /// on the post-anchor table position).
+    ///
+    /// Returns `false` if the table entity can't be resolved — the caller
+    /// is responsible for surfacing a best-effort fallback.
+    @discardableResult
+    static func anchorEnvByTable(
+        _ env: Entity,
+        tableNamed name: String,
+        frontDistance: Float = 0.55
+    ) -> Bool {
+        guard let table = env.findEntity(named: name) else { return false }
+        let b = table.visualBounds(relativeTo: nil)
+        // Keep the env's current Y (floor height authored in Blender) and
+        // only correct X/Z so the table centre sits in front of the user.
+        let delta = SIMD3<Float>(
+            -b.center.x,
+            0,
+            -frontDistance - b.center.z
+        )
+        env.transform.translation += delta
+        return true
+    }
 }

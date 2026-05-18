@@ -26,19 +26,26 @@ enum AuditoriumStageEnvironment: EnvironmentScene {
         env.name = "VirtualEnvironment_AuditoriumStage"
 
         // Authored facing forward (-Z after Y-up conversion). No
-        // rotation; pull the user slightly back from the stage centre
-        // so the player chair lands in front of the seated POV.
+        // rotation; the X/Z translation is then refined dynamically by
+        // `anchorEnvByTable(...)` so the Table lands directly in front
+        // of the user — the player chair authored adjacent to it in
+        // the .blend falls behind world origin and the player spawns
+        // seated at it.
         env.transform.rotation = simd_quatf(
             angle: 0, axis: SIMD3<Float>(0, 1, 0)
         )
-        env.position = SIMD3<Float>(0, 0.0, -0.4)
+        env.position = .zero
 
         EnvironmentLighting.softenEmbeddedLights(in: env)
         content.add(env)
 
+        EnvironmentLighting.anchorEnvByTable(
+            env, tableNamed: tableEntityName, frontDistance: 0.55
+        )
+
         let boardPos = EnvironmentLighting.boardPosition(
             onTableNamed: tableEntityName, in: env
-        ) ?? SIMD3<Float>(0, 0.78, 0)
+        ) ?? SIMD3<Float>(0, 0.78, -0.55)
 
         addAuditoriumLighting(into: content)
         addArenaBackdrop(into: content)
