@@ -15,11 +15,19 @@ struct ReviewMovesPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.s) {
             header
-            if session.analysisResults.isEmpty {
-                requestAnalysisBanner
-            }
             Divider()
-            movesList
+            if session.isAnalyzing {
+                // While the depth-10 batch is running we suppress the
+                // moves list and the "request on Lichess" banner —
+                // both would render un-classified rows that flip when
+                // the atomic swap lands. Single spinner reads cleaner.
+                analysingPlaceholder
+            } else {
+                if session.analysisResults.isEmpty {
+                    requestAnalysisBanner
+                }
+                movesList
+            }
         }
         .padding(Chess.Space.m)
         .frame(width: 320, height: 460, alignment: .top)
@@ -58,6 +66,26 @@ struct ReviewMovesPanelView: View {
             return "\(plies) plies · no Lichess analysis"
         }
         return "\(plies) plies"
+    }
+
+    /// Placeholder shown in place of the moves list while the depth-10
+    /// fallback batch is running. Single spinner, no per-ply rows —
+    /// rows would flip from un-classified to classified the moment
+    /// the atomic swap lands, which reads worse than waiting once.
+    private var analysingPlaceholder: some View {
+        VStack(spacing: Chess.Space.s) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(Chess.Palette.accent)
+            Text("Analysing game…")
+                .font(.callout.weight(.medium))
+            Text("Classifying every move with Stockfish.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 24)
     }
 
     /// Banner shown above the moves list when Lichess hasn't deep-

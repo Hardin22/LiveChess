@@ -82,6 +82,13 @@ struct ReviewHUDView: View {
             .padding(Chess.Space.s)
             .background(.thinMaterial, in:
                             RoundedRectangle(cornerRadius: Chess.Radius.row))
+        } else if session.isAnalyzing {
+            HStack(spacing: 6) {
+                ProgressView().tint(Chess.Palette.accent)
+                Text("Analysing game…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         } else if session.currentPly < 0 {
             Text("Starting position")
                 .font(.caption)

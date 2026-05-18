@@ -16,8 +16,16 @@ struct ReviewEvalBarView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            scoreLabel
-            bar
+            if session.isAnalyzing {
+                // Hide the score + bar while the depth-10 batch runs —
+                // a 0.00 reading would falsely suggest the position is
+                // equal. Show a compact spinner instead and let the
+                // bar animate to its first real value on completion.
+                analysingPlaceholder
+            } else {
+                scoreLabel
+                bar
+            }
         }
         .padding(10)
         .background(.regularMaterial, in:
@@ -27,6 +35,18 @@ struct ReviewEvalBarView: View {
             RoundedRectangle(cornerRadius: Chess.Radius.card, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
         )
+    }
+
+    private var analysingPlaceholder: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.regular)
+                .tint(Chess.Palette.accent)
+            Text("Evaluating")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: barWidth + 20, height: barHeight + 30)
     }
 
     // MARK: - Score label
