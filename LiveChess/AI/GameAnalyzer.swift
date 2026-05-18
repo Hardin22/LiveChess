@@ -297,6 +297,16 @@ actor GameAnalyzer {
         isStarted = false
     }
 
+    /// Single-position evaluation — used by the review variation flow
+    /// to grade a one-off branch move without re-running the whole
+    /// game. Returns the top-N MultiPV lines at `depth`.
+    func evaluatePosition(
+        fen: String, depth: Int = 14
+    ) async throws -> [AnalysisLine] {
+        try await ensureStarted()
+        return try await evaluate(fen: fen, depth: depth)
+    }
+
     // MARK: - Engine I/O
 
     private func ensureStarted() async throws {

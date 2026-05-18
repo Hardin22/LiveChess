@@ -19,6 +19,7 @@ struct ReviewHUDView: View {
             engineLineCard
             Divider()
             navigationBar
+            if session.isInVariation { variationFooter }
             exitButton
         }
         .padding(Chess.Space.m)
@@ -159,6 +160,35 @@ struct ReviewHUDView: View {
         .hoverEffect(.lift)
         .disabled(disabled)
         .opacity(disabled ? 0.45 : 1)
+    }
+
+    /// Surfaced only when the user has branched off the main game line
+    /// via a piece drag. Shows the variation length + a button to
+    /// snap the board back to the main-line position at `currentPly`.
+    private var variationFooter: some View {
+        HStack(spacing: Chess.Space.s) {
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundStyle(Chess.Palette.info)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Side line · \(session.variation.count) \(session.variation.count == 1 ? "move" : "moves")")
+                    .font(.callout.weight(.semibold))
+                Text("Drag pieces to keep exploring")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button {
+                session.clearVariation()
+            } label: {
+                Label("Back", systemImage: "arrow.uturn.backward")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(Chess.Space.s)
+        .background(.thinMaterial,
+                    in: RoundedRectangle(cornerRadius: Chess.Radius.row))
     }
 
     private var exitButton: some View {

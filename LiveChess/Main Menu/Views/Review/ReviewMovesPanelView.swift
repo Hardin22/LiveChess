@@ -67,6 +67,9 @@ struct ReviewMovesPanelView: View {
                         }
                         .id(pair.number)
                     }
+                    if session.isInVariation {
+                        variationThread
+                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -77,8 +80,67 @@ struct ReviewMovesPanelView: View {
                     proxy.scrollTo(pairNumber, anchor: .center)
                 }
             }
+            .onChange(of: session.variation.count) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("variation-tip", anchor: .bottom)
+                }
+            }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// Indented "side line" thread shown when the user has dragged
+    /// pieces to branch off the main game line. Each variation move
+    /// renders with its classification glyph in the same style as
+    /// main-line cells; quality slots are placeholder `good` until
+    /// local Stockfish lands the eval, then they upgrade in place.
+    private var variationThread: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.caption2)
+                    .foregroundStyle(Chess.Palette.info)
+                Text("Side line")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Chess.Palette.info)
+                Spacer(minLength: 0)
+                Button("Reset") { session.clearVariation() }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+            }
+            .padding(.top, 6)
+            .padding(.leading, 34)
+
+            ForEach(Array(session.variation.enumerated()), id: \.offset) { idx, step in
+                let analysis = idx < session.variationAnalysis.count
+                    ? session.variationAnalysis[idx] : nil
+                HStack(spacing: 6) {
+                    Text("\(idx + 1).")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Chess.Palette.info.opacity(0.7))
+                        .frame(width: 28, alignment: .trailing)
+                    HStack(spacing: 4) {
+                        Text(step.move.uci)
+                            .font(.callout.monospaced())
+                        if let q = analysis?.quality {
+                            Text(q.glyph)
+                                .font(.callout.weight(.bold))
+                                .foregroundStyle(qualityColor(q))
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Chess.Palette.info.opacity(0.18),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 12)
+            }
+            Color.clear.frame(height: 1).id("variation-tip")
+        }
     }
 
     private struct Cell {

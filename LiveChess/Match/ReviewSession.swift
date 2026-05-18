@@ -42,6 +42,25 @@ final class ReviewSession: MatchSession {
     /// True when auto-play is stepping forward on a timer.
     private(set) var isAutoPlaying: Bool = false
 
+    /// Stack of moves the user has played as a side variation off the
+    /// main game line. Empty = displaying main line at `currentPly`.
+    /// Non-empty = the board is at the variation's tip; main-line
+    /// navigation (chevrons / scrub) clears the variation first.
+    private(set) var variation: [VariationStep] = []
+
+    /// Per-variation-move analysis from local Stockfish. Indexed
+    /// 1-to-1 with `variation`. Mirrors `analysisResults` semantically
+    /// — the HUD reads from this when `variation.isNotEmpty`.
+    private(set) var variationAnalysis: [MoveAnalysis] = []
+
+    /// One pushed move on the user-explored variation.
+    struct VariationStep: Sendable {
+        let move: Move
+        let positionBefore: Position
+        let positionAfter: Position
+        let status: GameStatus
+    }
+
     /// Underlying `Match` re-built every time the user navigates so
     /// `ChessSceneView` can re-seed pieces. We replay through the
     /// rules engine on each navigation rather than mutating the
@@ -110,31 +129,93 @@ final class ReviewSession: MatchSession {
 
     // MARK: - MatchSession
 
-    var isHumanTurn: Bool { false }
-    func legalMoves(from square: Square) -> [Move] { [] }
-    func submitMove(_ move: Move) async { /* read-only */ }
+    /// Always true during review — we want the user to be able to grab
+    /// any piece from any reached position and play an alternative
+    /// move. `submitMove` decides whether it lands in the main line
+    /// or pushes onto the variation stack.
+    var isHumanTurn: Bool { true }
+
+    /// Legal moves at the *displayed* position. When the user is in a
+    /// variation, this is the variation tip; otherwise it's the main
+    /// line's position at `currentPly + 1`.
+    func legalMoves(from square: Square) -> [Move] {
+        rules.legalMoves(from: square, in: displayedPosition)
+    }
+
+    /// Apply an alternative move on top of the current display. Always
+    /// pushes onto the variation stack — main-line moves replay via
+    /// the chevrons / scrub, never by drag.
+    func submitMove(_ move: Move) async {
+        stopAutoPlay()
+        let from = displayedPosition
+        guard let after = try? rules.apply(move, to: from) else { return }
+        let history = positionsByPly + variation.map(\.positionAfter) + [after]
+        let status = rules.status(of: after, history: history)
+        let step = VariationStep(
+            move: move,
+            positionBefore: from,
+            positionAfter: after,
+            status: status
+        )
+        variation.append(step)
+        match.apply(move: move, resulting: after, status: status)
+        moveAppliedHandler?(move)
+        let index = variation.count - 1
+        Task { await analyzeVariationStep(at: index) }
+    }
+
+    /// Drop the variation stack and re-seed the board to the main-line
+    /// position at `currentPly`. Called from the HUD's "Back to game"
+    /// button and implicitly when the user uses any main-line nav.
+    func clearVariation() {
+        guard !variation.isEmpty else { return }
+        variation.removeAll()
+        variationAnalysis.removeAll()
+        rebuildMatchAndAnnounce()
+    }
+
+    /// True iff the user has branched off the main line.
+    var isInVariation: Bool { !variation.isEmpty }
+
+    /// Position the renderer is showing — main-line tip or variation tip.
+    var displayedPosition: Position {
+        if let last = variation.last { return last.positionAfter }
+        let idx = currentPly + 1
+        return (idx >= 0 && idx < positionsByPly.count)
+            ? positionsByPly[idx] : .standardStart
+    }
 
     // MARK: - Navigation
 
     func stepForward() {
         stopAutoPlay()
+        if isInVariation { clearVariation(); return }
         advance(by: 1)
     }
     func stepBack() {
         stopAutoPlay()
+        if isInVariation { clearVariation(); return }
         advance(by: -1)
     }
     func goToStart() {
         stopAutoPlay()
+        if isInVariation { variation.removeAll(); variationAnalysis.removeAll() }
         jumpTo(ply: -1)
     }
     func goToEnd() {
         stopAutoPlay()
+        if isInVariation { variation.removeAll(); variationAnalysis.removeAll() }
         jumpTo(ply: plyMoves.count - 1)
     }
     func jumpTo(ply: Int) {
+        if isInVariation { variation.removeAll(); variationAnalysis.removeAll() }
         let clamped = max(-1, min(plyMoves.count - 1, ply))
-        guard clamped != currentPly else { return }
+        guard clamped != currentPly else {
+            // Same ply requested — still need to rebuild the board if
+            // the variation cleared above changed the displayed state.
+            rebuildMatchAndAnnounce()
+            return
+        }
         currentPly = clamped
         rebuildMatchAndAnnounce()
     }
@@ -175,6 +256,14 @@ final class ReviewSession: MatchSession {
 
     private func startAutoPlay() {
         guard !isAutoPlaying else { return }
+        // Auto-play replays the MAIN game line — if the user is in a
+        // side variation when they hit play, drop the variation first
+        // so the timer doesn't advance an out-of-sync currentPly.
+        if isInVariation {
+            variation.removeAll()
+            variationAnalysis.removeAll()
+            rebuildMatchAndAnnounce()
+        }
         isAutoPlaying = true
         autoPlayTask = Task { @MainActor [weak self] in
             while let self, self.isAutoPlaying,
@@ -231,6 +320,109 @@ final class ReviewSession: MatchSession {
         Task { await a?.shutdown() }
     }
 
+    /// Grade a single variation move on local Stockfish. Spins the
+    /// engine up lazily so cloud-analyzed reviews don't pay the
+    /// Stockfish start-up cost until the user actually branches off.
+    /// Streams the result back into `variationAnalysis[index]` as
+    /// soon as Stockfish reports a bestmove.
+    func analyzeVariationStep(at index: Int) async {
+        guard index >= 0, index < variation.count else { return }
+        let step = variation[index]
+
+        if analyzer == nil {
+            analyzer = GameAnalyzer(multiPV: 3)
+        }
+        guard let analyzer else { return }
+
+        // Pre-fill a "thinking" slot so the panel shows the move even
+        // before Stockfish lands. Quality defaults to `.good` —
+        // upgraded once the eval comes back.
+        let placeholder = MoveAnalysis(
+            id: index,
+            san: step.move.uci,
+            playedUCI: step.move.uci,
+            mover: step.positionBefore.sideToMove,
+            playedScoreCp: 0,
+            bestScoreCp: 0,
+            centipawnLoss: 0,
+            winPercentLoss: 0,
+            topLines: [],
+            quality: .good,
+            bookOpening: nil
+        )
+        while variationAnalysis.count <= index {
+            variationAnalysis.append(placeholder)
+        }
+        variationAnalysis[index] = placeholder
+
+        do {
+            // Evaluate the position BEFORE the variation move at a
+            // lower depth than main-line review (14 vs 20) so single
+            // branches feel snappy — a couple of seconds, not 5+.
+            let linesBefore = try await analyzer.evaluatePosition(
+                fen: step.positionBefore.fen, depth: 14
+            )
+            // And the position AFTER, to score the move's resulting
+            // eval from the SAME mover's POV.
+            let linesAfter = try await analyzer.evaluatePosition(
+                fen: step.positionAfter.fen, depth: 14
+            )
+
+            // Make sure the variation hasn't been popped while we were
+            // computing — if it has, drop the result on the floor.
+            guard index < variation.count,
+                  variation[index].move == step.move else { return }
+
+            let bestScore = linesBefore.first?.scoreCp ?? 0
+            let playedFromAfter = -(linesAfter.first?.scoreCp ?? 0)
+            let playedScore = linesBefore
+                .first(where: { $0.uci == step.move.uci })?
+                .scoreCp ?? playedFromAfter
+
+            let cpLoss = max(0, min(1000, bestScore - playedScore))
+            let winLoss = max(
+                0.0,
+                GameAnalyzer.winPercent(fromCp: bestScore)
+                  - GameAnalyzer.winPercent(fromCp: playedScore)
+            )
+
+            let materialDelta = GameAnalyzer.materialBalance(
+                for: step.positionBefore.sideToMove, in: step.positionAfter
+            ) - GameAnalyzer.materialBalance(
+                for: step.positionBefore.sideToMove, in: step.positionBefore
+            )
+
+            let quality = GameAnalyzer.classify(
+                played: step.move.uci,
+                best: linesBefore.first?.uci,
+                bestScoreCp: bestScore,
+                playedScoreCp: playedScore,
+                winPercentLoss: winLoss,
+                materialDelta: materialDelta,
+                lines: linesBefore
+            )
+
+            let analysis = MoveAnalysis(
+                id: index,
+                san: step.move.uci,
+                playedUCI: step.move.uci,
+                mover: step.positionBefore.sideToMove,
+                playedScoreCp: playedScore,
+                bestScoreCp: bestScore,
+                centipawnLoss: cpLoss,
+                winPercentLoss: winLoss,
+                topLines: linesBefore,
+                quality: quality,
+                bookOpening: nil
+            )
+            if index < variationAnalysis.count {
+                variationAnalysis[index] = analysis
+            }
+        } catch {
+            // Non-fatal — the placeholder stays, board still works.
+        }
+    }
+
     // MARK: - Derived UI helpers
 
     var currentMove: Move? {
@@ -247,12 +439,20 @@ final class ReviewSession: MatchSession {
     }
 
     var currentClassification: MoveAnalysis? {
+        // Variation tip wins — that's what's actually on the board.
+        if let idx = variation.indices.last,
+           idx < variationAnalysis.count {
+            return variationAnalysis[idx]
+        }
         guard currentPly >= 0, currentPly < analysisResults.count else { return nil }
         return analysisResults[currentPly]
     }
 
     var plyLabel: String {
-        "\(currentPly + 1) / \(plyMoves.count)"
+        if isInVariation {
+            return "\(currentPly + 1) / \(plyMoves.count) · branch +\(variation.count)"
+        }
+        return "\(currentPly + 1) / \(plyMoves.count)"
     }
 
     var canStepBack: Bool { currentPly >= 0 }
