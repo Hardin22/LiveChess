@@ -286,6 +286,13 @@ struct ChessSceneView: View {
                 review.reviewHighlightHandler = { [weak renderer] from, to, quality in
                     renderer?.setReviewHighlight(from: from, to: to, quality: quality)
                 }
+                review.bestMoveArrowHandler = { [weak renderer] from, to in
+                    if let from, let to {
+                        renderer?.showBestMoveArrow(from: from, to: to)
+                    } else {
+                        renderer?.clearBestMoveArrow()
+                    }
+                }
                 // Initial paint — covers the case where the user lands
                 // on the immersive at currentPly == -1 (clears any
                 // stale highlight) and ensures we don't have to wait

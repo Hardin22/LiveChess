@@ -81,6 +81,13 @@ final class ReviewSession: MatchSession {
     /// quality-coloured overlay on the board.
     var reviewHighlightHandler: (@MainActor (Square?, Square?, MoveQuality?) -> Void)?
 
+    /// Fires alongside the highlight whenever the displayed move
+    /// wasn't the engine's top pick — carries the engine's preferred
+    /// move's source + destination so the renderer can draw a 3D
+    /// arrow showing the recommended alternative. `(nil, nil)` means
+    /// hide the arrow (played == best, no analysis yet, etc.).
+    var bestMoveArrowHandler: (@MainActor (Square?, Square?) -> Void)?
+
     init?(game: LichessGame,
           username: String,
           rules: any RulesEngine = ChessKitRulesEngine()) {
@@ -273,21 +280,34 @@ final class ReviewSession: MatchSession {
     /// being displayed: emits a `(nil, nil, nil)` payload that the
     /// renderer interprets as "clear".
     func emitReviewHighlight() {
-        guard let handler = reviewHighlightHandler else { return }
-        if let lastStep = variation.last {
-            let idx = variation.count - 1
-            let quality = (idx < variationAnalysis.count)
-                ? variationAnalysis[idx].quality : nil
-            handler(lastStep.move.from, lastStep.move.to, quality)
-            return
+        // Compute the displayed move + its analysis once and dispatch
+        // to both handlers. Highlight always fires; arrow only when
+        // the played move ≠ engine's pick AND we have a best move.
+        let (move, quality, bestUCI): (Move?, MoveQuality?, String?) = {
+            if let lastStep = variation.last {
+                let idx = variation.count - 1
+                let a = (idx < variationAnalysis.count) ? variationAnalysis[idx] : nil
+                return (lastStep.move, a?.quality, a?.topLines.first?.uci)
+            }
+            guard currentPly >= 0, currentPly < plyMoves.count else {
+                return (nil, nil, nil)
+            }
+            let m = plyMoves[currentPly]
+            let a = (currentPly < analysisResults.count) ? analysisResults[currentPly] : nil
+            return (m, a?.quality, a?.topLines.first?.uci)
+        }()
+
+        reviewHighlightHandler?(move?.from, move?.to, quality)
+
+        if let handler = bestMoveArrowHandler {
+            if let move, let bestUCI,
+               bestUCI != move.uci,
+               let best = Move(uci: bestUCI) {
+                handler(best.from, best.to)
+            } else {
+                handler(nil, nil)
+            }
         }
-        guard currentPly >= 0, currentPly < plyMoves.count else {
-            handler(nil, nil, nil); return
-        }
-        let move = plyMoves[currentPly]
-        let quality = (currentPly < analysisResults.count)
-            ? analysisResults[currentPly].quality : nil
-        handler(move.from, move.to, quality)
     }
 
     // MARK: - Auto-play

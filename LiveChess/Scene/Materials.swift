@@ -94,6 +94,18 @@ enum ChessMaterials {
         return m
     }
 
+    /// Glowing teal-cyan material used for the floating best-move
+    /// arrow shown during review on plies where the user did NOT
+    /// play the engine's pick. Bright + slightly transparent so the
+    /// arrow reads against both white and black squares without
+    /// fighting the piece silhouettes.
+    static func bestMoveArrowMaterial() -> UnlitMaterial {
+        var m = UnlitMaterial()
+        m.color = .init(tint: UIColor(red: 0.30, green: 0.95, blue: 1.00, alpha: 1))
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.90))
+        return m
+    }
+
     private static func tint(for quality: MoveQuality) -> UIColor {
         switch quality {
         case .brilliant:        return UIColor(red: 0.10, green: 0.85, blue: 1.00, alpha: 1)

@@ -364,6 +364,80 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         reviewToOverlay = nil
     }
 
+    // MARK: - Best-move arrow
+
+    /// Floating arrow that shows the engine's recommended alternative
+    /// at the current review ply. Only rendered when the user played
+    /// something other than the engine's pick — otherwise the arrow
+    /// would just duplicate the move highlight. Cleared automatically
+    /// on every navigation event.
+    private var bestMoveArrow: Entity?
+
+    func showBestMoveArrow(from: Square, to: Square) {
+        clearBestMoveArrow()
+        var origin = BoardSurface.position(for: from)
+        var target = BoardSurface.position(for: to)
+        // Lift well above the board surface so the arrow floats over the
+        // pieces rather than clipping through them.
+        origin.y = SceneMetrics.boardSurfaceY + 0.020
+        target.y = SceneMetrics.boardSurfaceY + 0.020
+
+        let direction = target - origin
+        let length = simd_length(SIMD2<Float>(direction.x, direction.z))
+        guard length > 0.001 else { return }
+
+        // Parent at the arrow's centre, rotated so its local +X points
+        // along the board direction from `from` toward `to`.
+        let parent = Entity()
+        parent.position = (origin + target) * 0.5
+        let angle = atan2(direction.z, direction.x)
+        // RealityKit's Y axis is "up"; we want to spin around Y so the
+        // arrow lies flat on the board plane. Negate angle because
+        // generateBox/Cone default to +X along the world axis.
+        parent.transform.rotation = simd_quatf(
+            angle: -angle, axis: SIMD3<Float>(0, 1, 0)
+        )
+
+        let headLen: Float = 0.020
+        let shaftLen: Float = max(0.001, length - headLen)
+        let thickness: Float = 0.008
+
+        // Shaft — thin box along local X.
+        let shaftMesh = MeshResource.generateBox(
+            size: [shaftLen, thickness, thickness * 0.85],
+            cornerRadius: 0.002
+        )
+        let shaft = ModelEntity(
+            mesh: shaftMesh,
+            materials: [ChessMaterials.bestMoveArrowMaterial()]
+        )
+        shaft.position = SIMD3<Float>(-headLen / 2, 0, 0)
+        parent.addChild(shaft)
+
+        // Arrowhead — cone, default axis Y → rotate −90° around Z so
+        // the tip points in +X.
+        let headMesh = MeshResource.generateCone(
+            height: headLen, radius: thickness * 1.6
+        )
+        let head = ModelEntity(
+            mesh: headMesh,
+            materials: [ChessMaterials.bestMoveArrowMaterial()]
+        )
+        head.transform.rotation = simd_quatf(
+            angle: -.pi / 2, axis: SIMD3<Float>(0, 0, 1)
+        )
+        head.position = SIMD3<Float>(length / 2 - headLen / 2, 0, 0)
+        parent.addChild(head)
+
+        rootEntity.addChild(parent)
+        bestMoveArrow = parent
+    }
+
+    func clearBestMoveArrow() {
+        bestMoveArrow?.removeFromParent()
+        bestMoveArrow = nil
+    }
+
     private func makeReviewOverlay(at square: Square,
                                    material: UnlitMaterial) -> ModelEntity {
         let size = SceneMetrics.squareSize - 0.002
