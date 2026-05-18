@@ -192,7 +192,7 @@ final class ReviewSession: MatchSession {
                 let stream = await analyzer.analyzeStream(
                     startPosition: .standardStart,
                     moves: plyMoves,
-                    depth: 16
+                    depth: 20
                 )
                 for try await m in stream {
                     if Task.isCancelled { break }
