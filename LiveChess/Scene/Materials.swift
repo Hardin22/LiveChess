@@ -82,4 +82,28 @@ enum ChessMaterials {
         m.blending = .transparent(opacity: .init(floatLiteral: 0.85))
         return m
     }
+
+    /// Tinted overlay used during review to colour the source +
+    /// destination squares of the move at the current ply by its
+    /// classification. Colours match the HUD's `qualityColor` palette
+    /// so the board, panel, and HUD stay consistent.
+    static func reviewHighlightMaterial(for quality: MoveQuality) -> UnlitMaterial {
+        var m = UnlitMaterial()
+        m.color = .init(tint: tint(for: quality))
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.55))
+        return m
+    }
+
+    private static func tint(for quality: MoveQuality) -> UIColor {
+        switch quality {
+        case .brilliant:        return UIColor(red: 0.10, green: 0.85, blue: 1.00, alpha: 1)
+        case .best, .great:     return UIColor(red: 0.25, green: 0.85, blue: 0.55, alpha: 1)
+        case .book:             return UIColor(red: 0.40, green: 0.65, blue: 1.00, alpha: 1)
+        case .excellent, .good: return UIColor(red: 0.45, green: 0.95, blue: 0.65, alpha: 1)
+        case .inaccuracy:       return UIColor(red: 1.00, green: 0.85, blue: 0.20, alpha: 1)
+        case .missedWin:        return UIColor(red: 0.65, green: 0.40, blue: 1.00, alpha: 1)
+        case .mistake:          return UIColor(red: 1.00, green: 0.55, blue: 0.20, alpha: 1)
+        case .blunder:          return UIColor(red: 1.00, green: 0.30, blue: 0.30, alpha: 1)
+        }
+    }
 }

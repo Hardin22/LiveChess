@@ -75,6 +75,12 @@ final class ReviewSession: MatchSession {
     var moveAppliedHandler: (@MainActor (Move) -> Void)?
     var matchResetHandler: (@MainActor () -> Void)?
 
+    /// Fires whenever the displayed move (main-line ply OR variation
+    /// tip) changes. Carries the move's source + destination squares
+    /// and the classification of that move so the renderer can drop a
+    /// quality-coloured overlay on the board.
+    var reviewHighlightHandler: (@MainActor (Square?, Square?, MoveQuality?) -> Void)?
+
     init?(game: LichessGame,
           username: String,
           rules: any RulesEngine = ChessKitRulesEngine()) {
@@ -160,8 +166,14 @@ final class ReviewSession: MatchSession {
         variation.append(step)
         match.apply(move: move, resulting: after, status: status)
         moveAppliedHandler?(move)
+        emitReviewHighlight()
         let index = variation.count - 1
-        Task { await analyzeVariationStep(at: index) }
+        Task {
+            await analyzeVariationStep(at: index)
+            // Re-emit so the overlay colour upgrades from the placeholder
+            // `.good` to whatever Stockfish actually picked.
+            emitReviewHighlight()
+        }
     }
 
     /// Drop the variation stack and re-seed the board to the main-line
@@ -235,6 +247,7 @@ final class ReviewSession: MatchSession {
             let newStatus = rules.status(of: newPos, history: positionsByPly)
             match.apply(move: move, resulting: newPos, status: newStatus)
             moveAppliedHandler?(move)
+            emitReviewHighlight()
         } else {
             // Backward step or other discontinuity — replay from start.
             currentPly = next
@@ -250,6 +263,31 @@ final class ReviewSession: MatchSession {
             ? positionsByPly[idx] : .standardStart
         match.reset(to: pos, status: rules.status(of: pos, history: [pos]))
         matchResetHandler?()
+        emitReviewHighlight()
+    }
+
+    /// Compute the (from, to, quality) triple for the move that's
+    /// currently shown on the board — variation tip wins over the
+    /// main-line ply at `currentPly` — and push it to the renderer
+    /// via `reviewHighlightHandler`. Safe to call when nothing is
+    /// being displayed: emits a `(nil, nil, nil)` payload that the
+    /// renderer interprets as "clear".
+    func emitReviewHighlight() {
+        guard let handler = reviewHighlightHandler else { return }
+        if let lastStep = variation.last {
+            let idx = variation.count - 1
+            let quality = (idx < variationAnalysis.count)
+                ? variationAnalysis[idx].quality : nil
+            handler(lastStep.move.from, lastStep.move.to, quality)
+            return
+        }
+        guard currentPly >= 0, currentPly < plyMoves.count else {
+            handler(nil, nil, nil); return
+        }
+        let move = plyMoves[currentPly]
+        let quality = (currentPly < analysisResults.count)
+            ? analysisResults[currentPly].quality : nil
+        handler(move.from, move.to, quality)
     }
 
     // MARK: - Auto-play

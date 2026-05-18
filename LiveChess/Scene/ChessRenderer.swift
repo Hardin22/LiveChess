@@ -337,6 +337,51 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// Re-presses just refresh the same overlay (the previous
     /// fade-out task is cancelled) — re-tapping Hint keeps the
     /// pulse visible without piling up duplicate entities.
+    // MARK: - Review highlights
+
+    /// Square-coloured overlay rendered under the from + to squares of
+    /// the move at the currently-displayed review ply. Colour tracks
+    /// the move's classification so a glance at the board tells the
+    /// user whether the position came from a brilliant find, a
+    /// blunder, etc. Cleared and re-built on each ply change.
+    private var reviewFromOverlay: ModelEntity?
+    private var reviewToOverlay: ModelEntity?
+
+    func setReviewHighlight(from: Square?, to: Square?, quality: MoveQuality?) {
+        clearReviewHighlight()
+        guard let from, let to, let quality else { return }
+        let material = ChessMaterials.reviewHighlightMaterial(for: quality)
+        reviewFromOverlay = makeReviewOverlay(at: from, material: material)
+        reviewToOverlay   = makeReviewOverlay(at: to,   material: material)
+        rootEntity.addChild(reviewFromOverlay!)
+        rootEntity.addChild(reviewToOverlay!)
+    }
+
+    func clearReviewHighlight() {
+        reviewFromOverlay?.removeFromParent()
+        reviewToOverlay?.removeFromParent()
+        reviewFromOverlay = nil
+        reviewToOverlay = nil
+    }
+
+    private func makeReviewOverlay(at square: Square,
+                                   material: UnlitMaterial) -> ModelEntity {
+        let size = SceneMetrics.squareSize - 0.002
+        let height: Float = 0.0012
+        let mesh = MeshResource.generateBox(
+            size: [size, height, size],
+            cornerRadius: 0.003
+        )
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        var pos = BoardSurface.position(for: square)
+        // Sit below the legal-move overlays (0.0015 / 0.0010 above the
+        // board surface) so live-drag highlights still take precedence.
+        pos.y = SceneMetrics.boardSurfaceY + height / 2 + 0.0006
+        entity.position = pos
+        entity.name = "ReviewHighlight_\(square.algebraic)"
+        return entity
+    }
+
     func pulseHintSquare(_ square: Square) {
         hintTask?.cancel()
         hintOverlay?.removeFromParent()

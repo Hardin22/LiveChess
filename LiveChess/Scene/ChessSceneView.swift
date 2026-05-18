@@ -277,10 +277,20 @@ struct ChessSceneView: View {
                 // engine to start. The board's already at the puzzle's
                 // initial FEN via match.startPosition above.
                 break
-            case .review:
+            case .review(let review):
                 // Review is HUD-driven; analysis kicks off when the
-                // HUD attachment appears.
-                break
+                // HUD attachment appears. Wire the renderer to the
+                // session's per-ply highlight callback so the from/to
+                // squares of the displayed move are tinted by the
+                // move's classification.
+                review.reviewHighlightHandler = { [weak renderer] from, to, quality in
+                    renderer?.setReviewHighlight(from: from, to: to, quality: quality)
+                }
+                // Initial paint — covers the case where the user lands
+                // on the immersive at currentPly == -1 (clears any
+                // stale highlight) and ensures we don't have to wait
+                // for the first navigation event.
+                review.emitReviewHighlight()
             }
         } attachments: {
             Attachment(id: "match-hud") {
