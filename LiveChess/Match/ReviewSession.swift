@@ -297,6 +297,16 @@ final class ReviewSession: MatchSession {
             let evalBeforeMover = (mover == .white) ?  prevEvalWhitePOV : -prevEvalWhitePOV
             let evalAfterMover  = (mover == .white) ?  evalAfterWhite   : -evalAfterWhite
 
+            // Material delta — how much material the mover gave up on
+            // this move. Computed purely from the position pair, no
+            // engine needed. Drives `Brilliant` detection.
+            let positionBefore = positionsByPly[ply]
+            let positionAfter = (ply + 1 < positionsByPly.count)
+                ? positionsByPly[ply + 1] : positionBefore
+            let materialDelta = GameAnalyzer.materialBalance(
+                for: mover, in: positionAfter
+            ) - GameAnalyzer.materialBalance(for: mover, in: positionBefore)
+
             // Lichess doesn't tell us "what eval would the best move
             // have produced". The standard assumption — also what
             // Lichess uses internally — is that the best move would
@@ -334,7 +344,8 @@ final class ReviewSession: MatchSession {
                 playedUCI: plyMoves[ply].uci,
                 winPercentLoss: winLoss,
                 bestScoreCp: bestScoreCp,
-                playedScoreCp: playedScoreCp
+                playedScoreCp: playedScoreCp,
+                materialDelta: materialDelta
             )
 
             out.append(MoveAnalysis(
@@ -367,11 +378,26 @@ final class ReviewSession: MatchSession {
         playedUCI: String,
         winPercentLoss: Double,
         bestScoreCp: Int,
-        playedScoreCp: Int
+        playedScoreCp: Int,
+        materialDelta: Int
     ) -> MoveQuality {
         if bestScoreCp >= 200, playedScoreCp <= 50 {
             return .missedWin
         }
+
+        let isBest = entry.best.map { $0 == playedUCI } ?? false
+
+        // BRILLIANT (‼) — Lichess flagged this as the engine's pick AND
+        // the player gave up ≥3 pts of material (minor piece or more)
+        // AND the resulting eval (mover POV) is still winning. Lichess
+        // doesn't return MultiPV, so we can't filter forced recaptures
+        // the way the local analyzer does — false positives are rare
+        // because Lichess's `best` already requires the engine to
+        // pick that move at depth, not just allow it.
+        if isBest, materialDelta <= -3, playedScoreCp >= 0 {
+            return .brilliant
+        }
+
         if let name = entry.judgment?.name {
             switch name {
             case "Inaccuracy": return .inaccuracy
@@ -380,9 +406,8 @@ final class ReviewSession: MatchSession {
             default:           break
             }
         }
-        if let best = entry.best, best == playedUCI {
-            return .best
-        }
+        if isBest { return .best }
+
         switch winPercentLoss {
         case ..<2:    return .excellent
         case ..<5:    return .good
