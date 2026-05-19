@@ -282,16 +282,25 @@ struct PuzzlesPlaceholderView: View {
             ?? 1500
     }
 
+    private static let gridColumns = [
+        GridItem(.adaptive(minimum: 260, maximum: 340),
+                 spacing: 16, alignment: .top)
+    ]
+
     var body: some View {
         ScrollView {
-            // LazyVStack so off-screen rails (rows below the fold)
-            // don't mount their card subtree until scrolled into view.
-            // Without this, 11 rails × 8 cards × Canvas board would
-            // all initialize on first paint and stutter for ~500ms.
-            LazyVStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 28) {
                 dailyHero
-                ForEach(PuzzleCategory.allCases) { category in
-                    categoryRail(category)
+                // 2-3 column adaptive grid of category boxes. The
+                // whole box is one big tap target → launches the next
+                // unsolved puzzle. A small "+20" pill in the corner
+                // batches a fresh fetch from Lichess.
+                LazyVGrid(columns: Self.gridColumns,
+                          alignment: .leading,
+                          spacing: 16) {
+                    ForEach(PuzzleCategory.allCases) { category in
+                        categoryBox(category)
+                    }
                 }
                 Spacer(minLength: 24)
             }
@@ -327,8 +336,8 @@ struct PuzzlesPlaceholderView: View {
     // MARK: - Category rail (horizontal deck)
 
     @ViewBuilder
-    private func categoryRail(_ category: PuzzleCategory) -> some View {
-        CategoryRowCard(
+    private func categoryBox(_ category: PuzzleCategory) -> some View {
+        CategoryBox(
             category: category,
             next: viewModel.displayedPuzzles(
                 in: category,
@@ -357,16 +366,16 @@ struct PuzzlesPlaceholderView: View {
     }
 }
 
-// MARK: - Category row card (text-only, fast to render)
+// MARK: - Category box (single tappable card in the grid)
 //
-// Replaces the horizontal deck of mini-board cards. One row per
-// category, no per-puzzle thumbnails — just the category identity,
-// progress, and a primary "Solve next" call-to-action that launches
-// the immersive solver with the user's next unsolved puzzle. Renders
-// in microseconds; scrolls smoothly even with all 11 sections visible
-// at once on visionOS.
+// Whole box is the primary action — tap anywhere → launches the
+// user's next unsolved puzzle in the immersive solver. The earlier
+// design had a small "Solve next" pill that was easy to mis-tap, and
+// the rest of the row did nothing. Now the entire card is the hit
+// target. A small "+20" pill in the top-right batches a fresh fetch
+// from Lichess (20 puzzles per press, streamed in).
 
-private struct CategoryRowCard: View {
+private struct CategoryBox: View {
     let category: PuzzleCategory
     let next: LichessPuzzle?
     let progress: (solved: Int, total: Int)
@@ -376,68 +385,107 @@ private struct CategoryRowCard: View {
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @State private var isLaunching = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            // Category icon in a tinted square — visual identity per
-            // section without the cognitive cost of mini chessboards.
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Chess.Palette.bronze.opacity(0.20))
-                    .frame(width: 56, height: 56)
-                Image(systemName: category.systemImage)
-                    .font(.title2)
-                    .foregroundStyle(Chess.Palette.bronze)
-            }
+        Button {
+            guard let next else { return }
+            Task { await launch(next) }
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                // Top: big icon on the left, "+20" load-more pill on
+                // the right. Even though the whole box launches the
+                // next puzzle, the "+20" pill is a sub-button — its
+                // own tap is handled separately so it doesn't bubble
+                // up to the box's main action.
+                HStack(alignment: .top) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Chess.Palette.bronze.opacity(0.22))
+                            .frame(width: 64, height: 64)
+                        Image(systemName: category.systemImage)
+                            .font(.title)
+                            .foregroundStyle(Chess.Palette.bronze)
+                    }
+                    Spacer()
+                    loadMorePill
+                }
 
-            // Title + progress line + a thin progress bar so the
-            // user can see at a glance how deep into the category
-            // they've gone.
-            VStack(alignment: .leading, spacing: 6) {
                 Text(category.displayName)
-                    .font(.title3.weight(.semibold))
+                    .font(.title3.weight(.bold))
+                    .lineLimit(1)
 
-                HStack(spacing: 6) {
+                // Progress count + thin bar.
+                VStack(alignment: .leading, spacing: 6) {
                     Text("\(progress.solved) of \(progress.total) solved")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let nextRating = next?.puzzle.rating {
-                        Text("·")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("next \(nextRating)")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Chess.Palette.bronze)
-                    }
-                    if let moves = next?.puzzle.solution?.count {
-                        Text("·")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        HStack(spacing: 2) {
-                            Image(systemName: "arrow.turn.up.right")
-                                .font(.caption2)
-                            Text("\(moves)")
-                                .font(.caption.monospacedDigit())
-                        }
-                        .foregroundStyle(.secondary)
-                    }
+                    progressBar
                 }
 
-                progressBar
+                // "Next up" panel — the meaningful detail. If the
+                // user has solved everything bundled, prompt them
+                // to use Load more.
+                if let next {
+                    HStack(spacing: 10) {
+                        Image(systemName: "play.fill")
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(Chess.Palette.bronze, in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Solve next")
+                                .font(.callout.weight(.semibold))
+                            HStack(spacing: 6) {
+                                if let r = next.puzzle.rating {
+                                    Text("rating \(String(r))")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let m = next.puzzle.solution?.count {
+                                    Text("·")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    HStack(spacing: 2) {
+                                        Image(systemName: "arrow.turn.up.right")
+                                            .font(.caption2)
+                                        Text("\(m) move\(m == 1 ? "" : "s")")
+                                            .font(.caption2.monospacedDigit())
+                                    }
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Spacer()
+                        if isLaunching {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .padding(10)
+                    .background(.thinMaterial,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                } else if let error {
+                    inlineError(error)
+                } else {
+                    Text("All bundled puzzles solved. Tap +20 for more.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                }
             }
-
-            Spacer(minLength: 8)
-
-            actionTrailing
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial,
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+            )
         }
-        .padding(16)
-        .background(.regularMaterial,
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-        )
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .disabled(next == nil || isLaunching)
     }
 
     // MARK: - Pieces
@@ -461,66 +509,55 @@ private struct CategoryRowCard: View {
     }
 
     @ViewBuilder
-    private var actionTrailing: some View {
-        if let error {
-            VStack(alignment: .trailing, spacing: 6) {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+    private var loadMorePill: some View {
+        Button(action: onLoadMore) {
+            HStack(spacing: 4) {
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "plus")
+                        .font(.caption2.weight(.bold))
                 }
-                .frame(maxWidth: 180, alignment: .trailing)
-                Button("Retry", action: onLoadMore)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Text(isLoading ? "Loading" : "20")
+                    .font(.caption.weight(.semibold))
             }
-        } else if let next {
-            Button {
-                Task { await launch(next) }
-            } label: {
-                HStack(spacing: 6) {
-                    if isLaunching {
-                        ProgressView().controlSize(.small).tint(.white)
-                    } else {
-                        Image(systemName: "play.fill")
-                    }
-                    Text("Solve next")
-                        .font(.callout.weight(.semibold))
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
-                .background(Chess.Palette.bronze, in: Capsule())
-                .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .hoverEffect(.lift)
-            .disabled(isLaunching)
-        } else {
-            Button {
-                onLoadMore()
-            } label: {
-                HStack(spacing: 6) {
-                    if isLoading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.down.circle")
-                    }
-                    Text(isLoading ? "Loading…" : "Load")
-                        .font(.callout.weight(.medium))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .disabled(isLoading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.thinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Chess.Palette.bronze.opacity(0.40),
+                                            lineWidth: 0.6))
+            .foregroundStyle(.primary)
         }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .disabled(isLoading)
+        // Stops the outer Button (the whole box) from receiving the
+        // tap — otherwise +20 would also launch the next puzzle.
+        .accessibilityLabel("Load 20 more puzzles")
     }
 
+    @ViewBuilder
+    private func inlineError(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            Spacer()
+        }
+        .padding(10)
+        .background(.orange.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Mirrors `PuzzleLaunchCard.launch` but handles the case where
+    /// the immersive space is already open (lobby AR, an in-flight
+    /// game, a previous puzzle). In that case `openImmersiveSpace`
+    /// is a no-op and the new session wouldn't actually take effect,
+    /// so we dismiss first and rely on `pendingReopen` to preserve
+    /// the activeSession assignment across the dismiss/re-open.
     private func launch(_ puzzle: LichessPuzzle) async {
         guard !isLaunching else { return }
         isLaunching = true
@@ -531,11 +568,19 @@ private struct CategoryRowCard: View {
         }
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
+
+        if appModel.immersiveSpaceState == .open || appModel.pendingReopen {
+            appModel.pendingReopen = true
+            await dismissImmersiveSpace()
+        }
+
         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
-        case .opened: break
+        case .opened:
+            break
         default:
             appModel.activeSession = nil
             appModel.immersiveSpaceState = .closed
+            appModel.pendingReopen = false
         }
     }
 }

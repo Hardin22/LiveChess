@@ -366,25 +366,43 @@ struct LobbyView: View {
                          action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
+                // Leading checkmark on the selected chip — the
+                // single strongest "you picked this" signal in
+                // Apple's HIG. Wider gap from the icon when shown
+                // so the chip doesn't look cramped.
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                }
                 Image(systemName: env.systemImage)
                 Text(env.displayName)
                     .lineLimit(1)
             }
-            .font(.caption.weight(isSelected ? .semibold : .regular))
+            .font(.caption.weight(isSelected ? .bold : .regular))
             .foregroundStyle(isSelected ? .white : .primary)
-            .padding(.horizontal, Chess.Space.s)
-            .padding(.vertical, 6)
+            .padding(.horizontal, isSelected ? Chess.Space.m : Chess.Space.s)
+            .padding(.vertical, 7)
             .background(
                 Capsule().fill(isSelected
-                               ? AnyShapeStyle(Chess.Palette.cream.opacity(0.18))
+                               // SOLID bronze fill for the picked
+                               // chip — was a 18%-opacity cream wash
+                               // before, which read as 'maybe a tiny
+                               // bit different shade?' on the
+                               // material background. Now it's
+                               // unmistakable.
+                               ? AnyShapeStyle(Chess.Palette.bronze)
                                : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
                 Capsule().strokeBorder(isSelected
-                                       ? Chess.Palette.bronze.opacity(0.45)
+                                       ? Color.white.opacity(0.35)
                                        : .white.opacity(0.12),
                                        lineWidth: isSelected ? 1 : 0.5)
             )
+            .shadow(color: isSelected
+                        ? Chess.Palette.bronze.opacity(0.45)
+                        : .clear,
+                    radius: isSelected ? 6 : 0)
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
