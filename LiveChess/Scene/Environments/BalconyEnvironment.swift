@@ -95,23 +95,18 @@ enum BalconyEnvironment: EnvironmentScene {
         // doesn't "follow" them.
         await Self.addSkybox(into: content)
 
-        // The .blend's bundled railings aren't actually at the
-        // floor perimeter — they're small decorative meshes near
-        // the chair. Hide them and spawn a proper procedural
-        // perimeter railing (chrome posts + tinted glass panels)
-        // around the actual Balcony_Floor edges so the player
-        // always sees a clean balcony fence between themselves
-        // and the sea.
-        Self.hideOriginalRailings(in: env)
-        // Note: don't hide plants anymore — the new balcony.usdz only
-        // has the FirTree (repositioned to the front-right corner in
-        // Blender) and the lantern; the messy 131-plant cluster was
-        // deleted in fix_balcony_layout.py before export.
-        // MUST run before we add procedural chrome/glass so we don't
-        // strip metallic from the railing posts we're about to mount.
+        // Sanitizer fixes corrupted metallic/normal maps. Keep-list
+        // protects railing entities.
         Self.sanitizeBlendMaterials(in: env)
-        Self.addFloorSkirt(around: env, into: content)
-        Self.addPerimeterRailing(around: env, into: content)
+        // Glass panels are clean now (no overlapping junk fragments).
+        // Swap their material to UnlitMaterial at runtime to dodge
+        // visionOS's stochastic alpha for PBR transparency — the
+        // panels then read as proper light blue glass.
+        Self.applyTransparentGlassToRailing(in: env)
+        // Hide the pot + plant pair that lives on the balcony floor.
+        // User-requested removal. Targeted to PotPlant_Root and
+        // PotCandle_Root specifically — keeps FirTree visible.
+        Self.hidePotPlantAndVase(in: env)
 
         addDaylightLighting(into: content)
 
@@ -132,6 +127,27 @@ enum BalconyEnvironment: EnvironmentScene {
     /// the wall in the user's screenshot). Hiding the whole cluster
     /// gives a clean balcony — we can add ONE procedurally-placed
     /// pot back later if needed.
+    /// Hides the bundled pot + plant arrangement (the vase + the
+    /// vegetation inside it). Matches only the `PotPlant*` and
+    /// `PotCandle*` subtrees — the FirTree elsewhere on the balcony
+    /// stays visible. Lower-case substring match because Blender's
+    /// USD exporter may sanitize underscores or casing.
+    private static func hidePotPlantAndVase(in root: Entity) {
+        var stack: [Entity] = [root]
+        while let e = stack.popLast() {
+            let n = e.name.lowercased()
+            if n.contains("potplant") || n.contains("pot_plant")
+                || n.contains("potcandle") || n.contains("pot_candle")
+                || n.contains("vase") {
+                e.isEnabled = false
+                // No need to walk this subtree — disabling the
+                // root hides every descendant.
+                continue
+            }
+            stack.append(contentsOf: e.children)
+        }
+    }
+
     private static func hideOriginalPlants(in root: Entity) {
         var stack: [Entity] = [root]
         while let e = stack.popLast() {
@@ -222,23 +238,20 @@ enum BalconyEnvironment: EnvironmentScene {
         let minX = bounds.min.x + inset
         let maxX = bounds.max.x - inset
         let frontZ = bounds.min.z
-        let backZ = bounds.max.z - inset
         let floorY = bounds.max.y
 
         let railingRoot = Entity()
         railingRoot.name = "ProceduralRailing"
         content.add(railingRoot)
 
-        // FRONT (sea-facing) — full width, corner to corner
+        // FRONT (sea-facing) — full width, corner to corner.
+        // This is the ONLY open side now that the env has wood-plank
+        // walls on left, right, and back (with a door cut into the
+        // back wall). The right-side railing was removed because the
+        // new right wall sits at that floor edge and the glass would
+        // clip into it.
         addRailingRun(start: SIMD3<Float>(minX, floorY, frontZ),
                       end:   SIMD3<Float>(maxX, floorY, frontZ),
-                      parent: railingRoot)
-
-        // RIGHT side — from the front-right corner back to the
-        // wall. Same chrome + glass treatment, joins seamlessly
-        // with the front run at the corner.
-        addRailingRun(start: SIMD3<Float>(maxX, floorY, frontZ),
-                      end:   SIMD3<Float>(maxX, floorY, backZ),
                       parent: railingRoot)
     }
 
@@ -404,7 +417,16 @@ enum BalconyEnvironment: EnvironmentScene {
             "balcony_floor", "floor",
             "plant", "pot", "foliage", "leaf", "fir", "tree",
             "lantern", "candle",
-            "proceduralrailing", "balconyskirt", "balconyskydome"
+            "proceduralrailing", "balconyskirt", "balconyskydome",
+            // New room walls + door use clean PolyHaven materials
+            // (brown_planks_03 / dark_wooden_planks). They MUST be
+            // preserved — overriding them with flat walnut wipes the
+            // textured plank look the .blend was authored with.
+            "wall_", "door_",
+            // The user wants the .blend's authored glass panel +
+            // railing to render exactly as in the USDZ, so the
+            // sanitizer must NOT touch them.
+            "railing", "glass",
         ]
 
         var touched = 0, preserved = 0
@@ -499,6 +521,185 @@ enum BalconyEnvironment: EnvironmentScene {
     }
 
     // MARK: - Glass override
+
+    /// Swap the joined railing's chrome material for a tinted
+    /// semi-transparent glass material. Acts on USD-loaded entities
+    /// (plain `Entity` with `ModelComponent`) — the earlier
+    /// `applyTransparentGlass(to:)` used `as? ModelEntity` which
+    /// skips USDZ-loaded geometry.
+    ///
+    /// Matches on entity name (anything containing "railing" or
+    /// "glass") and overrides ALL material slots on each match. The
+    /// in-Blender chrome posts share a single material slot with the
+    /// glass panels (Steel_Chrome) because the 11k railing objects
+    /// were joined into one mesh during optimization — so both posts
+    /// and panels get glass. Posts are thin enough that the loss is
+    /// visually negligible, but the panels read as glass against the
+    /// sea view instead of as a black mirror.
+    /// Build 3 fresh glass panel quads in Swift and add them as
+    /// children of the env. Procedural meshes bypass the USDZ
+    /// loading pipeline that was producing dither artifacts on the
+    /// authored Cube mesh.
+    ///
+    /// Local positions match the 3 panels' centers in the .blend:
+    ///   * back-right (Blender +X half of back rail)
+    ///   * back-left  (Blender -X half of back rail)
+    ///   * left side  (perpendicular run along Blender Y)
+    private static func addProceduralGlassPanels(into env: Entity) {
+        // Find the (now-hidden) Railing_Glass Xform — it sits at the
+        // correct world position for the back-right panel after all
+        // the env rotations/scales. We parent the procedural planes
+        // to it so they automatically inherit the correct world
+        // transform without us having to do axis math.
+        var anchor: Entity?
+        var stack: [Entity] = [env]
+        while let e = stack.popLast() {
+            if e.name == "Railing_Glass" {
+                anchor = e
+                break
+            }
+            stack.append(contentsOf: e.children)
+        }
+        guard let railingGlass = anchor else {
+            print("Railing_Glass anchor not found — skipping proc panels")
+            return
+        }
+        // Make sure the anchor is enabled (even though its mesh is
+        // hidden via the child entity). The anchor itself needs to
+        // be active so its world transform stays current.
+        railingGlass.isEnabled = true
+
+        var mat = UnlitMaterial(
+            color: .init(red: 0.42, green: 0.65, blue: 0.90, alpha: 0.80)
+        )
+        mat.blending = .transparent(opacity: .init(floatLiteral: 0.80))
+        mat.opacityThreshold = 0.0
+        mat.faceCulling = .none  // visible from either side
+
+        // Panel offsets relative to Railing_Glass Xform's origin
+        // (which sits at the back-right panel's center). The .blend
+        // Z-up was converted to Y-up on USDZ export, so what was
+        // .blend's +Z (vertical) is now +Y in Railing_Glass's local
+        // frame, and what was .blend's +Y (forward) is now -Z (back
+        // away from the sea).
+        //
+        // panel positions in Blender world were:
+        //   BackRight: (+1.06, +1.55, +0.55)
+        //   BackLeft : (-1.06, +1.55, +0.55)
+        //   Side     : (-2.05, +0.76, +0.55)
+        // → relative to BackRight, after the Y↔Z axis swap (USDZ):
+        //   BackRight: ( 0.00, 0,  0.00)
+        //   BackLeft : (-2.12, 0,  0.00)
+        //   Side     : (-3.11, 0, +0.79)   ← +0.79 along USDZ +Z
+        //
+        // Thin Box mesh keeps the default RealityKit axes — width=X,
+        // height=Y (up), depth=Z — so the panel stands vertical with
+        // no extra rotation. The Side panel just gets a 90° yaw
+        // around Y so its long axis runs along Z instead of X.
+        let panels: [(String, Float, Float, Float, Float, Float, Float)] = [
+            // name,  lx,   ly, lz,    width, heightY, yawAroundY°
+            ("ProcGlass_BackRight",  0.00, 0.00,  0.00, 1.878, 0.910,  0),
+            ("ProcGlass_BackLeft", -2.12, 0.00,  0.00, 1.877, 0.910,  0),
+            ("ProcGlass_Side",     -3.11, 0.00,  0.79, 1.401, 0.910, 90),
+        ]
+
+        for (name, lx, ly, lz, w, h, yawDeg) in panels {
+            let mesh = MeshResource.generateBox(
+                width: w, height: h, depth: 0.005
+            )
+            let entity = ModelEntity(mesh: mesh, materials: [mat])
+            entity.name = name
+            let yaw = yawDeg * .pi / 180
+            entity.transform.rotation = simd_quatf(
+                angle: yaw, axis: SIMD3<Float>(0, 1, 0)
+            )
+            entity.transform.translation = SIMD3<Float>(lx, ly, lz)
+            railingGlass.addChild(entity)
+            print("  proc glass panel: \(name) local=(\(lx),\(ly),\(lz))")
+        }
+    }
+
+    /// Hide every entity in the loaded env whose name contains
+    /// "glass". Used to suppress the broken Railing_Glass panel
+    /// without re-exporting.
+    private static func hideGlassEntities(in root: Entity) {
+        // Only hide entities that actually carry a ModelComponent
+        // (i.e. renderable meshes). Leaves Xform anchors enabled so
+        // procedural children can inherit their world transform.
+        func ancestorMatchesGlass(_ start: Entity) -> Bool {
+            var cur: Entity? = start
+            while let c = cur {
+                if c.name.lowercased().contains("glass") { return true }
+                cur = c.parent
+            }
+            return false
+        }
+        var hidden = 0
+        var stack: [Entity] = [root]
+        while let e = stack.popLast() {
+            stack.append(contentsOf: e.children)
+            guard ancestorMatchesGlass(e) else { continue }
+            guard e.components[ModelComponent.self] != nil else { continue }
+            e.isEnabled = false
+            hidden += 1
+            print("  hidden glass mesh entity: \(e.name)")
+        }
+        print("=== glass mesh entities hidden: \(hidden) ===")
+    }
+
+    private static func applyTransparentGlassToRailing(in root: Entity) {
+        // Use UnlitMaterial instead of PhysicallyBasedMaterial — the
+        // PBR pipeline on visionOS falls back to stochastic / dithered
+        // alpha at low opacity which produced the black-stipple
+        // splotches the user reported. UnlitMaterial uses straight
+        // alpha blending (no dither, no PBR shadow path), so the
+        // panel reads as a clean tinted glass.
+        // 80% opaque sky blue. Pushed well above the alpha threshold
+        // where visionOS dithers transparency (which produced the
+        // earlier cloud-stipple splotches) while still letting the
+        // sea view come through a bit. Hint of see-through, no dots.
+        var glassUnlit = UnlitMaterial(
+            color: .init(red: 0.42, green: 0.65, blue: 0.90, alpha: 0.80)
+        )
+        glassUnlit.blending = .transparent(
+            opacity: .init(floatLiteral: 0.80)
+        )
+        glassUnlit.opacityThreshold = 0.0
+        glassUnlit.faceCulling = .back
+        let glass: any RealityKit.Material = glassUnlit
+
+        // Walk every entity. Apply the glass override when EITHER the
+        // entity itself OR any ancestor's name contains "glass". The
+        // glass mesh is a child Mesh named "Cube" under the Xform
+        // "Railing_Glass", so matching only on the entity's own name
+        // misses it.
+        func ancestorMatchesGlass(_ start: Entity) -> Bool {
+            var cur: Entity? = start
+            while let c = cur {
+                if c.name.lowercased().contains("glass") { return true }
+                cur = c.parent
+            }
+            return false
+        }
+        var touched = 0
+        var stack: [Entity] = [root]
+        while let e = stack.popLast() {
+            stack.append(contentsOf: e.children)
+            guard ancestorMatchesGlass(e) else { continue }
+            guard var comp = e.components[ModelComponent.self] else {
+                continue
+            }
+            let count = max(comp.materials.count, 1)
+            comp.materials = Array(
+                repeating: glass as any RealityKit.Material,
+                count: count
+            )
+            e.components.set(comp)
+            touched += 1
+            print("  glass override → '\(e.name)' (matCount=\(count))")
+        }
+        print("=== transparent-glass override: \(touched) entities ===")
+    }
 
     /// Replace the material on any entity whose name contains
     /// "Railing" or "Glass" with a SEMI-transparent tinted glass +
