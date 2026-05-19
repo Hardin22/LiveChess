@@ -197,12 +197,21 @@ final class PuzzlesViewModel {
     /// shifting later entries up into the visible window.
     func displayedPuzzles(in category: PuzzleCategory,
                           progress: PuzzleProgressStore,
-                          limit: Int = 3) -> [LichessPuzzle] {
+                          limit: Int = 8) -> [LichessPuzzle] {
         (pools[category] ?? [])
             .lazy
             .filter { !progress.isSolved($0.puzzle.id) }
             .prefix(limit)
             .map { $0 }
+    }
+
+    /// Tally of (solved, total) for a category — drives the inline
+    /// progress chip in the rail header.
+    func progress(in category: PuzzleCategory,
+                  progressStore: PuzzleProgressStore) -> (solved: Int, total: Int) {
+        let all = pools[category] ?? []
+        let solved = all.filter { progressStore.isSolved($0.puzzle.id) }.count
+        return (solved, all.count)
     }
 
     // MARK: - Bundled pack
@@ -215,9 +224,17 @@ final class PuzzlesViewModel {
                                                     from: data)
         else { return }
 
+        // Shuffle each category's pool so different launches surface
+        // a different ordering of unsolved puzzles. Categorisation is
+        // deterministic (bucket priority), but order WITHIN a bucket
+        // doesn't need to be — varying it keeps the rails feeling fresh.
+        var bucketed: [PuzzleCategory: [LichessPuzzle]] = [:]
         for info in infos {
             guard let cat = PuzzleCategory.bucket(for: info.themes) else { continue }
-            pools[cat, default: []].append(LichessPuzzle(puzzle: info))
+            bucketed[cat, default: []].append(LichessPuzzle(puzzle: info))
+        }
+        for (cat, list) in bucketed {
+            pools[cat] = list.shuffled()
         }
     }
 }
@@ -228,29 +245,15 @@ struct PuzzlesPlaceholderView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                // Daily Puzzle — single hero card at the top. Loading
-                // state shows a skeleton until the network call returns.
-                SectionHeader(title: "Daily Puzzle")
-                if let daily = viewModel.dailyPuzzle {
-                    PuzzleCard(puzzle: daily, isDaily: true)
-                } else if viewModel.isLoading {
-                    PuzzleCardSkeleton()
-                } else if let error = viewModel.errorMessage {
-                    PuzzlesErrorState(message: error) {
-                        Task { await reload() }
-                    }
-                }
-
-                // One section per category. Sections with zero unsolved
-                // puzzles in the local pool still render (with a Load
-                // more affordance) so the user can fetch fresh ones from
-                // Lichess on demand.
+            VStack(alignment: .leading, spacing: 28) {
+                dailyHero
                 ForEach(PuzzleCategory.allCases) { category in
-                    categorySection(category)
+                    categoryRail(category)
                 }
+                Spacer(minLength: 24)
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassBackgroundEffect()
@@ -263,158 +266,84 @@ struct PuzzlesPlaceholderView: View {
         }
     }
 
+    // MARK: - Daily hero
+
     @ViewBuilder
-    private func categorySection(_ category: PuzzleCategory) -> some View {
+    private var dailyHero: some View {
+        if let daily = viewModel.dailyPuzzle {
+            DailyHeroCard(puzzle: daily)
+        } else if viewModel.isLoading {
+            DailyHeroSkeleton()
+        } else if let error = viewModel.errorMessage {
+            PuzzlesErrorState(message: error) {
+                Task { await reload() }
+            }
+        }
+    }
+
+    // MARK: - Category rail (horizontal deck)
+
+    @ViewBuilder
+    private func categoryRail(_ category: PuzzleCategory) -> some View {
         let visible = viewModel.displayedPuzzles(
             in: category,
             progress: appModel.puzzleProgress
         )
         let isLoading = viewModel.loadingCategories.contains(category)
-        let unsolvedCount = (viewModel.pools[category] ?? [])
-            .filter { !appModel.puzzleProgress.isSolved($0.puzzle.id) }
-            .count
-        let solvedCount = (viewModel.pools[category] ?? [])
-            .filter { appModel.puzzleProgress.isSolved($0.puzzle.id) }
-            .count
+        let prog = viewModel.progress(in: category,
+                                      progressStore: appModel.puzzleProgress)
         let categoryError = viewModel.errorsByCategory[category]
 
-        VStack(alignment: .leading, spacing: 12) {
-            // Header row: icon + title on the left, count badge on the right.
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(Chess.Palette.bronze.opacity(0.18))
-                        .frame(width: 32, height: 32)
-                    Image(systemName: category.systemImage)
-                        .font(.callout)
-                        .foregroundStyle(Chess.Palette.bronze)
+        VStack(alignment: .leading, spacing: 10) {
+            // Header: icon + title + progress arc + N solved / N total.
+            HStack(spacing: 12) {
+                CategoryGlyph(category: category, progress: prog)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(category.displayName)
+                        .font(.title3.weight(.semibold))
+                    if prog.total > 0 {
+                        Text("\(prog.solved) of \(prog.total) solved")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Text(category.displayName)
-                    .font(.title3.weight(.semibold))
                 Spacer()
-                if unsolvedCount > 0 || solvedCount > 0 {
-                    countBadge(unsolved: unsolvedCount, solved: solvedCount)
-                }
             }
+            .padding(.horizontal, 2)
 
-            // Body: puzzles, empty state, or inline error.
-            if let categoryError {
-                inlineError(categoryError, retry: {
-                    Task {
-                        await viewModel.loadMore(
-                            category: category,
-                            token: appModel.lichess.token
-                        )
-                    }
-                })
-            } else if visible.isEmpty {
-                emptyState(isLoading: isLoading)
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(visible, id: \.puzzle.id) { p in
-                        PuzzleCard(puzzle: p, isDaily: false)
-                    }
-                }
-            }
-
-            // Load more — secondary style, right-aligned so the section
-            // doesn't read as a giant button when puzzles are present.
-            HStack {
-                Spacer()
-                Button {
-                    Task {
-                        await viewModel.loadMore(
-                            category: category,
-                            token: appModel.lichess.token
-                        )
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        if isLoading {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.down.circle")
+            // Horizontal deck of puzzle cards + a trailing Load more card.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    if let categoryError {
+                        ErrorCard(message: categoryError) {
+                            Task {
+                                await viewModel.loadMore(
+                                    category: category,
+                                    token: appModel.lichess.token
+                                )
+                            }
                         }
-                        Text(isLoading ? "Loading…" : "Load more")
-                            .font(.callout.weight(.medium))
+                    } else if visible.isEmpty && !isLoading {
+                        EmptyCard()
+                    } else {
+                        ForEach(Array(visible.enumerated()), id: \.element.puzzle.id) { idx, p in
+                            PuzzleDeckCard(puzzle: p, isNext: idx == 0)
+                        }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    LoadMoreCard(isLoading: isLoading) {
+                        Task {
+                            await viewModel.loadMore(
+                                category: category,
+                                token: appModel.lichess.token
+                            )
+                        }
+                    }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .disabled(isLoading)
+                .padding(.horizontal, 2)
+                .padding(.vertical, 4)
             }
+            .scrollClipDisabled()
         }
-        .padding(16)
-        .background(.regularMaterial,
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-        )
-    }
-
-    @ViewBuilder
-    private func emptyState(isLoading: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: isLoading ? "ellipsis.circle" : "tray")
-                .foregroundStyle(.secondary)
-            Text(isLoading
-                 ? "Pulling a fresh puzzle…"
-                 : "No puzzles yet — tap Load more to fetch one.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func inlineError(_ message: String,
-                             retry: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button("Retry", action: retry)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .padding(10)
-        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.orange.opacity(0.25), lineWidth: 0.5)
-        )
-    }
-
-    @ViewBuilder
-    private func countBadge(unsolved: Int, solved: Int) -> some View {
-        HStack(spacing: 6) {
-            if unsolved > 0 {
-                Text("\(unsolved)")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.primary)
-            }
-            if solved > 0 {
-                HStack(spacing: 3) {
-                    Image(systemName: "checkmark")
-                        .font(.caption2)
-                    Text("\(solved)")
-                        .font(.caption.monospacedDigit())
-                }
-                .foregroundStyle(Chess.Palette.accent)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
     }
 
     private func reload() async {
@@ -423,105 +352,124 @@ struct PuzzlesPlaceholderView: View {
     }
 }
 
-private struct PuzzleCard: View {
+// MARK: - Category glyph (icon + progress arc)
+
+private struct CategoryGlyph: View {
+    let category: PuzzleCategory
+    let progress: (solved: Int, total: Int)
+
+    var body: some View {
+        ZStack {
+            // Faded base ring.
+            Circle()
+                .stroke(Chess.Palette.bronze.opacity(0.18), lineWidth: 3)
+                .frame(width: 38, height: 38)
+            // Filled progress arc.
+            if progress.total > 0 {
+                Circle()
+                    .trim(from: 0, to: CGFloat(progress.solved) / CGFloat(progress.total))
+                    .stroke(Chess.Palette.bronze,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 38, height: 38)
+            }
+            Image(systemName: category.systemImage)
+                .font(.callout)
+                .foregroundStyle(Chess.Palette.bronze)
+        }
+    }
+}
+
+// MARK: - Deck card (the actual position preview)
+
+private struct PuzzleDeckCard: View {
     let puzzle: LichessPuzzle
-    let isDaily: Bool
+    let isNext: Bool
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @State private var isLaunching = false
 
     var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Chess.Palette.bronze.gradient.opacity(0.25))
-                    .frame(width: 56, height: 56)
-                Image(systemName: "puzzlepiece.fill")
-                    .font(.title2)
-                    .foregroundStyle(.purple)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                // Daily-pill — only on the hero card. The `#ID` text
-                // that used to live here was removed: it's noise the
-                // user can't act on, and the rating + themes already
-                // carry the puzzle's identity.
-                if isDaily {
-                    Text("DAILY")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.orange.opacity(0.15), in: Capsule())
-                }
-
-                HStack(spacing: 8) {
-                    if let rating = puzzle.puzzle.rating {
-                        Label("\(rating)", systemImage: "chart.bar.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        Button {
+            Task { await launch() }
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    PuzzleMiniBoardView(
+                        fen: puzzle.puzzle.fen ?? "",
+                        size: 132,
+                        lastMove: highlightSquares()
+                    )
+                    if isNext {
+                        Text("PLAY NEXT")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Chess.Palette.bronze,
+                                        in: Capsule())
+                            .padding(6)
                     }
-                    if let plays = puzzle.puzzle.plays {
-                        Label(playsString(plays), systemImage: "person.2.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let moves = puzzle.puzzle.solution?.count {
-                        Label("\(moves) moves", systemImage: "arrow.right")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if !puzzle.puzzle.themes.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(puzzle.puzzle.themes.prefix(4), id: \.self) { theme in
-                            Text(theme)
-                                .font(.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.white.opacity(0.08), in: Capsule())
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-            }
-
-            Spacer()
-
-            Button {
-                Task { await launch() }
-            } label: {
-                HStack(spacing: 5) {
                     if isLaunching {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "play.fill")
+                        Rectangle()
+                            .fill(.black.opacity(0.35))
+                        ProgressView().tint(.white)
                     }
-                    Text("Solve")
                 }
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.purple.opacity(0.25), in: Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                HStack(spacing: 6) {
+                    DifficultyDot(rating: puzzle.puzzle.rating)
+                    Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                    Spacer()
+                    if let moves = puzzle.puzzle.solution?.count {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.turn.up.right")
+                                .font(.caption2)
+                            Text("\(moves)")
+                                .font(.caption.monospacedDigit())
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .hoverEffect(.lift)
-            .disabled(isLaunching)
+            .padding(10)
+            .frame(width: 156)
+            .background(.regularMaterial,
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(isNext
+                                  ? Chess.Palette.bronze.opacity(0.55)
+                                  : .white.opacity(0.10),
+                                  lineWidth: isNext ? 1.0 : 0.5)
+            )
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
-        )
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .disabled(isLaunching)
     }
 
-    /// Mirrors `PuzzleLaunchCard.launch(_:)` in HomeFeatureCardsView —
-    /// builds the session, wires `onSolved` to the persistent progress
-    /// store, then opens the immersive space. Failure to open clears
-    /// the active session so the home screen doesn't stay locked.
+    /// Decode the puzzle's lastMove ("e2e4") into board coordinates so
+    /// the mini-board can tint the source/destination squares.
+    private func highlightSquares() -> ((Int, Int), (Int, Int))? {
+        guard let m = puzzle.puzzle.lastMove, m.count >= 4 else { return nil }
+        func square(_ s: Substring) -> (Int, Int)? {
+            guard s.count == 2,
+                  let file = s.first, let rank = s.last else { return nil }
+            let col = Int(file.asciiValue ?? 0) - Int(Character("a").asciiValue!)
+            let r = (rank.wholeNumberValue ?? 0)
+            guard (0...7).contains(col), (1...8).contains(r) else { return nil }
+            return (8 - r, col)
+        }
+        let from = m.prefix(2)
+        let to = m.dropFirst(2).prefix(2)
+        guard let f = square(from), let t = square(to) else { return nil }
+        return (f, t)
+    }
+
     private func launch() async {
         guard !isLaunching else { return }
         isLaunching = true
@@ -533,42 +481,286 @@ private struct PuzzleCard: View {
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
-        case .opened:
-            break
+        case .opened: break
         default:
             appModel.activeSession = nil
             appModel.immersiveSpaceState = .closed
         }
     }
+}
 
-    private func playsString(_ plays: Int) -> String {
-        if plays >= 1_000_000 { return String(format: "%.1fM", Double(plays) / 1_000_000) }
-        if plays >= 1_000 { return String(format: "%.1fk", Double(plays) / 1_000) }
-        return "\(plays)"
+// MARK: - Difficulty dot
+
+private struct DifficultyDot: View {
+    let rating: Int?
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .shadow(color: color.opacity(0.6), radius: 1.5)
+    }
+
+    private var color: Color {
+        guard let r = rating else {
+            return .gray
+        }
+        switch r {
+        case ..<1200: return Color(red: 0.30, green: 0.78, blue: 0.36)   // easy — green
+        case ..<1700: return Color(red: 0.95, green: 0.78, blue: 0.30)   // medium — gold
+        case ..<2100: return Color(red: 0.95, green: 0.55, blue: 0.20)   // hard — orange
+        default:      return Color(red: 0.95, green: 0.30, blue: 0.30)   // brutal — red
+        }
     }
 }
 
-private struct PuzzleCardSkeleton: View {
-    @State private var opacity = 0.4
+// MARK: - Daily hero
+
+private struct DailyHeroCard: View {
+    let puzzle: LichessPuzzle
+
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @State private var isLaunching = false
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .center, spacing: 20) {
+            PuzzleMiniBoardView(fen: puzzle.puzzle.fen ?? "",
+                                size: 168,
+                                lastMove: highlightSquares())
+                .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("DAILY PUZZLE")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Chess.Palette.bronze)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Chess.Palette.bronze.opacity(0.18),
+                                in: Capsule())
+
+                HStack(spacing: 12) {
+                    DifficultyDot(rating: puzzle.puzzle.rating)
+                    Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
+                        .font(.title2.monospacedDigit().weight(.bold))
+                    Text("rating")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let moves = puzzle.puzzle.solution?.count {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.turn.up.right")
+                            .foregroundStyle(.secondary)
+                        Text("\(moves) move\(moves == 1 ? "" : "s") to solve")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !puzzle.puzzle.themes.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(puzzle.puzzle.themes.prefix(3), id: \.self) { theme in
+                            Text(theme)
+                                .font(.caption2)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(.white.opacity(0.10), in: Capsule())
+                        }
+                    }
+                }
+
+                Button {
+                    Task { await launch() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isLaunching {
+                            ProgressView().controlSize(.small).tint(.white)
+                        } else {
+                            Image(systemName: "play.fill")
+                        }
+                        Text("Solve in immersive space")
+                            .font(.callout.weight(.semibold))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Chess.Palette.bronze,
+                                in: Capsule())
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.lift)
+                .disabled(isLaunching)
+                .padding(.top, 6)
+            }
+
+            Spacer()
+        }
+        .padding(20)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Chess.Palette.bronze.opacity(0.30),
+                              lineWidth: 0.8)
+        )
+    }
+
+    private func highlightSquares() -> ((Int, Int), (Int, Int))? {
+        guard let m = puzzle.puzzle.lastMove, m.count >= 4 else { return nil }
+        func square(_ s: Substring) -> (Int, Int)? {
+            guard s.count == 2,
+                  let file = s.first, let rank = s.last else { return nil }
+            let col = Int(file.asciiValue ?? 0) - Int(Character("a").asciiValue!)
+            let r = (rank.wholeNumberValue ?? 0)
+            guard (0...7).contains(col), (1...8).contains(r) else { return nil }
+            return (8 - r, col)
+        }
+        guard let f = square(m.prefix(2)),
+              let t = square(m.dropFirst(2).prefix(2)) else { return nil }
+        return (f, t)
+    }
+
+    private func launch() async {
+        guard !isLaunching else { return }
+        isLaunching = true
+        defer { isLaunching = false }
+        guard let session = PuzzleSession(puzzle: puzzle) else { return }
+        session.onSolved = { [progress = appModel.puzzleProgress] id in
+            progress.markSolved(id)
+        }
+        appModel.activeSession = .puzzle(session)
+        appModel.immersiveSpaceState = .inTransition
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened: break
+        default:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+        }
+    }
+}
+
+private struct DailyHeroSkeleton: View {
+    @State private var phase: CGFloat = 0
+    var body: some View {
+        HStack(spacing: 20) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(.white.opacity(0.12)).frame(width: 56, height: 56)
-            VStack(alignment: .leading, spacing: 6) {
-                Capsule().fill(.white.opacity(0.12)).frame(width: 120, height: 12)
-                Capsule().fill(.white.opacity(0.08)).frame(width: 200, height: 10)
-                Capsule().fill(.white.opacity(0.08)).frame(width: 160, height: 10)
+                .fill(.white.opacity(0.10))
+                .frame(width: 168, height: 168)
+            VStack(alignment: .leading, spacing: 10) {
+                Capsule().fill(.white.opacity(0.10)).frame(width: 120, height: 14)
+                Capsule().fill(.white.opacity(0.10)).frame(width: 180, height: 18)
+                Capsule().fill(.white.opacity(0.10)).frame(width: 160, height: 12)
             }
             Spacer()
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .opacity(opacity)
+        .padding(20)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .opacity(0.7 + 0.3 * Double(sin(Double(phase))))
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                opacity = 0.9
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                phase = .pi
             }
         }
+    }
+}
+
+// MARK: - Load more / empty / error compact cards (for inside a rail)
+
+private struct LoadMoreCard: View {
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Chess.Palette.bronze.opacity(0.35),
+                                      style: StrokeStyle(lineWidth: 1.2,
+                                                         dash: [4, 4]))
+                        .frame(width: 132, height: 132)
+                    Image(systemName: isLoading ? "ellipsis" : "arrow.down.circle.fill")
+                        .font(.system(size: 36))
+                        .foregroundStyle(Chess.Palette.bronze)
+                }
+                Text(isLoading ? "Loading…" : "Load more")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(width: 156, height: 196)
+            .background(.thinMaterial,
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .disabled(isLoading)
+    }
+}
+
+private struct EmptyCard: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.white.opacity(0.04))
+                    .frame(width: 132, height: 132)
+                Image(systemName: "tray")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.secondary)
+            }
+            Text("No puzzles yet")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(width: 156, height: 196)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct ErrorCard: View {
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Couldn’t load")
+                    .font(.caption.weight(.semibold))
+            }
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+            Spacer(minLength: 0)
+            Button("Retry", action: onRetry)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .frame(width: 220, height: 196, alignment: .topLeading)
+        .background(.orange.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.orange.opacity(0.30), lineWidth: 0.6)
+        )
     }
 }
 

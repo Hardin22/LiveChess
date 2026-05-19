@@ -5577,5 +5577,109 @@
     "plays": 37,
     "lastMove": "a6a5",
     "initialPly": null
+  },
+  {
+    "id": "tNQIj",
+    "rating": 1275,
+    "plays": 1868,
+    "solution": [
+      "a7a8"
+    ],
+    "themes": [
+      "endgame",
+      "master",
+      "rookEndgame",
+      "oneMove",
+      "mateIn1"
+    ],
+    "initialPly": 89
+  },
+  {
+    "id": "Ivya0",
+    "rating": 1262,
+    "plays": 6493,
+    "solution": [
+      "d4f3"
+    ],
+    "themes": [
+      "oneMove",
+      "mateIn1",
+      "middlegame"
+    ],
+    "initialPly": 20
+  },
+  {
+    "id": "pXiNy",
+    "rating": 1831,
+    "plays": 2788,
+    "solution": [
+      "f6f8"
+    ],
+    "themes": [
+      "oneMove",
+      "mateIn1",
+      "killBoxMate",
+      "master",
+      "middlegame"
+    ],
+    "initialPly": 65
+  },
+  {
+    "id": "lmGFp",
+    "rating": 1312,
+    "plays": 3609,
+    "solution": [
+      "b5a7"
+    ],
+    "themes": [
+      "oneMove",
+      "mateIn1",
+      "middlegame"
+    ],
+    "initialPly": 27
+  },
+  {
+    "id": "Uz5tZ",
+    "rating": 1350,
+    "plays": 4327,
+    "solution": [
+      "e7f7"
+    ],
+    "themes": [
+      "endgame",
+      "operaMate",
+      "oneMove",
+      "mateIn1"
+    ],
+    "initialPly": 69
+  },
+  {
+    "id": "J9E84",
+    "rating": 1308,
+    "plays": 85,
+    "solution": [
+      "h5f7"
+    ],
+    "themes": [
+      "mateIn1",
+      "oneMove",
+      "middlegame"
+    ],
+    "initialPly": 35
+  },
+  {
+    "id": "nvrnE",
+    "rating": 1615,
+    "plays": 860,
+    "solution": [
+      "e4f3"
+    ],
+    "themes": [
+      "endgame",
+      "master",
+      "oneMove",
+      "mateIn1"
+    ],
+    "initialPly": 71
   }
 ]
