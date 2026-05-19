@@ -55,11 +55,22 @@ enum PuzzleCategory: String, CaseIterable, Sendable, Identifiable, Codable {
         }
     }
 
-    /// First category whose `rawValue` appears in `themes`. Returns
+    /// Theme keys that count toward this category. Most categories
+    /// map 1:1 to a Lichess theme, but "Mate in 3+" covers
+    /// `mateIn3` / `mateIn4` / `mateIn5` so the section is dense
+    /// enough to be worth browsing.
+    var themeKeys: Set<String> {
+        switch self {
+        case .mateIn3: return ["mateIn3", "mateIn4", "mateIn5"]
+        default:       return [rawValue]
+        }
+    }
+
+    /// First category whose `themeKeys` intersect `themes`. Returns
     /// `nil` if the puzzle has none of the surfaced themes — those
     /// puzzles are silently dropped from the bundled pool.
     static func bucket(for themes: [String]) -> PuzzleCategory? {
         let set = Set(themes)
-        return allCases.first { set.contains($0.rawValue) }
+        return allCases.first { !set.isDisjoint(with: $0.themeKeys) }
     }
 }
