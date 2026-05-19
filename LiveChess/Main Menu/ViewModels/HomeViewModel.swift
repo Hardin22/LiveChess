@@ -77,6 +77,13 @@ final class HomeViewModel {
         account?.perfs?["rapid"]?.games
     }
 
+    /// Rating-strip rows shown on the home header. Empty when signed
+    /// out so the chips disappear cleanly instead of rendering a row
+    /// of "—". Order mirrors `LichessAccount.displayedPerfKeys`.
+    var displayedRatings: [LichessAccount.RatingRow] {
+        account?.displayedRatingRows ?? []
+    }
+
     /// Games filtered by the search bar against opponent name + opening.
     var filteredGames: [LichessGame] {
         if searchText.isEmpty { return games }

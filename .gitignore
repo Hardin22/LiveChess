@@ -17,3 +17,7 @@ xcuserdata/
 
 # CocoaPods (not used, but just in case)
 Pods/
+
+# Puzzle DB cache used by scripts/generate_starter_puzzles_from_db.py
+# (1+ GB after decompression — never committed).
+.puzzle_cache/

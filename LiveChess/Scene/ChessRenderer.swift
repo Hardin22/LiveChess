@@ -38,11 +38,14 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// piece isn't over any legal target.
     private var activeMarkerSquare: Square?
 
-    /// Puzzle-hint overlay (`pulseHintSquare(_:)`). Separate from
-    /// `activeOverlay` so a hint pulse can coexist with the player
-    /// already dragging a piece.
-    private var hintOverlay: ModelEntity?
-    /// Task that fades / removes the hint overlay after its beat.
+    /// Puzzle-hint overlays. `hintSourceOverlay` is the gold pulse on
+    /// the piece's square; `hintDestinationOverlay` is the cyan square
+    /// shown only at the "full move" disclosure stage. Both are kept
+    /// separate from `activeOverlay` so a hint can coexist with the
+    /// player already dragging a piece.
+    private var hintSourceOverlay: ModelEntity?
+    private var hintDestinationOverlay: ModelEntity?
+    /// Task that fades / removes the source-only hint after its beat.
     /// Cancelled on re-press so a new hint doesn't clear too early.
     private var hintTask: Task<Void, Never>?
 
@@ -456,29 +459,83 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
         return entity
     }
 
+    /// Stage 1 hint: pulse just the SOURCE square. Auto-fades after a
+    /// short beat so the hint doesn't linger if the player ignores it.
     func pulseHintSquare(_ square: Square) {
         hintTask?.cancel()
-        hintOverlay?.removeFromParent()
+        hintSourceOverlay?.removeFromParent()
+        hintDestinationOverlay?.removeFromParent()
+        hintDestinationOverlay = nil
 
         let overlay = makeActiveOverlay(at: square)
         rootEntity.addChild(overlay)
-        hintOverlay = overlay
+        hintSourceOverlay = overlay
+        animatePopIn(overlay)
 
-        // Quick pop-in
+        // Auto-fade after 4 s so the hint doesn't linger over the
+        // square the player is trying to drop into.
+        hintTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            if Task.isCancelled { return }
+            self?.hintSourceOverlay?.removeFromParent()
+            self?.hintSourceOverlay = nil
+        }
+    }
+
+    /// Stage 2 hint: light up both source AND destination of the
+    /// expected move, in distinct colours (gold for source, cyan for
+    /// destination). Stays visible until cleared by the next user
+    /// action (correct move, restart, or opponent reply).
+    func pulseHintMove(from source: Square, to destination: Square) {
+        hintTask?.cancel()
+        hintSourceOverlay?.removeFromParent()
+        hintDestinationOverlay?.removeFromParent()
+
+        let src = makeActiveOverlay(at: source)
+        let dst = makeHintDestinationOverlay(at: destination)
+        rootEntity.addChild(src)
+        rootEntity.addChild(dst)
+        hintSourceOverlay = src
+        hintDestinationOverlay = dst
+
+        animatePopIn(src)
+        animatePopIn(dst)
+    }
+
+    /// Removes any visible hint overlay. Called when the user makes a
+    /// correct move, restarts the puzzle, or the opponent has replied.
+    func clearHintOverlay() {
+        hintTask?.cancel()
+        hintSourceOverlay?.removeFromParent()
+        hintDestinationOverlay?.removeFromParent()
+        hintSourceOverlay = nil
+        hintDestinationOverlay = nil
+    }
+
+    private func animatePopIn(_ overlay: ModelEntity) {
         overlay.transform.scale = SIMD3<Float>(0.4, 1.0, 0.4)
         var grown = overlay.transform
         grown.scale = SIMD3<Float>(repeating: 1.0)
         overlay.move(to: grown, relativeTo: rootEntity,
                      duration: 0.15, timingFunction: .easeOut)
+    }
 
-        // Auto-fade after 2 s so the hint doesn't linger over the
-        // square the player is trying to drop into.
-        hintTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            if Task.isCancelled { return }
-            self?.hintOverlay?.removeFromParent()
-            self?.hintOverlay = nil
-        }
+    private func makeHintDestinationOverlay(at square: Square) -> ModelEntity {
+        let size = SceneMetrics.squareSize - 0.002
+        let height: Float = 0.0015
+        let mesh = MeshResource.generateBox(
+            size: [size, height, size],
+            cornerRadius: 0.003
+        )
+        let entity = ModelEntity(
+            mesh: mesh,
+            materials: [ChessMaterials.hintDestinationMarkerMaterial()]
+        )
+        var pos = BoardSurface.position(for: square)
+        pos.y = SceneMetrics.boardSurfaceY + height / 2 + 0.0010
+        entity.position = pos
+        entity.name = "HintDestination_\(square.algebraic)"
+        return entity
     }
 
     /// Removes every legal-move marker and the active overlay. Called when
