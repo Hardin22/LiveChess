@@ -386,6 +386,9 @@ private struct CategoryBox: View {
         // area were getting swallowed. Now the box has two distinct
         // Buttons (Solve next + Load 20) that don't interfere.
         VStack(alignment: .leading, spacing: 12) {
+            // Category icon. The Load 20 pill that used to live in
+            // the top-right corner was removed — bundled pack is
+            // enough to play with, and the extra control was noise.
             HStack(alignment: .top) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -396,7 +399,6 @@ private struct CategoryBox: View {
                         .foregroundStyle(Chess.Palette.bronze)
                 }
                 Spacer()
-                loadMorePill
             }
 
             Text(category.displayName)
@@ -425,8 +427,8 @@ private struct CategoryBox: View {
                                          ? .secondary
                                          : Chess.Palette.bronze)
                     Text(progress.total == 0
-                         ? "No puzzles bundled yet — tap Load 20."
-                         : "All solved! Load 20 more.")
+                         ? "No puzzles bundled in this category."
+                         : "All caught up — nicely done.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -471,7 +473,7 @@ private struct CategoryBox: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Solve next")
+                    Text("Solve")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.primary)
                     HStack(spacing: 6) {
@@ -528,35 +530,6 @@ private struct CategoryBox: View {
     private var fillFraction: CGFloat {
         guard progress.total > 0 else { return 0 }
         return CGFloat(progress.solved) / CGFloat(progress.total)
-    }
-
-    @ViewBuilder
-    private var loadMorePill: some View {
-        Button(action: onLoadMore) {
-            HStack(spacing: 5) {
-                if isLoading {
-                    ProgressView().controlSize(.small).tint(.white)
-                    Text("Loading…")
-                        .font(.caption.weight(.semibold))
-                } else {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.caption)
-                    Text("Load 20")
-                        .font(.caption.weight(.semibold))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Chess.Palette.bronze.opacity(0.90), in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.6))
-            .foregroundStyle(.white)
-        }
-        .buttonStyle(.plain)
-        .hoverEffect(.lift)
-        .disabled(isLoading)
-        // Stops the outer Button (the whole box) from receiving the
-        // tap — otherwise this would also launch the next puzzle.
-        .accessibilityLabel("Load 20 more puzzles from Lichess")
     }
 
     @ViewBuilder
