@@ -19,13 +19,20 @@ class AppModel {
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
 
-    /// Whether the immersive scene replaces real-world passthrough with
-    /// the bundled virtual environment (a small chess room with table +
-    /// chairs). Off by default so first-time users see the chessboard
-    /// floating in their actual room (the AR experience). Toggling at
-    /// runtime requires the immersive scene to rebuild — the toggle
-    /// flow dismisses + re-opens the immersive space.
-    var virtualEnvironmentEnabled: Bool = false
+    /// Which backdrop the immersive scene uses. `.ar` keeps Vision Pro
+    /// passthrough on so the board lands on a real-world table via
+    /// ARKit plane detection. The other cases swap passthrough for a
+    /// bundled USDZ environment (dwarven hall, balcony, esports stage)
+    /// with the board pre-seated on the env's table.
+    ///
+    /// Switching at runtime requires the immersive scene to rebuild —
+    /// the picker flow dismisses + re-opens the immersive space.
+    var selectedEnvironment: SceneEnvironment = .ar
+
+    /// Convenience for the immersion-style switch in `LiveChessApp`.
+    var virtualEnvironmentEnabled: Bool {
+        selectedEnvironment.isVirtual
+    }
 
     /// Set briefly by the env-toggle flow so `ChessSceneView.onDisappear`
     /// keeps the active session alive across the dismiss + re-open.
@@ -54,6 +61,24 @@ class AppModel {
     /// `MatchCoordinator` or the remote `LichessMatchSession`. Cleared
     /// when the immersive space dismisses.
     var activeSession: ActiveSession?
+
+    /// Set when the user taps "Find opponent" — drives the matchmaking
+    /// HUD that floats over the empty board while we wait for Lichess
+    /// to pair us. Cleared when a real game arrives (which transitions
+    /// the immersive into `.online` mode) or the user cancels.
+    var matchmaking: MatchmakingState?
+}
+
+/// Describes an in-flight matchmaking attempt — what the user picked
+/// in the lobby. Drives the `MatchmakingHUDView` text/animation.
+struct MatchmakingState: Equatable {
+    /// Display string for the time control, e.g. "10+0".
+    let timeControlLabel: String
+    /// Whether the game is rated — surfaced as "Rated" / "Casual".
+    let rated: Bool
+    /// Username + rating to render on the "You" side of the vs panel.
+    let selfUsername: String
+    let selfRating: Int?
 }
 
 /// Discriminated union over the two flavours of session the scene host
@@ -64,12 +89,16 @@ class AppModel {
 enum ActiveSession {
     case local(MatchCoordinator)
     case online(LichessMatchSession)
+    case puzzle(PuzzleSession)
+    case review(ReviewSession)
 
     /// Scene-host accessor — agnostic of which flow we're in.
     var session: any MatchSession {
         switch self {
-        case .local(let c): return c
+        case .local(let c):  return c
         case .online(let s): return s
+        case .puzzle(let p): return p
+        case .review(let r): return r
         }
     }
 }

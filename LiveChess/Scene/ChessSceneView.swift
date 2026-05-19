@@ -21,6 +21,7 @@ import TabletopKit
 struct ChessSceneView: View {
 
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
     /// `any MatchSession` — set in the make closure after we resolve
     /// `appModel.activeSession`. Used by the drag handler and the HUD
@@ -70,9 +71,17 @@ struct ChessSceneView: View {
             setup.add(seat: whiteSeat)
             setup.add(seat: blackSeat)
 
+            // Seed the visual board from the session's CURRENT position,
+            // not the standard start. This matters across env switches
+            // mid-game: pendingReopen preserves `activeSession` so the
+            // session's underlying match still holds every move played
+            // so far, but the scene rebuild was hardcoding the start
+            // position — making the board visually reset to move 1
+            // even though the engine still thought it was move 23.
             Self.populatePieces(
                 into: &setup,
                 renderer: renderer,
+                from: session.match.currentPosition,
                 tableID: table.id,
                 idStart: 100
             )
@@ -104,6 +113,17 @@ struct ChessSceneView: View {
                     tableID: table.id,
                     idStart: 200
                 )
+            }
+
+            // Puzzle-specific renderer hook: pulse the source square
+            // of the next expected move when the player asks for a
+            // hint. Wired here once at scene build (PuzzleSession's
+            // hintHandler is set to a closure that defers to the
+            // renderer's pulseHintSquare).
+            if case .puzzle(let puzzle) = active {
+                puzzle.hintHandler = { [weak renderer] square in
+                    renderer?.pulseHintSquare(square)
+                }
             }
 
             // Board orientation: rotate the whole root 180° around Y when
@@ -142,12 +162,13 @@ struct ChessSceneView: View {
             // fall through to the AR placement path so the user
             // always gets a working board.
             var didMountVirtualEnv = false
-            if appModel.virtualEnvironmentEnabled {
-                if let virtualBoardPos = await Self.mountVirtualEnvironment(
+            if appModel.selectedEnvironment.isVirtual {
+                if let mount = await EnvironmentLoader.mount(
+                    appModel.selectedEnvironment,
                     into: content
                 ) {
                     var t = fallback
-                    t.translation = virtualBoardPos
+                    t.translation = mount.boardPosition
                     renderer.rootEntity.transform = t
                     didMountVirtualEnv = true
                 }
@@ -183,12 +204,12 @@ struct ChessSceneView: View {
             // an extra π Y rotation so the world-space pose ends up
             // identical to the White case — HUD on the user's right,
             // text reading correctly toward them.
+            let hudLocalX = SceneMetrics.boardOuterSide / 2 + 0.10
+            let baseTilt = simd_quatf(
+                angle: -.pi / 6,         // tilt back ~30° toward the user
+                axis: SIMD3<Float>(1, 0, 0)
+            )
             if let hud = attachments.entity(for: "match-hud") {
-                let hudLocalX = SceneMetrics.boardOuterSide / 2 + 0.10
-                let baseTilt = simd_quatf(
-                    angle: -.pi / 6,         // tilt back ~30° toward the user
-                    axis: SIMD3<Float>(1, 0, 0)
-                )
                 if needsBlackPerspective {
                     hud.position = SIMD3<Float>(-hudLocalX, 0.18, 0)
                     hud.transform.rotation = simd_quatf(
@@ -199,6 +220,43 @@ struct ChessSceneView: View {
                     hud.transform.rotation = baseTilt
                 }
                 renderer.rootEntity.addChild(hud)
+            }
+            // Companion moves panel — sits on the OPPOSITE side of
+            // the board from the action HUD so the chess set is
+            // centered between the two surfaces. Slightly raised
+            // (+12 cm Y, vs the HUD's 18 cm) so it floats clearly
+            // separate even if the user turns their head and both
+            // panels enter the same field of view.
+            if let panel = attachments.entity(for: "moves-panel") {
+                if needsBlackPerspective {
+                    panel.position = SIMD3<Float>(hudLocalX, 0.30, 0)
+                    panel.transform.rotation = simd_quatf(
+                        angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+                    ) * baseTilt
+                } else {
+                    panel.position = SIMD3<Float>(-hudLocalX, 0.30, 0)
+                    panel.transform.rotation = baseTilt
+                }
+                renderer.rootEntity.addChild(panel)
+            }
+
+            // Floating eval bar (review only). Sits between the moves
+            // panel and the board's near edge, slightly forward so it
+            // doesn't fight the panel surface for the same Z. Empty
+            // attachment for non-review sessions — the SwiftUI body
+            // bails to EmptyView so we don't pay the layout cost.
+            if let evalBar = attachments.entity(for: "eval-bar") {
+                let evalX = -hudLocalX + 0.10
+                if needsBlackPerspective {
+                    evalBar.position = SIMD3<Float>(-evalX, 0.18, 0.06)
+                    evalBar.transform.rotation = simd_quatf(
+                        angle: .pi, axis: SIMD3<Float>(0, 1, 0)
+                    ) * baseTilt
+                } else {
+                    evalBar.position = SIMD3<Float>(evalX, 0.18, 0.06)
+                    evalBar.transform.rotation = baseTilt
+                }
+                renderer.rootEntity.addChild(evalBar)
             }
 
             _ = content.subscribe(to: SceneEvents.Update.self) { @MainActor event in
@@ -215,10 +273,50 @@ struct ChessSceneView: View {
                 coord.start()
             case .online(let online):
                 await online.start()
+            case .puzzle:
+                // PuzzleSession is ready as soon as it's created — no
+                // engine to start. The board's already at the puzzle's
+                // initial FEN via match.startPosition above.
+                break
+            case .review(let review):
+                // Review is HUD-driven; analysis kicks off when the
+                // HUD attachment appears. Wire the renderer to the
+                // session's per-ply highlight callback so the from/to
+                // squares of the displayed move are tinted by the
+                // move's classification.
+                review.reviewHighlightHandler = { [weak renderer] from, to, quality in
+                    renderer?.setReviewHighlight(from: from, to: to, quality: quality)
+                }
+                review.bestMoveArrowHandler = { [weak renderer] from, to in
+                    if let from, let to {
+                        renderer?.showBestMoveArrow(from: from, to: to)
+                    } else {
+                        renderer?.clearBestMoveArrow()
+                    }
+                }
+                // Initial paint — covers the case where the user lands
+                // on the immersive at currentPly == -1 (clears any
+                // stale highlight) and ensures we don't have to wait
+                // for the first navigation event.
+                review.emitReviewHighlight()
             }
         } attachments: {
             Attachment(id: "match-hud") {
-                if let session = appModel.activeSession {
+                // Matchmaking overlay wins precedence — when the user
+                // taps "Find opponent", the immersive opens before any
+                // session arrives. We render the matchmaking HUD until
+                // the game session is built; then this branch becomes
+                // false and the per-session HUD below takes over.
+                if let mm = appModel.matchmaking {
+                    MatchmakingHUDView(state: mm) {
+                        // Cancel — tear down the seek + immersive.
+                        appModel.matchmaking = nil
+                        appModel.immersiveSpaceState = .inTransition
+                        Task { @MainActor in
+                            await dismissImmersiveSpace()
+                        }
+                    }
+                } else if let session = appModel.activeSession {
                     switch session {
                     case .local(let coord):
                         LocalMatchHUDView(
@@ -230,11 +328,43 @@ struct ChessSceneView: View {
                             session: online,
                             placement: placementController
                         )
+                    case .puzzle(let puzzle):
+                        PuzzleHUDView(session: puzzle)
+                    case .review(let review):
+                        ReviewHUDView(session: review)
                     }
                 }
             }
             Attachment(id: "placement-helper") {
                 PlacementHelperOverlay(controller: placementController)
+            }
+            // Companion floating panel — shows on the opposite side of
+            // the board from the main HUD. The view inside differs by
+            // session flavour: local match → MovesPanelView, puzzle →
+            // PuzzlePanelView (online + review have their own surfaces).
+            Attachment(id: "moves-panel") {
+                if let session = appModel.activeSession {
+                    switch session {
+                    case .local(let coord):
+                        MovesPanelView(coordinator: coord)
+                    case .puzzle(let puzzle):
+                        PuzzlePanelView(session: puzzle)
+                    case .review(let review):
+                        ReviewMovesPanelView(session: review)
+                    case .online:
+                        EmptyView()
+                    }
+                }
+            }
+            // Eval bar — only meaningful for review; other sessions
+            // render an empty body so the attachment exists but
+            // contributes nothing.
+            Attachment(id: "eval-bar") {
+                if case .review(let review) = appModel.activeSession {
+                    ReviewEvalBarView(session: review)
+                } else {
+                    EmptyView()
+                }
             }
         }
         .gesture(combinedDrag)
@@ -280,273 +410,11 @@ struct ChessSceneView: View {
         settings: MatchSettings
     ) -> Side {
         switch active {
-        case .local: return settings.resolvedHumanSide()
-        case .online(let online): return online.humanColor
+        case .local:               return settings.resolvedHumanSide()
+        case .online(let online):  return online.humanColor
+        case .puzzle(let puzzle):  return puzzle.humanSide
+        case .review:              return .white   // review board orientation
         }
-    }
-
-    /// Loads `Resources/environment.usdz` (the colleague's Blender-
-    /// authored dwarven chess hall with table + chairs + sconces +
-    /// statues + arches), applies the seated-POV transform he wired,
-    /// and adds the cinematic noir lighting + dust-mote particles he
-    /// designed for it. Computes the world-space top of `AntiqueTable`
-    /// and returns it (with a small upward lift) so the caller can
-    /// seat the chessboard on it without z-fighting the table mesh.
-    ///
-    /// Returns `nil` on any failure (missing file, corrupt USDZ, no
-    /// `AntiqueTable` child) so the caller can route through the AR
-    /// placement fallback — the user always gets a playable board.
-    private static func mountVirtualEnvironment(
-        into content: any RealityViewContentProtocol
-    ) async -> SIMD3<Float>? {
-        let env: Entity
-        do {
-            env = try await Entity(named: "environment", in: .main)
-        } catch {
-            return nil
-        }
-        env.name = "VirtualEnvironment"
-
-        // Seated-POV transform from the env author's reference scene.
-        // Math (his comments): Blender black chair sits at (9, 0, 0.62)
-        // facing -X toward the table. Rotating -π/2 around Y maps
-        // chair-forward (-X) to user-forward (-Z), and translating by
-        // (0, +0.3, -9.15) lands the chair eye at the user's natural
-        // standing eye level near world origin. Net effect: the user
-        // feels seated *in* the antique chair, looking across the
-        // table at the opposite chair — the natural chess setup.
-        env.transform.rotation = simd_quatf(
-            angle: -.pi / 2,
-            axis: SIMD3<Float>(0, 1, 0)
-        )
-        env.position = SIMD3<Float>(0, 0.3, -9.15)
-        // Soften the candelabra lights baked into the USDZ before
-        // adding the env to the scene — the author's tuning produces
-        // hard bright rings on the floor (small attenuationRadius +
-        // tight outer cone). Ours: lower intensity and widen
-        // attenuation so the falloff fades into a gradient instead of
-        // ending in a sharp circle.
-        softenEmbeddedLights(in: env)
-        content.add(env)
-
-        // Locate the antique table and read its world-space top after
-        // the env transform has been committed.
-        guard let table = env.findEntity(named: "AntiqueTable") else {
-            // Env mounted but we can't find the table — leave it
-            // visible (the rest of the room is still nice) and bail
-            // so the caller goes through the AR fallback for
-            // positioning. Better than no board.
-            return nil
-        }
-        let bounds = table.visualBounds(relativeTo: nil)
-        let tableTopY = bounds.center.y + bounds.extents.y / 2
-        // Lift the chessboard ~6 mm above the table mesh so its frame
-        // doesn't z-fight the table surface (the board's frame extends
-        // a few mm below its origin; flush placement causes the
-        // muddy "blended" look the user reported).
-        let lift: Float = 0.006
-        let boardPosition = SIMD3<Float>(
-            bounds.center.x,
-            tableTopY + lift,
-            bounds.center.z
-        )
-
-        // Cinematic noir lighting + dust motes, ported from the env
-        // author's reference scene. Tuned to the geometry, so kept as
-        // a unit. See `addEnvironmentLighting` and `addDustMotes`.
-        addEnvironmentLighting(into: content)
-        addDustMotes(into: content)
-
-        return boardPosition
-    }
-
-    /// Walks the loaded environment's entity tree and softens any
-    /// `PointLightComponent` / `SpotLightComponent` baked into the
-    /// USDZ (the candelabras' point lights and any spot rigs the
-    /// author included). Two adjustments:
-    ///
-    ///   * **intensity × 0.35** — the embedded lights overpower the
-    ///     scene's authored key/rim because the candelabra mesh sits
-    ///     close to the floor; cutting them way down lets the
-    ///     authored noir lighting do its job.
-    ///   * **attenuationRadius widened to ≥ 6 m** — the harsh bright
-    ///     ring the user reported is the falloff hitting zero inside
-    ///     a small radius; widening it spreads the gradient over
-    ///     metres, so the boundary fades to nothing instead of
-    ///     ending in a hard circle.
-    ///   * **spot outer cone widened by 1.4×** — softens the edge
-    ///     of any spot beam similarly.
-    @MainActor
-    private static func softenEmbeddedLights(in root: Entity) {
-        var stack: [Entity] = [root]
-        while let entity = stack.popLast() {
-            if var p = entity.components[PointLightComponent.self] {
-                p.intensity = p.intensity * 0.35
-                p.attenuationRadius = max(p.attenuationRadius * 2.5, 6.0)
-                entity.components.set(p)
-            }
-            if var s = entity.components[SpotLightComponent.self] {
-                s.intensity = s.intensity * 0.35
-                s.attenuationRadius = max(s.attenuationRadius * 2.5, 6.0)
-                s.outerAngleInDegrees = min(s.outerAngleInDegrees * 1.4, 175)
-                entity.components.set(s)
-            }
-            stack.append(contentsOf: entity.children)
-        }
-    }
-
-    /// Four-light noir setup the env author tuned for this hall:
-    ///   - KEY: tight warm spot directly above the table.
-    ///   - RIM: warm molten-gold accent from far behind the room
-    ///          (the Erebor signature glow), with a slow flicker.
-    ///   - FILL: cool counter-light behind the user.
-    ///   - TABLE FILL: small warm pool at table height for material
-    ///                 readability on the pieces, also flickers.
-    @MainActor
-    private static func addEnvironmentLighting(
-        into content: any RealityViewContentProtocol
-    ) {
-        // KEY — tight warm spotlight on the chess area. Stepped down
-        // again (1.5M → 800K) after the user reported lingering
-        // highlight clipping on glossy / metal presets — those PBR
-        // curves multiply specular by intensity, so the dimmer key
-        // still gives a pleasant warm pool but the highlights no
-        // longer wash out the colour. Outer cone widened slightly
-        // (65° → 75°) to soften the edge of the warm pool on the
-        // table fabric.
-        var key = SpotLightComponent(
-            color: .init(red: 1.0, green: 0.78, blue: 0.45, alpha: 1.0),
-            intensity: 800_000
-        )
-        key.attenuationRadius = 4.0
-        key.innerAngleInDegrees = 30
-        key.outerAngleInDegrees = 75
-        let keyEntity = Entity()
-        keyEntity.name = "KeyLight"
-        keyEntity.components.set(key)
-        keyEntity.look(
-            at: SIMD3<Float>(0, 0.7, -1.0),
-            from: SIMD3<Float>(0, 4.5, -1.0),
-            relativeTo: nil
-        )
-        content.add(keyEntity)
-
-        // RIM — warm molten-gold accent
-        var rim = PointLightComponent(
-            color: .init(red: 1.0, green: 0.45, blue: 0.12, alpha: 1.0),
-            intensity: 1_200_000
-        )
-        rim.attenuationRadius = 18.0
-        let rimEntity = Entity()
-        rimEntity.name = "RimLight"
-        rimEntity.components.set(rim)
-        rimEntity.position = SIMD3<Float>(0, 4.0, -12.0)
-        content.add(rimEntity)
-        startLightFlicker(on: rimEntity, baseIntensity: 1_200_000, amplitude: 0.18, period: 2.7)
-
-        // FILL — cool counter-light from entrance side
-        var fill = PointLightComponent(
-            color: .init(red: 0.45, green: 0.55, blue: 0.85, alpha: 1.0),
-            intensity: 150_000
-        )
-        fill.attenuationRadius = 14.0
-        let fillEntity = Entity()
-        fillEntity.name = "FillLight"
-        fillEntity.components.set(fill)
-        fillEntity.position = SIMD3<Float>(0, 2.5, 5.0)
-        content.add(fillEntity)
-
-        // TABLE FILL — soft warm pool at table surface. Knocked down
-        // again (40K → 22K) after the second round of feedback: the
-        // glossy / metal presets were still picking up too much warm
-        // spec on top of the dimmer KEY. Attenuation widened so the
-        // remaining light spreads further before fading, keeping the
-        // candle warmth without piling intensity on the pieces.
-        var tableFill = PointLightComponent(
-            color: .init(red: 1.0, green: 0.82, blue: 0.55, alpha: 1.0),
-            intensity: 22_000
-        )
-        tableFill.attenuationRadius = 2.4
-        let tableFillEntity = Entity()
-        tableFillEntity.name = "TableFillLight"
-        tableFillEntity.components.set(tableFill)
-        tableFillEntity.position = SIMD3<Float>(0, 1.0, -1.0)
-        content.add(tableFillEntity)
-        startLightFlicker(on: tableFillEntity, baseIntensity: 22_000, amplitude: 0.10, period: 1.9)
-    }
-
-    /// Drives an organic-looking intensity flicker on a `PointLightComponent`
-    /// using two superimposed sine waves at different frequencies.
-    /// Cancelled implicitly when the entity is released (weak capture
-    /// returns nil → loop exits).
-    @MainActor
-    private static func startLightFlicker(
-        on entity: Entity,
-        baseIntensity: Float,
-        amplitude: Float,
-        period: Double
-    ) {
-        Task { @MainActor [weak entity] in
-            let start = Date()
-            while !Task.isCancelled {
-                guard let entity = entity else { return }
-                let elapsed = Date().timeIntervalSince(start)
-                let phase = (elapsed / period) * 2.0 * .pi
-                let secondary = (elapsed / (period * 0.43)) * 2.0 * .pi
-                let mix = (sin(phase) * 0.7 + sin(secondary) * 0.3)
-                let modulator = Float(mix) * amplitude
-                let newIntensity = baseIntensity * (1.0 + modulator)
-                if var p = entity.components[PointLightComponent.self] {
-                    p.intensity = newIntensity
-                    entity.components.set(p)
-                }
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-        }
-    }
-
-    /// Drifting dust motes — small tinted particles that float through
-    /// the warm key-light beam, courtesy of the env author. Pure
-    /// `ParticleEmitterComponent` so no asset dependency.
-    @MainActor
-    private static func addDustMotes(
-        into content: any RealityViewContentProtocol
-    ) {
-        var emitter = ParticleEmitterComponent()
-        emitter.emitterShape = .box
-        emitter.emitterShapeSize = SIMD3<Float>(2.5, 2.0, 2.5)
-        emitter.birthLocation = .volume
-        emitter.birthDirection = .normal
-        emitter.timing = .repeating(
-            warmUp: 8.0,
-            emit: .init(duration: .infinity),
-            idle: nil
-        )
-
-        var main = emitter.mainEmitter
-        main.birthRate = 35
-        main.lifeSpan = 18
-        main.lifeSpanVariation = 6
-        main.size = 0.006
-        main.sizeVariation = 0.003
-        main.color = .constant(.single(
-            .init(red: 1.0, green: 0.88, blue: 0.65, alpha: 0.8)
-        ))
-        main.opacityCurve = .gradualFadeInOut
-        main.spreadingAngle = 0.5
-        main.acceleration = SIMD3<Float>(0, -0.02, 0)
-        main.angularSpeed = 0.2
-        main.angularSpeedVariation = 0.1
-        emitter.mainEmitter = main
-
-        emitter.speed = 0.04
-        emitter.speedVariation = 0.02
-
-        let entity = Entity()
-        entity.name = "DustMotes"
-        entity.components.set(emitter)
-        entity.position = SIMD3<Float>(0, 2.5, -1.0)
-        content.add(entity)
     }
 
     /// Fallback used only if the immersive opens with no `activeSession`
@@ -570,18 +438,21 @@ struct ChessSceneView: View {
         )
     }
 
-    /// Adds the 32 starting-position pieces and registers them both with
+    /// Adds the 32 pieces of `position` and registers them both with
     /// the renderer and with TabletopKit's `TableSetup`. Used at first
-    /// scene build.
+    /// scene build — pass `Position.standardStart` for a fresh game,
+    /// or `session.match.currentPosition` to rebuild the scene at the
+    /// in-progress board state (env switch mid-game).
     private static func populatePieces(
         into setup: inout TableSetup,
         renderer: ChessRenderer,
+        from position: Position,
         tableID: EquipmentIdentifier,
         idStart: Int
     ) {
         var nextID = idStart
         for square in Square.all {
-            guard let piece = Position.standardStart[square] else { continue }
+            guard let piece = position[square] else { continue }
             let equipment = ChessPieceEquipment(
                 id: EquipmentIdentifier(nextID),
                 piece: piece,

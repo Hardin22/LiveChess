@@ -158,7 +158,7 @@ final class LichessAuthService: NSObject, ASWebAuthenticationPresentationContext
         // scheme name. ASWebAuthenticationSession matches case-insensitively
         // and dismisses its sheet automatically when the system sees a URL
         // beginning with that scheme.
-        let scheme = URL(string: redirectURI)?.scheme ?? "livechess"
+        let scheme = URL(string: redirectURI)?.scheme ?? "MetaChess"
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(

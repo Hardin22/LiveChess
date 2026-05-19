@@ -12,7 +12,7 @@ import SwiftUI
 @MainActor
 struct PieceCustomizationView: View {
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppModel.self) private var appModel
 
     /// Local state so the user can flip between previewing the white
@@ -27,49 +27,122 @@ struct PieceCustomizationView: View {
     var body: some View {
         @Bindable var customization = appModel.pieceCustomization
 
+        // Single-column ScrollView — visionOS sheets size to content
+        // intrinsic width, and a two-column HStack made the sheet
+        // squeeze both columns. One vertical scroll keeps the layout
+        // predictable at any sheet width.
         NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
-                    PiecePreviewView(
-                        material: customization.current,
-                        previewSide: $previewSide,
-                        previewKind: $previewKind
-                    )
+                VStack(spacing: Chess.Space.m) {
+                    previewHeader(customization: customization)
 
-                    previewControls
-
-                    Divider()
-
-                    presetSection(customization: customization)
-
-                    if customization.current.preset == .wood {
-                        pieceWoodSection(customization: customization)
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Material")
+                            presetSection(customization: customization)
+                            if customization.current.preset == .wood {
+                                Divider().padding(.top, Chess.Space.xs)
+                                pieceWoodSection(customization: customization)
+                            }
+                        }
                     }
 
-                    Divider()
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Tint")
+                            colorSection(customization: customization)
+                        }
+                    }
 
-                    colorSection(customization: customization)
+                    ChessCard(.standard) {
+                        VStack(alignment: .leading, spacing: Chess.Space.s) {
+                            ChessSectionHeader("Board")
+                            boardSection(customization: customization)
+                        }
+                    }
 
-                    Divider()
-
-                    boardSection(customization: customization)
-
-                    Divider()
-
-                    Button("Reset to default") {
+                    Button {
                         customization.resetToDefault()
+                    } label: {
+                        Label("Reset to default",
+                              systemImage: "arrow.counterclockwise")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
+                    .padding(.top, Chess.Space.s)
                 }
-                .padding(24)
-                .frame(maxWidth: 540)
+                .padding(Chess.Space.l)
+                .frame(maxWidth: 1080)
             }
-            .navigationTitle("Pieces")
+            .scrollIndicators(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("Pieces & Board")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        dismissWindow(id: LiveChessApp.piecesWindowID)
+                    }
+                    .buttonStyle(.bordered)
                 }
+            }
+        }
+    }
+
+    /// Top-of-sheet preview block — uses PiecePreviewView directly
+    /// (which already brings its own 320 pt frame + .thinMaterial
+    /// backdrop), with .clipped() so the 3-D king can't escape the
+    /// card's bounds, then the inline side / piece-kind controls
+    /// on a single row beneath. No outer ZStack and no second frame
+    /// — the previous wrapping was fighting PiecePreviewView's own
+    /// sizing and letting the piece overflow up past the sheet's
+    /// title bar.
+    @ViewBuilder
+    private func previewHeader(customization: PieceCustomization) -> some View {
+        VStack(spacing: Chess.Space.s) {
+            PiecePreviewView(
+                material: customization.current,
+                previewSide: $previewSide,
+                previewKind: $previewKind
+            )
+            .clipped()
+            .clipShape(
+                RoundedRectangle(cornerRadius: Chess.Radius.card,
+                                 style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.card,
+                                 style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+            )
+
+            HStack(spacing: Chess.Space.m) {
+                Picker("", selection: $previewSide) {
+                    Text("White").tag(Side.white)
+                    Text("Black").tag(Side.black)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 240)
+
+                Menu {
+                    ForEach(PieceKind.allCases, id: \.self) { kind in
+                        Button(displayName(for: kind)) { previewKind = kind }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(displayName(for: previewKind))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                    }
+                    .frame(minWidth: 100)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                Spacer()
             }
         }
     }
@@ -119,22 +192,19 @@ struct PieceCustomizationView: View {
 
     @ViewBuilder
     private func presetSection(customization: PieceCustomization) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Material")
-                .font(.headline)
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 130), spacing: 8)],
-                spacing: 8
-            ) {
-                ForEach(PieceMaterial.Preset.allCases) { preset in
-                    presetChip(preset, customization: customization)
-                }
+        // Vertical settings-list (like Apple Settings rows) instead
+        // of a cramped 3-col grid. Each row owns a full line so the
+        // text never wraps and the visual swatch on the left gives
+        // an at-a-glance preview of the material.
+        VStack(spacing: 6) {
+            ForEach(PieceMaterial.Preset.allCases) { preset in
+                presetRow(preset, customization: customization)
             }
         }
     }
 
     @ViewBuilder
-    private func presetChip(
+    private func presetRow(
         _ preset: PieceMaterial.Preset,
         customization: PieceCustomization
     ) -> some View {
@@ -142,32 +212,135 @@ struct PieceCustomizationView: View {
         Button {
             customization.selectPreset(preset)
         } label: {
-            HStack(spacing: 6) {
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.tint)
-                }
+            HStack(spacing: Chess.Space.s) {
+                MaterialSwatch(preset: preset)
+                    .frame(width: 28, height: 28)
                 Text(preset.displayName)
                     .font(.callout.weight(isSelected ? .semibold : .regular))
-                Spacer(minLength: 0)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
             }
+            .padding(.horizontal, Chess.Space.s)
             .padding(.vertical, 10)
-            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .background(
+                RoundedRectangle(cornerRadius: Chess.Radius.row,
+                                 style: .continuous)
                     .fill(isSelected
-                          ? AnyShapeStyle(Color.accentColor.opacity(0.18))
-                          : AnyShapeStyle(Color.gray.opacity(0.12)))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.25),
-                            lineWidth: isSelected ? 1.5 : 0.5)
-            }
+                          ? AnyShapeStyle(Color.white.opacity(0.10))
+                          : AnyShapeStyle(Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.row,
+                                 style: .continuous)
+                    .strokeBorder(isSelected
+                                  ? Color.white.opacity(0.25)
+                                  : Color.white.opacity(0.06),
+                                  lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
-        .hoverEffect()
+        .hoverEffect(.lift)
+    }
+}
+
+// MARK: - Material swatch
+
+/// Tiny visual preview of a `PieceMaterial.Preset`, shown to the left
+/// of each row in the material list. Uses solid / gradient fills that
+/// approximate what the material will look like on the 3-D piece, so
+/// the row is scannable at a glance instead of label-only.
+private struct MaterialSwatch: View {
+    let preset: PieceMaterial.Preset
+
+    var body: some View {
+        Circle()
+            .fill(fill)
+            .overlay(
+                Circle().strokeBorder(.white.opacity(0.25),
+                                      lineWidth: 0.5)
+            )
+            .overlay(
+                // Subtle highlight crescent — sells the "sphere"
+                // illusion so each chip reads as a polished material
+                // sample rather than a flat colour blob.
+                Circle()
+                    .trim(from: 0.55, to: 0.85)
+                    .stroke(.white.opacity(0.45), lineWidth: 1.2)
+                    .padding(2)
+            )
+    }
+
+    private var fill: AnyShapeStyle {
+        switch preset {
+        case .plasticMatte:
+            return AnyShapeStyle(Color(red: 0.92, green: 0.92, blue: 0.92))
+        case .plasticGlossy:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color.white, Color(white: 0.78)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .lacquered:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.78, green: 0.16, blue: 0.18),
+                         Color(red: 0.45, green: 0.05, blue: 0.07)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .polishedMetal:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.95), Color(white: 0.55)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .brushedMetal:
+            return AnyShapeStyle(Color(white: 0.70))
+        case .ceramic:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.97, green: 0.96, blue: 0.93),
+                         Color(red: 0.85, green: 0.83, blue: 0.78)],
+                startPoint: .top, endPoint: .bottom
+            ))
+        case .pearl:
+            return AnyShapeStyle(AngularGradient(
+                colors: [.pink.opacity(0.6), .cyan.opacity(0.4),
+                         .white, .yellow.opacity(0.5), .pink.opacity(0.6)],
+                center: .center
+            ))
+        case .glass:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color.cyan.opacity(0.35),
+                         Color.blue.opacity(0.45)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .wood:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.55, green: 0.36, blue: 0.18),
+                         Color(red: 0.32, green: 0.18, blue: 0.08)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        case .marble:
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.96), Color(white: 0.78)],
+                startPoint: .top, endPoint: .bottom
+            ))
+        }
+    }
+}
+
+// Wrapper to put `MaterialSwatch` next to the type above. The struct
+// `PieceCustomizationView` continues below — Swift allows reopening
+// via this extension.
+extension PieceCustomizationView {
+    /// Empty hook — kept so the closing `}` of the main struct above
+    /// doesn't change the surrounding section signatures.
+    @ViewBuilder
+    private func _materialSectionMarker() -> some View {
+        EmptyView()
     }
 
     // MARK: - Color pickers
@@ -204,11 +377,21 @@ struct PieceCustomizationView: View {
     @ViewBuilder
     private func boardSection(customization: PieceCustomization) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Board")
-                .font(.headline)
             Text("Re-skin the playing surface — pick a material and colours that pair well with your pieces. Changes apply live to any open game.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            // LIVE BOARD PREVIEW — 2-D swatch that mirrors the
+            // current customization. Sits at the top of the section
+            // so every chip / colour-picker change underneath
+            // produces a visible result the user can see before
+            // committing.
+            HStack {
+                Spacer()
+                BoardPreviewView(material: customization.current)
+                    .frame(width: 260, height: 260)
+                Spacer()
+            }
 
             // Squares — material chips + light/dark colour pickers.
             VStack(alignment: .leading, spacing: 8) {
@@ -331,18 +514,20 @@ struct PieceCustomizationView: View {
                 } label: {
                     Text(wood.displayName)
                         .font(.caption.weight(isSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
                         .background {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(isSelected
-                                      ? AnyShapeStyle(Color.accentColor.opacity(0.20))
+                                      ? AnyShapeStyle(Color.white.opacity(0.10))
                                       : AnyShapeStyle(Color.gray.opacity(0.10)))
                         }
                         .overlay {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.20),
-                                        lineWidth: isSelected ? 1.2 : 0.5)
+                                .stroke(isSelected ? Color.white.opacity(0.25) : Color.secondary.opacity(0.20),
+                                        lineWidth: isSelected ? 1.0 : 0.5)
                         }
                 }
                 .buttonStyle(.plain)
@@ -360,6 +545,10 @@ struct PieceCustomizationView: View {
         selected: BoardMaterial,
         onPick: @escaping (BoardMaterial) -> Void
     ) -> some View {
+        // Each chip is a fixed-width pill so its label always sits on
+        // one line — the earlier flexible HStack squeezed the labels
+        // until they wrapped character-by-character ('P o l i s h e d'
+        // in the user's screenshot).
         HStack(spacing: 8) {
             ForEach(BoardMaterial.allCases) { material in
                 let isSelected = material == selected
@@ -373,19 +562,21 @@ struct PieceCustomizationView: View {
                         }
                         Text(material.displayName)
                             .font(.callout.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .background {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(isSelected
-                                  ? AnyShapeStyle(Color.accentColor.opacity(0.20))
+                                  ? AnyShapeStyle(Color.white.opacity(0.10))
                                   : AnyShapeStyle(Color.gray.opacity(0.12)))
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.25),
-                                    lineWidth: isSelected ? 1.5 : 0.5)
+                            .stroke(isSelected ? Color.white.opacity(0.25) : Color.secondary.opacity(0.25),
+                                    lineWidth: isSelected ? 1.0 : 0.5)
                     }
                 }
                 .buttonStyle(.plain)

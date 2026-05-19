@@ -100,6 +100,32 @@ final class MatchCoordinator {
         await aiTask?.value
     }
 
+    /// Local-side resignation. `side` is the side giving up — the
+    /// other side wins. Cancels any in-flight AI search, freezes the
+    /// match at the current position, and fires the renderer callback
+    /// via matchResetHandler so the HUD redraws into its game-over
+    /// branch.
+    func resign(side: Side) {
+        guard !match.status.isGameOver else { return }
+        aiTask?.cancel()
+        aiTask = nil
+        isAIThinking = false
+        match.setStatus(.checkmate(winner: side.opponent))
+    }
+
+    /// Local-side mutual draw — the user clicks "Draw" and the local
+    /// game ends immediately. Stockfish doesn't negotiate draws over
+    /// UCI; for local play we treat the draw button as an instant
+    /// agreement (the user is in effect both sides). For online play
+    /// the Lichess HUD has the proper offer/accept flow already.
+    func agreeDraw() {
+        guard !match.status.isGameOver else { return }
+        aiTask?.cancel()
+        aiTask = nil
+        isAIThinking = false
+        match.setStatus(.drawByThreefoldRepetition)
+    }
+
     /// Legal moves for the piece on `square` in the current position. Used by
     /// the scene's drag handler to validate drops without exposing the rules
     /// engine directly.

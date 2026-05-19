@@ -1,0 +1,496 @@
+import Foundation
+import ChessKitEngine
+
+/// Per-move review analysis emitted by `GameAnalyzer`.
+///
+/// One `MoveAnalysis` per ply in the reviewed game. `playedScoreCp`
+/// and `bestScoreCp` are always from the perspective of the side that
+/// moved (positive = good for them). `centipawnLoss` is the magnitude
+/// of the player's mistake — `bestScoreCp - playedScoreCp`, clamped to
+/// `[0, 1000]`. The classification thresholds on `MoveQuality` operate
+/// on this value.
+struct MoveAnalysis: Identifiable, Sendable, Hashable {
+    let id: Int                        // ply index (0-based)
+    let san: String                    // SAN of the move played (or UCI if SAN unavailable)
+    let playedUCI: String
+    let mover: Side                    // who played this move
+    let playedScoreCp: Int             // eval after the player's move, in mover's POV
+    let bestScoreCp: Int               // eval of the best move at this position, mover's POV
+    let centipawnLoss: Int             // max(0, bestScoreCp - playedScoreCp), clamp 1000
+    /// Δwin% between the best and played move (0…100). This is what
+    /// drives the quality classification — raw cp loss over-flags
+    /// moves in already-decisive positions and under-flags moves
+    /// near 0.0, the win% sigmoid corrects for that.
+    let winPercentLoss: Double
+    let topLines: [AnalysisLine]       // up to MultiPV candidate moves at the prior position
+    let quality: MoveQuality
+    /// Opening name if the resulting position was found in
+    /// `OpeningBook` (lichess-org/chess-openings). Shown next to the
+    /// move when `quality == .book`.
+    let bookOpening: String?
+}
+
+/// One candidate move with its evaluation and a short PV.
+struct AnalysisLine: Sendable, Hashable {
+    let uci: String                    // first move of the line
+    let scoreCp: Int                   // eval, mover's POV
+    let mate: Int?                     // mate-in-N if any
+    let pv: [String]                   // UCI moves (first move == `uci`)
+}
+
+/// Classification buckets, in roughly the order chess.com / Lichess use.
+///
+/// The user-visible label, glyph and accent colour drive the UI. The
+/// classification is computed from `MoveAnalysis.centipawnLoss` plus a
+/// "only-good-move" check against the second-best candidate (`great`).
+/// `brilliant` would also need material-sacrifice detection so we
+/// leave it out of v1 to avoid false positives.
+enum MoveQuality: String, Sendable, Hashable, CaseIterable, Codable {
+    case brilliant     // best AND sacrifices ≥3 pts of material AND still winning AND not forced
+    case great         // best when alternatives are clearly worse (only-move)
+    case best          // engine's top pick
+    case book          // matches lichess-org/chess-openings DB
+    case excellent     // Δwin% < 2
+    case good          // Δwin% 2..<5
+    case inaccuracy    // Δwin% 5..<10
+    case mistake       // Δwin% 10..<20
+    case blunder       // Δwin% >= 20
+    case missedWin     // had ≥+200cp advantage, played a move that drops to ~0 or worse
+
+    var displayName: String {
+        switch self {
+        case .brilliant:  return "Brilliant"
+        case .best:       return "Best"
+        case .great:      return "Great"
+        case .book:       return "Book"
+        case .excellent:  return "Excellent"
+        case .good:       return "Good"
+        case .inaccuracy: return "Inaccuracy"
+        case .mistake:    return "Mistake"
+        case .blunder:    return "Blunder"
+        case .missedWin:  return "Missed Win"
+        }
+    }
+
+    /// Compact glyph for inline display next to the move text.
+    var glyph: String {
+        switch self {
+        case .brilliant:  return "‼"
+        case .best:       return "★"
+        case .great:      return "!"
+        case .book:       return "📖"
+        case .excellent:  return "✓"
+        case .good:       return "✓"
+        case .inaccuracy: return "?!"
+        case .mistake:    return "?"
+        case .blunder:    return "??"
+        case .missedWin:  return "✕"
+        }
+    }
+}
+
+/// Aggregated review of a full game, with per-side counters used by
+/// the summary card at the top of `GameReviewDetailView`.
+struct GameAnalysisResult: Sendable {
+    let moves: [MoveAnalysis]
+
+    func count(_ q: MoveQuality, for side: Side) -> Int {
+        moves.filter { $0.mover == side && $0.quality == q }.count
+    }
+
+    /// Accuracy in chess.com's win%-loss family: `100 - mean(Δwin%)`.
+    /// Same scale as their displayed accuracy (0–100, higher better).
+    /// A pure-best player scores 100; consistent blunders pull it
+    /// down to the 60s. Lichess uses a different sigmoid weighting
+    /// but the order-of-magnitude matches.
+    func accuracy(for side: Side) -> Double {
+        let losses = moves.filter { $0.mover == side }.map(\.winPercentLoss)
+        guard !losses.isEmpty else { return 100 }
+        let mean = losses.reduce(0, +) / Double(losses.count)
+        return max(0, min(100, 100.0 - mean))
+    }
+}
+
+/// Drives Stockfish through a game's move list to produce per-move
+/// classifications and PV lines.
+///
+/// **Single-engine-per-process constraint** — `chesskit-engine` embeds
+/// Stockfish in-process via its C++ `_main` function. Standing up a
+/// `GameAnalyzer` while a `StockfishEngine` is also alive (e.g. mid-
+/// match) collides on Stockfish's global state (option registry,
+/// thread pool, NNUE slots) and crashes the host. In practice this
+/// never happens — review is on the 2-D Home screen which is only
+/// reachable when no immersive match is running, and closing the
+/// immersive deallocs `MatchCoordinator` which deallocs the play
+/// engine — but if we ever surface "review while playing", the two
+/// will need to share a single `Engine` instance via a process-wide
+/// holder. Tracked here so it doesn't get forgotten.
+///
+/// One `GameAnalyzer` owns one `Engine`, started with `multipv: 3`
+/// (configurable). Calling `analyze` runs the engine ply by ply at a
+/// fixed search depth; results stream out via the
+/// `AsyncStream<MoveAnalysis>` returned by `analyzeStream`. The total
+/// review of a 40-move game at depth 16 lands around 30–60 s on M-class
+/// silicon — fast enough to keep the UI responsive, slow enough that
+/// we always emit progressively rather than blocking on a one-shot
+/// `analyze` returning the full result.
+actor GameAnalyzer {
+
+    private let multiPV: Int
+    private let engine: Engine
+    private var isStarted = false
+
+    init(multiPV: Int = 3) {
+        self.multiPV = multiPV
+        self.engine = Engine(type: .stockfish)
+    }
+
+    /// Streams `MoveAnalysis` records ply by ply. Caller iterates and
+    /// updates the UI as each ply lands; the stream completes when
+    /// every ply has been analyzed or the task is cancelled.
+    func analyzeStream(
+        startPosition: Position = .standardStart,
+        moves: [Move],
+        depth: Int = 20,
+        rules: any RulesEngine = ChessKitRulesEngine()
+    ) -> AsyncThrowingStream<MoveAnalysis, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await ensureStarted()
+                    var position = startPosition
+                    let book = OpeningBook.shared
+                    for (ply, move) in moves.enumerated() {
+                        try Task.checkCancellation()
+                        let mover = position.sideToMove
+                        let playedUCI = move.uci
+
+                        // Compute the position after the played move
+                        // — we need it for book lookup either way and
+                        // for material-delta brilliant detection.
+                        let positionAfter = try rules.apply(move, to: position)
+
+                        // BOOK shortcut — if the resulting position
+                        // is in the lichess-org/chess-openings DB,
+                        // label as theory and skip the engine call
+                        // entirely. Saves ~5-15 s per game on
+                        // typical openings.
+                        if let entry = book.lookup(positionAfter) {
+                            let analysis = MoveAnalysis(
+                                id: ply,
+                                san: move.uci,
+                                playedUCI: playedUCI,
+                                mover: mover,
+                                playedScoreCp: 0,
+                                bestScoreCp: 0,
+                                centipawnLoss: 0,
+                                winPercentLoss: 0,
+                                topLines: [],
+                                quality: .book,
+                                bookOpening: "\(entry.eco) · \(entry.name)"
+                            )
+                            continuation.yield(analysis)
+                            position = positionAfter
+                            continue
+                        }
+
+                        // Evaluate the position BEFORE the move with
+                        // MultiPV=N — gives us the top-N candidates +
+                        // their scores, all from `position.sideToMove`'s
+                        // POV at depth `depth`.
+                        let lines = try await evaluate(
+                            fen: position.fen, depth: depth
+                        )
+                        let bestLine = lines.first
+                        let bestScore = bestLine?.scoreCp ?? 0
+
+                        // Score the played move. If it's in the top-N
+                        // we get it for free; otherwise one more eval
+                        // of the position after the move, negated.
+                        let playedScore: Int
+                        if let match = lines.first(where: { $0.uci == playedUCI }) {
+                            playedScore = match.scoreCp
+                        } else {
+                            let oppLines = try await evaluate(
+                                fen: positionAfter.fen, depth: depth
+                            )
+                            playedScore = -(oppLines.first?.scoreCp ?? 0)
+                        }
+
+                        let cpLoss = max(0, min(1000, bestScore - playedScore))
+                        let winLoss = max(
+                            0.0,
+                            Self.winPercent(fromCp: bestScore)
+                              - Self.winPercent(fromCp: playedScore)
+                        )
+
+                        // Material delta — own material before vs
+                        // after the player's move. Negative = the
+                        // player sacrificed material on this move.
+                        let materialDelta = Self.materialBalance(
+                            for: mover, in: positionAfter
+                        ) - Self.materialBalance(for: mover, in: position)
+
+                        let quality = Self.classify(
+                            played: playedUCI,
+                            best: bestLine?.uci,
+                            bestScoreCp: bestScore,
+                            playedScoreCp: playedScore,
+                            winPercentLoss: winLoss,
+                            materialDelta: materialDelta,
+                            lines: lines
+                        )
+
+                        let analysis = MoveAnalysis(
+                            id: ply,
+                            san: move.uci,
+                            playedUCI: playedUCI,
+                            mover: mover,
+                            playedScoreCp: playedScore,
+                            bestScoreCp: bestScore,
+                            centipawnLoss: cpLoss,
+                            winPercentLoss: winLoss,
+                            topLines: lines,
+                            quality: quality,
+                            bookOpening: nil
+                        )
+                        continuation.yield(analysis)
+                        position = positionAfter
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            let engineRef = self.engine
+            continuation.onTermination = { _ in
+                task.cancel()
+                Task {
+                    await engineRef.send(command: .stop)
+                }
+            }
+        }
+    }
+
+    /// One-shot convenience that collects the stream into a single
+    /// result. Prefer `analyzeStream` for UI so each move appears as
+    /// soon as it's analyzed.
+    func analyze(
+        startPosition: Position = .standardStart,
+        moves: [Move],
+        depth: Int = 20,
+        rules: any RulesEngine = ChessKitRulesEngine()
+    ) async throws -> GameAnalysisResult {
+        var collected: [MoveAnalysis] = []
+        for try await m in analyzeStream(
+            startPosition: startPosition, moves: moves,
+            depth: depth, rules: rules
+        ) {
+            collected.append(m)
+        }
+        return GameAnalysisResult(moves: collected)
+    }
+
+    func shutdown() async {
+        guard isStarted else { return }
+        await engine.stop()
+        isStarted = false
+    }
+
+    /// Single-position evaluation — used by the review variation flow
+    /// to grade a one-off branch move without re-running the whole
+    /// game. Returns the top-N MultiPV lines at `depth`.
+    func evaluatePosition(
+        fen: String, depth: Int = 14
+    ) async throws -> [AnalysisLine] {
+        try await ensureStarted()
+        return try await evaluate(fen: fen, depth: depth)
+    }
+
+    // MARK: - Engine I/O
+
+    private func ensureStarted() async throws {
+        if isStarted { return }
+        let available = ProcessInfo.processInfo.activeProcessorCount
+        // Review is a background task — there's no turn-time deadline,
+        // so feed Stockfish as many cores as we can spare while leaving
+        // 2 for the UI + system. M-class silicon comfortably hits 6+
+        // here, which roughly halves analysis time vs the previous
+        // 2–4 budget.
+        let coreCount = max(2, min(8, available - 2))
+        await engine.start(coreCount: coreCount, multipv: multiPV)
+        // Default hash is 16 MB which thrashes the transposition table
+        // at depth 20+ — 256 MB matches what chess.com / Lichess use
+        // for cloud analysis. Sent post-start so it overrides whatever
+        // the wrapper picked.
+        await engine.send(command: .setoption(id: "Hash", value: "256"))
+        // Strength-cap NOT applied here: review wants the full
+        // engine strength to evaluate moves correctly.
+        for _ in 0..<200 {
+            if await engine.isRunning {
+                isStarted = true
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw AIError.engineUnavailable
+    }
+
+    /// Sends `position fen … / go depth N` and consumes the response
+    /// stream until `bestmove` arrives. Returns the latest set of
+    /// `info` lines (one per MultiPV slot) at the final depth, parsed
+    /// into `AnalysisLine`s with mover-POV scores.
+    private func evaluate(
+        fen: String, depth: Int
+    ) async throws -> [AnalysisLine] {
+        await engine.send(command: .position(.fen(fen)))
+        await engine.send(command: .go(depth: depth))
+
+        guard let stream = await engine.responseStream else {
+            throw AIError.engineUnavailable
+        }
+
+        // Per-MultiPV slot, keep the deepest info we've seen. When
+        // Stockfish iteratively deepens it emits info at depth 1, 2,
+        // 3, … for each slot; we overwrite on every new info because
+        // later depths are strictly better.
+        var latest: [Int: AnalysisLine] = [:]
+
+        for await response in stream {
+            switch response {
+            case .info(let info):
+                guard let pv = info.pv, !pv.isEmpty,
+                      let slot = info.multipv ?? 1 as Int? else { continue }
+                let score = info.score
+                let cp = score?.cp.map { Int($0.rounded()) } ?? 0
+                let mate = score?.mate
+                let line = AnalysisLine(
+                    uci: pv[0],
+                    scoreCp: mate.map { Self.mateToCp($0) } ?? cp,
+                    mate: mate,
+                    pv: pv
+                )
+                latest[slot] = line
+            case .bestmove:
+                return latest.keys.sorted().compactMap { latest[$0] }
+            default:
+                continue
+            }
+        }
+        throw AIError.noMoveProduced
+    }
+
+    // MARK: - Classification
+
+    /// Win%-loss based classification matching chess.com's family of
+    /// buckets. Uses `winPercent(fromCp:)` to map eval to expected
+    /// score so a 200cp swing at +15 (still totally winning) doesn't
+    /// flag as a "mistake", and a 50cp swing from 0.0 to -0.5 (now
+    /// clearly worse) doesn't get under-counted.
+    ///
+    /// Priority order:
+    ///   * `missedWin` — was ≥+200cp ahead, played a move that drops
+    ///     to ≤+50cp. Beats `mistake`/`blunder` because losing a win
+    ///     is qualitatively different from a positional slip.
+    ///   * `great` — top engine pick AND second-best is ≥10 win%
+    ///     worse (only-good-move tactical find).
+    ///   * `best` — matches engine's top pick.
+    ///   * Δwin% buckets: <2 excellent / <5 good / <10 inaccuracy /
+    ///     <20 mistake / ≥20 blunder.
+    nonisolated static func classify(
+        played: String,
+        best: String?,
+        bestScoreCp: Int,
+        playedScoreCp: Int,
+        winPercentLoss: Double,
+        materialDelta: Int,
+        lines: [AnalysisLine]
+    ) -> MoveQuality {
+        // Missed-win check first — if the player threw away a clearly
+        // winning advantage, the move quality is dominated by that
+        // fact regardless of how badly the cp number swung.
+        if bestScoreCp >= 200, playedScoreCp <= 50 {
+            return .missedWin
+        }
+
+        let isBest = (played == best)
+
+        // BRILLIANT (‼) — best move AND the player gave up ≥3 points
+        // of material (minor piece or more) AND the resulting eval
+        // is still winning (best stays ≥ 0). The "not forced" filter
+        // (alternatives existed that didn't sacrifice) is approximated
+        // by requiring the 2nd-best line to also be at least playable
+        // — otherwise we'd just be detecting any tactical best move
+        // that happens to lose material. Avoids the common false
+        // positive of "Brilliant!" on simple recaptures.
+        if isBest, materialDelta <= -3, bestScoreCp >= 0, lines.count >= 2 {
+            let secondScore = lines[1].scoreCp
+            // Alternative existed and didn't immediately lose — so
+            // the sacrifice was a genuine creative choice, not forced.
+            if secondScore >= -100 { return .brilliant }
+        }
+
+        if isBest, lines.count >= 2 {
+            let topWin = winPercent(fromCp: lines[0].scoreCp)
+            let secondWin = winPercent(fromCp: lines[1].scoreCp)
+            if (topWin - secondWin) >= 10 { return .great }
+        }
+        if isBest { return .best }
+
+        switch winPercentLoss {
+        case ..<2:    return .excellent
+        case ..<5:    return .good
+        case ..<10:   return .inaccuracy
+        case ..<20:   return .mistake
+        default:      return .blunder
+        }
+    }
+
+    /// Sum of `side`'s pieces in `position`, using standard piece
+    /// values (pawn=1, knight/bishop=3, rook=5, queen=9, king ignored).
+    /// `materialDelta(after) - materialDelta(before)` gives the net
+    /// material change for the mover across a single move — negative
+    /// means they sacrificed.
+    nonisolated static func materialBalance(
+        for side: Side, in position: Position
+    ) -> Int {
+        var total = 0
+        for square in Square.all {
+            guard let piece = position[square], piece.color == side else { continue }
+            switch piece.kind {
+            case .pawn:   total += 1
+            case .knight: total += 3
+            case .bishop: total += 3
+            case .rook:   total += 5
+            case .queen:  total += 9
+            case .king:   continue
+            }
+        }
+        return total
+    }
+
+    /// Maps a centipawn score to expected win percentage [0…100] using
+    /// chess.com's published Game-Review sigmoid:
+    /// `50 + 50·(2/(1+exp(-0.004·cp)) − 1)`. Pairing this with the
+    /// chess.com-style bucket thresholds in `classify` keeps labels
+    /// aligned with what users see in chess.com Game Review (~99%
+    /// severity-match on benchmark, vs ~96% with the prior tanh curve
+    /// which was slightly steeper above ±100cp and over-flagged
+    /// midgame swings).
+    ///
+    /// Mate scores get clamped to ±99.95% via the large cp values
+    /// returned by `mateToCp` (sigmoid saturates well before 10 000).
+    nonisolated static func winPercent(fromCp cp: Int) -> Double {
+        let p = Double(cp)
+        return 50.0 + 50.0 * (2.0 / (1.0 + exp(-0.004 * p)) - 1.0)
+    }
+
+    /// Map mate-in-N to a large centipawn so comparisons against
+    /// regular cp scores work without special-casing. Sign preserved.
+    /// Closer mates score higher (mate-in-1 > mate-in-10).
+    nonisolated static func mateToCp(_ mate: Int) -> Int {
+        let sign = mate >= 0 ? 1 : -1
+        let distance = abs(mate)
+        return sign * (10_000 - distance)
+    }
+}

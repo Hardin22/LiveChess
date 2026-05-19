@@ -30,9 +30,6 @@ NSLock *_lock;
       case EngineTypeStockfish:
         _engine = new StockfishEngine();
         break;
-      case EngineTypeLc0:
-        _engine = new Lc0Engine();
-        break;
     }
   }
 

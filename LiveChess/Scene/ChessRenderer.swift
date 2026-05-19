@@ -38,6 +38,14 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
     /// piece isn't over any legal target.
     private var activeMarkerSquare: Square?
 
+    /// Puzzle-hint overlay (`pulseHintSquare(_:)`). Separate from
+    /// `activeOverlay` so a hint pulse can coexist with the player
+    /// already dragging a piece.
+    private var hintOverlay: ModelEntity?
+    /// Task that fades / removes the hint overlay after its beat.
+    /// Cancelled on re-press so a new hint doesn't clear too early.
+    private var hintTask: Task<Void, Never>?
+
     init() {
         self.rootEntity = Entity()
         self.rootEntity.name = "ChessSceneRoot"
@@ -318,6 +326,158 @@ final class ChessRenderer: TabletopGame.RenderDelegate {
                 duration: 0.10,
                 timingFunction: .easeOut
             )
+        }
+    }
+
+    /// Pulses a gold square overlay over `square` for a short beat,
+    /// then fades out. Used by `PuzzleSession.showHint()` to draw
+    /// the player's eye to the source square of the next expected
+    /// move without spoiling the destination.
+    ///
+    /// Re-presses just refresh the same overlay (the previous
+    /// fade-out task is cancelled) — re-tapping Hint keeps the
+    /// pulse visible without piling up duplicate entities.
+    // MARK: - Review highlights
+
+    /// Square-coloured overlay rendered under the from + to squares of
+    /// the move at the currently-displayed review ply. Colour tracks
+    /// the move's classification so a glance at the board tells the
+    /// user whether the position came from a brilliant find, a
+    /// blunder, etc. Cleared and re-built on each ply change.
+    private var reviewFromOverlay: ModelEntity?
+    private var reviewToOverlay: ModelEntity?
+
+    func setReviewHighlight(from: Square?, to: Square?, quality: MoveQuality?) {
+        clearReviewHighlight()
+        guard let from, let to, let quality else { return }
+        let material = ChessMaterials.reviewHighlightMaterial(for: quality)
+        reviewFromOverlay = makeReviewOverlay(at: from, material: material)
+        reviewToOverlay   = makeReviewOverlay(at: to,   material: material)
+        rootEntity.addChild(reviewFromOverlay!)
+        rootEntity.addChild(reviewToOverlay!)
+    }
+
+    func clearReviewHighlight() {
+        reviewFromOverlay?.removeFromParent()
+        reviewToOverlay?.removeFromParent()
+        reviewFromOverlay = nil
+        reviewToOverlay = nil
+    }
+
+    // MARK: - Best-move arrow
+
+    /// Floating arrow that shows the engine's recommended alternative
+    /// at the current review ply. Only rendered when the user played
+    /// something other than the engine's pick — otherwise the arrow
+    /// would just duplicate the move highlight. Cleared automatically
+    /// on every navigation event.
+    private var bestMoveArrow: Entity?
+
+    func showBestMoveArrow(from: Square, to: Square) {
+        clearBestMoveArrow()
+        var origin = BoardSurface.position(for: from)
+        var target = BoardSurface.position(for: to)
+        // Lift well above the board surface so the arrow floats over the
+        // pieces rather than clipping through them.
+        origin.y = SceneMetrics.boardSurfaceY + 0.020
+        target.y = SceneMetrics.boardSurfaceY + 0.020
+
+        let direction = target - origin
+        let length = simd_length(SIMD2<Float>(direction.x, direction.z))
+        guard length > 0.001 else { return }
+
+        // Parent at the arrow's centre, rotated so its local +X points
+        // along the board direction from `from` toward `to`.
+        let parent = Entity()
+        parent.position = (origin + target) * 0.5
+        let angle = atan2(direction.z, direction.x)
+        // RealityKit's Y axis is "up"; we want to spin around Y so the
+        // arrow lies flat on the board plane. Negate angle because
+        // generateBox/Cone default to +X along the world axis.
+        parent.transform.rotation = simd_quatf(
+            angle: -angle, axis: SIMD3<Float>(0, 1, 0)
+        )
+
+        let headLen: Float = 0.020
+        let shaftLen: Float = max(0.001, length - headLen)
+        let thickness: Float = 0.008
+
+        // Shaft — thin box along local X.
+        let shaftMesh = MeshResource.generateBox(
+            size: [shaftLen, thickness, thickness * 0.85],
+            cornerRadius: 0.002
+        )
+        let shaft = ModelEntity(
+            mesh: shaftMesh,
+            materials: [ChessMaterials.bestMoveArrowMaterial()]
+        )
+        shaft.position = SIMD3<Float>(-headLen / 2, 0, 0)
+        parent.addChild(shaft)
+
+        // Arrowhead — cone, default axis Y → rotate −90° around Z so
+        // the tip points in +X.
+        let headMesh = MeshResource.generateCone(
+            height: headLen, radius: thickness * 1.6
+        )
+        let head = ModelEntity(
+            mesh: headMesh,
+            materials: [ChessMaterials.bestMoveArrowMaterial()]
+        )
+        head.transform.rotation = simd_quatf(
+            angle: -.pi / 2, axis: SIMD3<Float>(0, 0, 1)
+        )
+        head.position = SIMD3<Float>(length / 2 - headLen / 2, 0, 0)
+        parent.addChild(head)
+
+        rootEntity.addChild(parent)
+        bestMoveArrow = parent
+    }
+
+    func clearBestMoveArrow() {
+        bestMoveArrow?.removeFromParent()
+        bestMoveArrow = nil
+    }
+
+    private func makeReviewOverlay(at square: Square,
+                                   material: UnlitMaterial) -> ModelEntity {
+        let size = SceneMetrics.squareSize - 0.002
+        let height: Float = 0.0012
+        let mesh = MeshResource.generateBox(
+            size: [size, height, size],
+            cornerRadius: 0.003
+        )
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        var pos = BoardSurface.position(for: square)
+        // Sit below the legal-move overlays (0.0015 / 0.0010 above the
+        // board surface) so live-drag highlights still take precedence.
+        pos.y = SceneMetrics.boardSurfaceY + height / 2 + 0.0006
+        entity.position = pos
+        entity.name = "ReviewHighlight_\(square.algebraic)"
+        return entity
+    }
+
+    func pulseHintSquare(_ square: Square) {
+        hintTask?.cancel()
+        hintOverlay?.removeFromParent()
+
+        let overlay = makeActiveOverlay(at: square)
+        rootEntity.addChild(overlay)
+        hintOverlay = overlay
+
+        // Quick pop-in
+        overlay.transform.scale = SIMD3<Float>(0.4, 1.0, 0.4)
+        var grown = overlay.transform
+        grown.scale = SIMD3<Float>(repeating: 1.0)
+        overlay.move(to: grown, relativeTo: rootEntity,
+                     duration: 0.15, timingFunction: .easeOut)
+
+        // Auto-fade after 2 s so the hint doesn't linger over the
+        // square the player is trying to drop into.
+        hintTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            if Task.isCancelled { return }
+            self?.hintOverlay?.removeFromParent()
+            self?.hintOverlay = nil
         }
     }
 
