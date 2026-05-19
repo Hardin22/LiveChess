@@ -292,9 +292,6 @@ struct PuzzlesPlaceholderView: View {
                             .background(.thinMaterial, in: Capsule())
                     }
                 }
-                Text("\(progress.solvedIDs.count) solved · \(progress.failedIDs.count) failed")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
             Spacer()
         }
