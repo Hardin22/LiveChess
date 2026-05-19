@@ -318,113 +318,134 @@ private struct CategoryBox: View {
     @State private var isLaunching = false
 
     var body: some View {
-        Button {
-            guard let next else { return }
-            Task { await launch(next) }
-        } label: {
-            VStack(alignment: .leading, spacing: 12) {
-                // Top: big icon on the left, "+20" load-more pill on
-                // the right. Even though the whole box launches the
-                // next puzzle, the "+20" pill is a sub-button — its
-                // own tap is handled separately so it doesn't bubble
-                // up to the box's main action.
-                HStack(alignment: .top) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Chess.Palette.bronze.opacity(0.22))
-                            .frame(width: 64, height: 64)
-                        Image(systemName: category.systemImage)
-                            .font(.title)
-                            .foregroundStyle(Chess.Palette.bronze)
-                    }
-                    Spacer()
-                    loadMorePill
+        // Outer container is a plain VStack — NOT a Button. Nesting
+        // Buttons (an outer 'whole box' Button with an inner Load 20
+        // Button) broke visionOS hit-testing: taps on the Solve next
+        // area were getting swallowed. Now the box has two distinct
+        // Buttons (Solve next + Load 20) that don't interfere.
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Chess.Palette.bronze.opacity(0.22))
+                        .frame(width: 64, height: 64)
+                    Image(systemName: category.systemImage)
+                        .font(.title)
+                        .foregroundStyle(Chess.Palette.bronze)
                 }
+                Spacer()
+                loadMorePill
+            }
 
-                Text(category.displayName)
-                    .font(.title3.weight(.bold))
-                    .lineLimit(1)
+            Text(category.displayName)
+                .font(.title3.weight(.bold))
+                .lineLimit(1)
 
-                // Progress count + thin bar.
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("\(progress.solved) of \(progress.total) solved")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(progress.solved) of \(progress.total) solved")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                progressBar
+            }
+
+            // Solve next is now its own Button — a single, focused
+            // tap target that visionOS can hover-highlight cleanly.
+            if let next {
+                solveNextButton(next)
+            } else if let error {
+                inlineError(error)
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: progress.total == 0
+                          ? "tray"
+                          : "checkmark.seal.fill")
+                        .foregroundStyle(progress.total == 0
+                                         ? .secondary
+                                         : Chess.Palette.bronze)
+                    Text(progress.total == 0
+                         ? "No puzzles bundled yet — tap Load 20."
+                         : "All solved! Load 20 more.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    progressBar
                 }
-
-                // "Next up" panel — the meaningful detail. If the
-                // user has solved everything bundled, prompt them
-                // to use Load more.
-                if let next {
-                    HStack(spacing: 10) {
-                        Image(systemName: "play.fill")
-                            .foregroundStyle(.white)
-                            .padding(8)
-                            .background(Chess.Palette.bronze, in: Circle())
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Solve next")
-                                .font(.callout.weight(.semibold))
-                            HStack(spacing: 6) {
-                                if let r = next.puzzle.rating {
-                                    Text("rating \(String(r))")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                                if let m = next.puzzle.solution?.count {
-                                    Text("·")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                    HStack(spacing: 2) {
-                                        Image(systemName: "arrow.turn.up.right")
-                                            .font(.caption2)
-                                        Text("\(m) move\(m == 1 ? "" : "s")")
-                                            .font(.caption2.monospacedDigit())
-                                    }
-                                    .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        Spacer()
-                        if isLaunching {
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-                    .padding(10)
-                    .background(.thinMaterial,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                } else if let error {
-                    inlineError(error)
-                } else {
-                    HStack(spacing: 6) {
-                        Image(systemName: progress.total == 0
-                              ? "tray"
-                              : "checkmark.seal.fill")
-                            .foregroundStyle(progress.total == 0
-                                             ? .secondary
-                                             : Chess.Palette.bronze)
-                        Text(progress.total == 0
-                             ? "No puzzles bundled yet — tap Load 20."
-                             : "All solved! Load 20 more.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial,
-                        in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+            // Show load errors even when a 'next' card is present —
+            // before this, an inline error only surfaced once the
+            // pool was empty, so users couldn't see why Load 20 had
+            // silently failed.
+            if let error, next != nil {
+                inlineError(error)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private func solveNextButton(_ next: LichessPuzzle) -> some View {
+        Button {
+            Task { await launch(next) }
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Chess.Palette.bronze)
+                        .frame(width: 32, height: 32)
+                    if isLaunching {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.callout)
+                            .foregroundStyle(.white)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Solve next")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    HStack(spacing: 6) {
+                        if let r = next.puzzle.rating {
+                            Text("rating \(String(r))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        if let m = next.puzzle.solution?.count {
+                            Text("·")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 2) {
+                                Image(systemName: "arrow.turn.up.right")
+                                    .font(.caption2)
+                                Text("\(m) move\(m == 1 ? "" : "s")")
+                                    .font(.caption2.monospacedDigit())
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(Chess.Palette.bronze.opacity(0.15),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Chess.Palette.bronze.opacity(0.40),
+                                  lineWidth: 0.6)
             )
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
-        .disabled(next == nil || isLaunching)
+        .disabled(isLaunching)
     }
 
     // MARK: - Pieces
