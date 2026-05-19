@@ -26,10 +26,32 @@ final class BundledPuzzleStore {
               let infos = try? JSONDecoder().decode([LichessPuzzle.PuzzleInfo].self,
                                                     from: data)
         else { return }
+
+        // Balanced bucketing: assign each puzzle to the LEAST-FILLED
+        // category among its theme matches. Naïve priority-order
+        // (`PuzzleCategory.bucket`) gives every puzzle to mateIn1 /
+        // mateIn2 / mateIn3 / endgame / middlegame / opening before
+        // the tactic rows ever see one — because virtually every
+        // bundled puzzle carries one of those themes alongside its
+        // tactic tag. Mirrors the same strategy the Python sampling
+        // script (`scripts/generate_starter_puzzles_from_db.py`) uses.
+        var buckets: [PuzzleCategory: [LichessPuzzle]] = [:]
         for info in infos {
-            guard let cat = PuzzleCategory.bucket(for: info.themes) else { continue }
-            pools[cat, default: []].append(LichessPuzzle(puzzle: info))
+            let themes = Set(info.themes)
+            var leastFilled: PuzzleCategory? = nil
+            var leastCount = Int.max
+            for cat in PuzzleCategory.allCases {
+                guard !themes.isDisjoint(with: cat.themeKeys) else { continue }
+                let count = buckets[cat]?.count ?? 0
+                if count < leastCount {
+                    leastCount = count
+                    leastFilled = cat
+                }
+            }
+            guard let target = leastFilled else { continue }
+            buckets[target, default: []].append(LichessPuzzle(puzzle: info))
         }
+        pools = buckets
     }
 
     /// De-duplicating append. No-op when the puzzle's id is already

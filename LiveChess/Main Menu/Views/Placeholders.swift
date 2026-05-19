@@ -396,11 +396,21 @@ private struct CategoryBox: View {
                 } else if let error {
                     inlineError(error)
                 } else {
-                    Text("All bundled puzzles solved. Tap +20 for more.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 4)
+                    HStack(spacing: 6) {
+                        Image(systemName: progress.total == 0
+                              ? "tray"
+                              : "checkmark.seal.fill")
+                            .foregroundStyle(progress.total == 0
+                                             ? .secondary
+                                             : Chess.Palette.bronze)
+                        Text(progress.total == 0
+                             ? "No puzzles bundled yet — tap Load 20."
+                             : "All solved! Load 20 more.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
             }
             .padding(16)
@@ -440,29 +450,30 @@ private struct CategoryBox: View {
     @ViewBuilder
     private var loadMorePill: some View {
         Button(action: onLoadMore) {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 if isLoading {
-                    ProgressView().controlSize(.small)
+                    ProgressView().controlSize(.small).tint(.white)
+                    Text("Loading…")
+                        .font(.caption.weight(.semibold))
                 } else {
-                    Image(systemName: "plus")
-                        .font(.caption2.weight(.bold))
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.caption)
+                    Text("Load 20")
+                        .font(.caption.weight(.semibold))
                 }
-                Text(isLoading ? "Loading" : "20")
-                    .font(.caption.weight(.semibold))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.thinMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Chess.Palette.bronze.opacity(0.40),
-                                            lineWidth: 0.6))
-            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Chess.Palette.bronze.opacity(0.90), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.6))
+            .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
         .disabled(isLoading)
         // Stops the outer Button (the whole box) from receiving the
-        // tap — otherwise +20 would also launch the next puzzle.
-        .accessibilityLabel("Load 20 more puzzles")
+        // tap — otherwise this would also launch the next puzzle.
+        .accessibilityLabel("Load 20 more puzzles from Lichess")
     }
 
     @ViewBuilder
