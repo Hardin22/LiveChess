@@ -10,6 +10,7 @@ struct PuzzleHUDView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openImmersiveSpace)    private var openImmersiveSpace
+    @State private var isAdvancing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.m) {
@@ -187,6 +188,23 @@ struct PuzzleHUDView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
+            } else if session.status == .solved {
+                // Primary action after a solve: jump straight to the
+                // next unsolved puzzle in the same rail. Built from
+                // the shared `BundledPuzzleStore` so the menu and the
+                // immersive HUD agree on what "next" is.
+                if let next = nextPuzzleInCategory() {
+                    Button {
+                        Task { await advance(to: next) }
+                    } label: {
+                        Label("Next puzzle", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(Chess.Palette.bronze)
+                    .disabled(isAdvancing)
+                }
             }
 
             Button {
@@ -200,6 +218,54 @@ struct PuzzleHUDView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+        }
+    }
+
+    // MARK: - Next puzzle wiring
+
+    /// Looks up the next at-or-above-rating unsolved puzzle in the
+    /// same category the user came from. Returns `nil` for sessions
+    /// without a category context (the Daily Puzzle hero) or when
+    /// every bundled puzzle in the rail has been solved — both cases
+    /// hide the button.
+    private func nextPuzzleInCategory() -> LichessPuzzle? {
+        guard let category = session.categoryContext else { return nil }
+        let userRating = appModel.lichess.account?.rating(forPerfKey: "puzzle")
+            ?? appModel.lichess.account?.rating(forPerfKey: "rapid")
+            ?? 1500
+        return appModel.bundledPuzzles.nextUnsolved(
+            in: category,
+            progress: appModel.puzzleProgress,
+            userRating: userRating
+        )
+    }
+
+    /// Swaps the active session for a fresh `PuzzleSession` bound to
+    /// `puzzle` (same category), then dismisses + re-opens the
+    /// immersive space so `ChessSceneView` rebuilds against the new
+    /// starting position. `pendingReopen` keeps `activeSession` alive
+    /// across the dismiss.
+    private func advance(to puzzle: LichessPuzzle) async {
+        guard !isAdvancing else { return }
+        isAdvancing = true
+        defer { isAdvancing = false }
+        guard let next = PuzzleSession(puzzle: puzzle) else { return }
+        next.onSolved = { [progress = appModel.puzzleProgress] id in
+            progress.markSolved(id)
+        }
+        next.categoryContext = session.categoryContext
+
+        appModel.activeSession = .puzzle(next)
+        appModel.pendingReopen = true
+        appModel.immersiveSpaceState = .inTransition
+        await dismissImmersiveSpace()
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.activeSession = nil
+            appModel.pendingReopen = false
+            appModel.immersiveSpaceState = .closed
         }
     }
 

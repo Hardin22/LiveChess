@@ -118,7 +118,6 @@ struct LichessGate<Gated: View>: View {
 @MainActor
 final class PuzzlesViewModel {
     var dailyPuzzle: LichessPuzzle?
-    var pools: [PuzzleCategory: [LichessPuzzle]] = [:]
     var loadingCategories: Set<PuzzleCategory> = []
     /// Per-category error string, surfaced inline below the section's
     /// puzzle list. Cleared automatically on the next successful fetch
@@ -130,16 +129,9 @@ final class PuzzlesViewModel {
     private let service = LichessService()
     private var hasLoadedRemote = false
 
-    init() {
-        // Bucket the bundled starter pack on first construction so
-        // the screen has content the instant the view appears, even
-        // before the daily-puzzle request returns.
-        loadBundledStarterPack()
-    }
-
     /// Loads the daily puzzle from the network. Called from the
-    /// view's `.task`. Bundled puzzles are already in `pools` by
-    /// the time this runs.
+    /// view's `.task`. Bundled puzzles live on `appModel.bundledPuzzles`
+    /// and load lazily on first access.
     func load(token: String?) async {
         guard !hasLoadedRemote else { return }
         hasLoadedRemote = true
@@ -157,10 +149,11 @@ final class PuzzlesViewModel {
     /// One press of "Load more" pulls **20 puzzles** in a single
     /// burst — `/api/puzzle/next?angle=<theme>` returns one per call,
     /// so we fire 20 sequentially with a short pause between them.
-    /// Results stream into the pool as they arrive so the UI updates
-    /// live, not all-at-once at the end. Stops early on the first
-    /// hard failure (e.g. 429) and surfaces the error inline.
+    /// Results stream into the shared `BundledPuzzleStore` as they
+    /// arrive so the UI updates live, not all-at-once at the end.
+    /// Stops early on the first hard failure (e.g. 429).
     func loadMore(category: PuzzleCategory,
+                  bundle: BundledPuzzleStore,
                   token: String?,
                   batchSize: Int = 20) async {
         guard !loadingCategories.contains(category) else { return }
@@ -173,17 +166,11 @@ final class PuzzlesViewModel {
             if Task.isCancelled { return }
             do {
                 let next = try await service.fetchNextPuzzle(angle: category.rawValue)
-                var current = pools[category, default: []]
-                if !current.contains(where: { $0.puzzle.id == next.puzzle.id }) {
-                    current.append(next)
-                    pools[category] = current
-                }
+                bundle.append(next, to: category)
             } catch {
                 errorsByCategory[category] = friendlyMessage(for: error)
                 return
             }
-            // Tiny gap between authenticated requests; Lichess per-
-            // token rate limit comfortably allows this cadence.
             if index < batchSize - 1 {
                 try? await Task.sleep(for: .milliseconds(250))
             }
@@ -206,66 +193,9 @@ final class PuzzlesViewModel {
         return "Couldn’t load a puzzle. Tap Retry."
     }
 
-    /// Returns the next `limit` unsolved puzzles in `category`.
-    /// Solved puzzles fall out automatically as the user clears them,
-    /// shifting later entries up into the visible window.
-    func displayedPuzzles(in category: PuzzleCategory,
-                          progress: PuzzleProgressStore,
-                          userRating: Int,
-                          limit: Int = 8) -> [LichessPuzzle] {
-        let unsolved = (pools[category] ?? [])
-            .filter { !progress.isSolved($0.puzzle.id) }
-        // Sort rule (per request): each category starts from the
-        // user's current rating and goes UP. Puzzles below the user's
-        // rating still surface, but only after the at-or-above ones
-        // run out — so a 1500-rated user sees 1500, 1550, 1620…
-        // before any 900-rated trainers.
-        let sorted = unsolved.sorted { a, b in
-            let ar = a.puzzle.rating ?? Int.max
-            let br = b.puzzle.rating ?? Int.max
-            let aAbove = ar >= userRating
-            let bAbove = br >= userRating
-            if aAbove != bAbove { return aAbove }       // at-or-above wins
-            if aAbove {
-                return ar < br                          // ascending from user
-            } else {
-                return ar > br                          // closest-to-user first
-            }
-        }
-        return Array(sorted.prefix(limit))
-    }
-
-    /// Tally of (solved, total) for a category — drives the inline
-    /// progress chip in the rail header.
-    func progress(in category: PuzzleCategory,
-                  progressStore: PuzzleProgressStore) -> (solved: Int, total: Int) {
-        let all = pools[category] ?? []
-        let solved = all.filter { progressStore.isSolved($0.puzzle.id) }.count
-        return (solved, all.count)
-    }
-
-    // MARK: - Bundled pack
-
-    private func loadBundledStarterPack() {
-        guard let url = Bundle.main.url(forResource: "puzzles_starter",
-                                        withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let infos = try? JSONDecoder().decode([LichessPuzzle.PuzzleInfo].self,
-                                                    from: data)
-        else { return }
-
-        // Bucketed in declaration order; per-category ordering is
-        // imposed at display time by `displayedPuzzles(in:userRating:)`
-        // so we don't need to randomise here. Sorting at the display
-        // layer means we can resort whenever the user's rating
-        // changes without rebuilding the pool.
-        var bucketed: [PuzzleCategory: [LichessPuzzle]] = [:]
-        for info in infos {
-            guard let cat = PuzzleCategory.bucket(for: info.themes) else { continue }
-            bucketed[cat, default: []].append(LichessPuzzle(puzzle: info))
-        }
-        pools = bucketed
-    }
+    // Pool reads (displayedPuzzles, progress) now live on the shared
+    // `BundledPuzzleStore` on AppModel — see `BundledPuzzleStore.next-
+    // Unsolved(in:progress:userRating:)` and `progress(in:progressStore:)`.
 }
 
 struct PuzzlesPlaceholderView: View {
@@ -291,10 +221,6 @@ struct PuzzlesPlaceholderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 dailyHero
-                // 2-3 column adaptive grid of category boxes. The
-                // whole box is one big tap target → launches the next
-                // unsolved puzzle. A small "+20" pill in the corner
-                // batches a fresh fetch from Lichess.
                 LazyVGrid(columns: Self.gridColumns,
                           alignment: .leading,
                           spacing: 16) {
@@ -311,6 +237,7 @@ struct PuzzlesPlaceholderView: View {
         .glassBackgroundEffect()
         .navigationTitle("Puzzles")
         .task {
+            appModel.bundledPuzzles.loadIfNeeded()
             await viewModel.load(token: appModel.lichess.token)
         }
         .refreshable {
@@ -339,20 +266,22 @@ struct PuzzlesPlaceholderView: View {
     private func categoryBox(_ category: PuzzleCategory) -> some View {
         CategoryBox(
             category: category,
-            next: viewModel.displayedPuzzles(
+            next: appModel.bundledPuzzles.nextUnsolved(
                 in: category,
                 progress: appModel.puzzleProgress,
-                userRating: userRating,
-                limit: 1
-            ).first,
-            progress: viewModel.progress(in: category,
-                                         progressStore: appModel.puzzleProgress),
+                userRating: userRating
+            ),
+            progress: appModel.bundledPuzzles.progress(
+                in: category,
+                progressStore: appModel.puzzleProgress
+            ),
             isLoading: viewModel.loadingCategories.contains(category),
             error: viewModel.errorsByCategory[category],
             onLoadMore: {
                 Task {
                     await viewModel.loadMore(
                         category: category,
+                        bundle: appModel.bundledPuzzles,
                         token: appModel.lichess.token
                     )
                 }
@@ -554,10 +483,11 @@ private struct CategoryBox: View {
 
     /// Mirrors `PuzzleLaunchCard.launch` but handles the case where
     /// the immersive space is already open (lobby AR, an in-flight
-    /// game, a previous puzzle). In that case `openImmersiveSpace`
-    /// is a no-op and the new session wouldn't actually take effect,
-    /// so we dismiss first and rely on `pendingReopen` to preserve
-    /// the activeSession assignment across the dismiss/re-open.
+    /// game, or a previous puzzle the user didn't exit). In that case
+    /// `openImmersiveSpace` is a no-op and the new puzzle session
+    /// wouldn't take effect — so we dismiss the existing scene first
+    /// and use `pendingReopen` to preserve the new `activeSession`
+    /// across `ChessSceneView.onDisappear`.
     private func launch(_ puzzle: LichessPuzzle) async {
         guard !isLaunching else { return }
         isLaunching = true
@@ -566,10 +496,19 @@ private struct CategoryBox: View {
         session.onSolved = { [progress = appModel.puzzleProgress] id in
             progress.markSolved(id)
         }
+        // Remember which rail this session came from — the HUD reads
+        // it to power the "Next puzzle" button after a solve.
+        session.categoryContext = category
+
+        // Capture the live immersive state BEFORE flipping it to
+        // `.inTransition` — otherwise the dismiss check below always
+        // sees `.inTransition` and never fires.
+        let wasOpen = appModel.immersiveSpaceState == .open
+
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
 
-        if appModel.immersiveSpaceState == .open || appModel.pendingReopen {
+        if wasOpen {
             appModel.pendingReopen = true
             await dismissImmersiveSpace()
         }

@@ -59,6 +59,13 @@ final class PuzzleSession: MatchSession {
     /// in `PuzzleProgressStore` and stop surfacing it on the browser.
     var onSolved: (@MainActor (String) -> Void)?
 
+    /// The PuzzleCategory the session was launched from (e.g.
+    /// `.mateIn1`). The in-immersive HUD reads this to power the
+    /// "Next puzzle" button — it asks `BundledPuzzleStore` for the
+    /// next unsolved puzzle in the same category. `nil` when launched
+    /// from a context without a category (e.g. the Daily Puzzle hero).
+    var categoryContext: PuzzleCategory?
+
     /// Returns `nil` if the puzzle payload is missing the fields the
     /// session needs (FEN + at least one solution move).
     init?(puzzle: LichessPuzzle,
