@@ -45,10 +45,14 @@ struct ContentView: View {
         .task {
             // 1. Make sure the home VM can read the signed-in account.
             homeViewModel.attach(session: appModel.lichess)
-            // 2. Cold-start the Lichess session if it hasn't run yet.
+            // 2. Open the lobby socket that feeds the global "players
+            //    online" count to the sidebar. Idempotent; auto-
+            //    reconnects on drop.
+            appModel.onlineCount.start()
+            // 3. Cold-start the Lichess session if it hasn't run yet.
             //    Idempotent if already signed in.
             await appModel.lichess.bootstrap()
-            // 3. Now that the bearer token (if any) is loaded, fetch
+            // 4. Now that the bearer token (if any) is loaded, fetch
             //    the home screen's data.
             await homeViewModel.loadInitialData()
         }

@@ -60,6 +60,13 @@ class AppModel {
     /// to it when a session finishes successfully.
     let puzzleProgress = PuzzleProgressStore()
 
+    /// Live count of "players online on lichess.org right now",
+    /// pushed over Lichess's lobby WebSocket. The sidebar profile row
+    /// displays it next to the green presence dot so the user has the
+    /// same at-a-glance status the lichess.org footer carries.
+    /// `start()` is called once from `ContentView.task`.
+    let onlineCount = LichessOnlineCountTracker()
+
     /// The match the immersive scene should render. Set by the lobby
     /// (or the Lichess controller when an online game starts) immediately
     /// before opening the immersive space, then read by `ChessSceneView`

@@ -228,14 +228,14 @@ struct SidebarProfileView: View {
                                         .frame(width: 6, height: 6)
                                         .shadow(color: Color(red: 0.30, green: 0.78, blue: 0.36).opacity(0.6),
                                                 radius: 2)
-                                    if let rating = account.rating(forPerfKey: "rapid") {
-                                        // Convert to String before
-                                        // interpolating so the locale's
-                                        // grouping separator (",", "." in
-                                        // EU) doesn't render — chess
-                                        // ratings are conventionally
-                                        // shown ungrouped ("1274").
-                                        Text("Online · \(String(rating))")
+                                    if let count = appModel.onlineCount.count {
+                                        // Lichess footer-style "Online ·
+                                        // 12,345" — global players online
+                                        // count pushed over the lobby
+                                        // socket. Grouped because tens of
+                                        // thousands reads better with a
+                                        // separator.
+                                        Text("Online · \(Self.formattedCount(count))")
                                             .font(Chess.Typography.rowDetail())
                                             .foregroundStyle(.secondary)
                                     } else {
@@ -325,5 +325,20 @@ struct SidebarProfileView: View {
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .contentShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// Grouped player count, locale-aware ("12,345" in en-US,
+    /// "12.345" in it-IT). Used for the global online-players count
+    /// in the sidebar — where thousands-grouping aids readability,
+    /// unlike chess ratings which are conventionally ungrouped.
+    private static let countFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
+        return f
+    }()
+
+    private static func formattedCount(_ n: Int) -> String {
+        countFormatter.string(from: NSNumber(value: n)) ?? String(n)
     }
 }
