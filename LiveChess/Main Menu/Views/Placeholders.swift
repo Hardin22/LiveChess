@@ -705,7 +705,7 @@ private struct ProfileCardView: View {
 
     private func ratingText(for row: LichessAccount.RatingRow) -> String {
         guard let r = row.rating else { return "—" }
-        return row.provisional ? "\(r)?" : "\(r)"
+        return "\(r)"
     }
 }
 

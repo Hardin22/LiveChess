@@ -100,7 +100,7 @@ struct RatingChipView: View {
 
     private var ratingText: String {
         guard let r = row.rating else { return "—" }
-        return row.provisional ? "\(r)?" : "\(r)"
+        return "\(r)"
     }
 
     var body: some View {
