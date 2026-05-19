@@ -33,6 +33,9 @@ struct BoardPreviewView: View {
                 RoundedRectangle(cornerRadius: side * 0.06,
                                  style: .continuous)
                     .fill(material.frameColor.swiftUI)
+                    .overlay(frameMaterialEffect)
+                    .clipShape(RoundedRectangle(cornerRadius: side * 0.06,
+                                                style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: side * 0.06,
                                          style: .continuous)
@@ -52,11 +55,7 @@ struct BoardPreviewView: View {
                     ForEach(0..<4) { row in
                         HStack(spacing: 0) {
                             ForEach(0..<4) { col in
-                                Rectangle()
-                                    .fill(squareColor(row: row, col: col))
-                                    .frame(width: cell, height: cell)
-                                    .overlay(pieceGlyph(row: row, col: col,
-                                                        cellSize: cell))
+                                squareCell(row: row, col: col, cellSize: cell)
                             }
                         }
                     }
@@ -69,6 +68,7 @@ struct BoardPreviewView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .aspectRatio(1, contentMode: .fit)
+        .id(previewIdentity)
     }
 
     // MARK: - Square colouring
@@ -78,6 +78,148 @@ struct BoardPreviewView: View {
         return isLight
             ? material.lightSquareColor.swiftUI
             : material.darkSquareColor.swiftUI
+    }
+
+    private var previewIdentity: String {
+        [
+            material.squareMaterial.rawValue,
+            material.frameMaterial.rawValue,
+            colorIdentity(material.lightSquareColor),
+            colorIdentity(material.darkSquareColor),
+            colorIdentity(material.frameColor),
+            material.lightSquareWood.rawValue,
+            material.darkSquareWood.rawValue,
+            material.frameWood.rawValue
+        ].joined(separator: "-")
+    }
+
+    private func colorIdentity(_ color: PieceColor) -> String {
+        "\(color.red)-\(color.green)-\(color.blue)"
+    }
+
+    private func squareCell(row: Int, col: Int, cellSize: CGFloat) -> some View {
+        let isLight = (row + col) % 2 == 0
+        return ZStack {
+            Rectangle()
+                .fill(squareColor(row: row, col: col))
+            boardMaterialEffect(
+                material.squareMaterial,
+                isLight: isLight,
+                wood: isLight ? material.lightSquareWood : material.darkSquareWood
+            )
+            pieceGlyph(row: row, col: col, cellSize: cellSize)
+        }
+        .frame(width: cellSize, height: cellSize)
+        .clipped()
+    }
+
+    @ViewBuilder
+    private var frameMaterialEffect: some View {
+        boardMaterialEffect(material.frameMaterial, isLight: false, wood: material.frameWood)
+    }
+
+    @ViewBuilder
+    private func boardMaterialEffect(
+        _ boardMaterial: BoardMaterial,
+        isLight: Bool,
+        wood: WoodType
+    ) -> some View {
+        switch boardMaterial {
+        case .matte:
+            Rectangle()
+                .fill(.black.opacity(isLight ? 0.025 : 0.05))
+        case .polished:
+            ZStack {
+                LinearGradient(
+                    colors: [.white.opacity(0.26), .clear, .black.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                LinearGradient(
+                    colors: [.clear, .white.opacity(0.18), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+            .blendMode(.screen)
+        case .wood:
+            woodEffect(isLight: isLight, wood: wood)
+        case .marble:
+            marbleEffect(isLight: isLight)
+        }
+    }
+
+    private func woodEffect(isLight: Bool, wood: WoodType) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: woodGradient(wood),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            GeometryReader { proxy in
+                ForEach(0..<7, id: \.self) { index in
+                    Capsule()
+                        .fill(.black.opacity(isLight ? 0.10 : 0.18))
+                        .frame(width: proxy.size.width * 1.25, height: 1)
+                        .rotationEffect(.degrees(index.isMultiple(of: 2) ? 8 : -6))
+                        .offset(
+                            x: -proxy.size.width * 0.10,
+                            y: proxy.size.height * CGFloat(index) / 6.0
+                        )
+                }
+            }
+        }
+        .blendMode(.multiply)
+    }
+
+    private func marbleEffect(isLight: Bool) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: isLight
+                    ? [.white.opacity(0.42), .gray.opacity(0.16), .white.opacity(0.22)]
+                    : [.white.opacity(0.16), .black.opacity(0.12), .white.opacity(0.10)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            GeometryReader { proxy in
+                ForEach(0..<4, id: \.self) { index in
+                    Capsule()
+                        .fill(.white.opacity(isLight ? 0.34 : 0.20))
+                        .frame(width: proxy.size.width * 1.15, height: 1.2)
+                        .rotationEffect(.degrees(index.isMultiple(of: 2) ? -24 : 18))
+                        .offset(
+                            x: -proxy.size.width * 0.08,
+                            y: proxy.size.height * (CGFloat(index) + 0.8) / 4.5
+                        )
+                }
+            }
+        }
+        .blendMode(.screen)
+    }
+
+    private func woodGradient(_ wood: WoodType) -> [Color] {
+        switch wood {
+        case .oak:
+            return [
+                Color(red: 0.82, green: 0.62, blue: 0.34).opacity(0.45),
+                Color(red: 0.48, green: 0.31, blue: 0.14).opacity(0.32)
+            ]
+        case .walnut:
+            return [
+                Color(red: 0.42, green: 0.24, blue: 0.12).opacity(0.50),
+                Color(red: 0.20, green: 0.11, blue: 0.06).opacity(0.42)
+            ]
+        case .rosewood:
+            return [
+                Color(red: 0.54, green: 0.20, blue: 0.12).opacity(0.48),
+                Color(red: 0.25, green: 0.08, blue: 0.05).opacity(0.42)
+            ]
+        case .ebony:
+            return [
+                Color(red: 0.12, green: 0.10, blue: 0.08).opacity(0.52),
+                Color.black.opacity(0.50)
+            ]
+        }
     }
 
     /// Two sample pieces — a white king on (3, 0) and a black king

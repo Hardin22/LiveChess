@@ -50,7 +50,9 @@ struct PiecePreviewView: View {
                 )
             }
         }
-        .frame(height: 320)
+        .id(previewIdentity)
+        .frame(height: 260)
+        .clipped()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .task {
             // Lazily warm the piece-template cache the first time the
@@ -61,9 +63,30 @@ struct PiecePreviewView: View {
             assetsReady = true
             installPiece(in: turntable)
         }
-        .onChange(of: material) { _, _ in if assetsReady { installPiece(in: turntable) } }
+        .onChange(of: material) { _, _ in
+            turntable.children
+                .filter { $0.name == "PreviewPiece" }
+                .forEach { $0.removeFromParent() }
+            if assetsReady { installPiece(in: turntable) }
+        }
         .onChange(of: previewSide) { _, _ in if assetsReady { installPiece(in: turntable) } }
         .onChange(of: previewKind) { _, _ in if assetsReady { installPiece(in: turntable) } }
+    }
+
+    private var previewIdentity: String {
+        [
+            material.preset.rawValue,
+            String(describing: previewSide),
+            String(describing: previewKind),
+            colorIdentity(material.whiteColor),
+            colorIdentity(material.blackColor),
+            material.whitePieceWood.rawValue,
+            material.blackPieceWood.rawValue
+        ].joined(separator: "-")
+    }
+
+    private func colorIdentity(_ color: PieceColor) -> String {
+        "\(color.red)-\(color.green)-\(color.blue)"
     }
 
     /// Replaces the current preview piece with a freshly-built one,
@@ -84,9 +107,10 @@ struct PiecePreviewView: View {
         piece.position = .zero
         // Chess pieces are ~5 cm tall in-game; 1.4× keeps the king /
         // queen comfortably inside the 320 pt frame with margin top
-        // and bottom — 1.8 was clipping the king's base after the
-        // visualBounds-centre translate brought it into frame.
-        piece.scale = SIMD3<Float>(repeating: 1.4)
+        // and bottom. Settings shows two previews side-by-side in a
+        // shorter frame, so keep the silhouette comfortably inside
+        // the card instead of letting the base fall past the bottom.
+        piece.scale = SIMD3<Float>(repeating: 0.96)
         turntable.addChild(piece)
 
         // Pieces author their origin at the base, so tall silhouettes
@@ -95,6 +119,7 @@ struct PiecePreviewView: View {
         // vertically centred regardless of its height.
         let bounds = piece.visualBounds(relativeTo: turntable)
         piece.position.y -= bounds.center.y
+        piece.position.y += 0.005
     }
 
     /// The stage holds: pedestal disc, ambient + key lights, and the
@@ -108,7 +133,7 @@ struct PiecePreviewView: View {
         // the stage close to the window plane so the piece lands
         // visibly inside the 320 pt frame instead of vanishing into
         // the far clip.
-        stage.position = SIMD3<Float>(0, -0.07, -0.10)
+        stage.position = SIMD3<Float>(0, -0.005, -0.10)
 
         // Soft daylight fill — RealityView in 2D windows doesn't
         // apply IBL automatically; without an explicit fill the
@@ -117,7 +142,7 @@ struct PiecePreviewView: View {
         // from a stage spotlight.
         let fill = DirectionalLightComponent(
             color: .init(red: 0.92, green: 0.94, blue: 1.0, alpha: 1.0),
-            intensity: 800
+            intensity: 620
         )
         let fillEntity = Entity()
         fillEntity.components.set(fill)
@@ -135,7 +160,7 @@ struct PiecePreviewView: View {
         // surface instead of clipping the glossy / metal presets.
         var key = SpotLightComponent(
             color: .init(red: 1.0, green: 0.92, blue: 0.78, alpha: 1.0),
-            intensity: 35_000
+            intensity: 22_000
         )
         key.attenuationRadius = 1.2
         key.innerAngleInDegrees = 50
