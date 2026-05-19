@@ -37,6 +37,10 @@ final class BundledPuzzleStore {
         // script (`scripts/generate_starter_puzzles_from_db.py`) uses.
         var buckets: [PuzzleCategory: [LichessPuzzle]] = [:]
         for info in infos {
+            // Skip puzzles without a usable FEN — they'd silently
+            // fail in PuzzleSession.init and look like a broken
+            // 'Solve next' button to the user.
+            guard let fen = info.fen, !fen.isEmpty else { continue }
             let themes = Set(info.themes)
             var leastFilled: PuzzleCategory? = nil
             var leastCount = Int.max
@@ -49,15 +53,20 @@ final class BundledPuzzleStore {
                 }
             }
             guard let target = leastFilled else { continue }
+            _ = fen   // silence unused-let warning
             buckets[target, default: []].append(LichessPuzzle(puzzle: info))
         }
         pools = buckets
     }
 
     /// De-duplicating append. No-op when the puzzle's id is already
-    /// in the category's pool. Used by `PuzzlesViewModel.loadMore` to
-    /// stream API-fetched puzzles into the shared pool.
+    /// in the category's pool. Also rejects puzzles without a FEN —
+    /// `/api/puzzle/next` sometimes returns puzzles positioned via
+    /// game PGN + `initialPly` instead of a standalone FEN, and
+    /// `PuzzleSession.init` can only consume the FEN form, so storing
+    /// FEN-less puzzles would just produce silent launch failures.
     func append(_ puzzle: LichessPuzzle, to category: PuzzleCategory) {
+        guard let fen = puzzle.puzzle.fen, !fen.isEmpty else { return }
         var list = pools[category, default: []]
         guard !list.contains(where: { $0.puzzle.id == puzzle.puzzle.id }) else { return }
         list.append(puzzle)
