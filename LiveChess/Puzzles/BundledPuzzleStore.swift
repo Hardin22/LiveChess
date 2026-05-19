@@ -17,6 +17,12 @@ final class BundledPuzzleStore {
     private(set) var pools: [PuzzleCategory: [LichessPuzzle]] = [:]
     private var loaded = false
 
+    /// Shared service used to top up the pool from Lichess when the
+    /// bundled set runs out. Held here (instead of in each call site)
+    /// so the auth-token reauthentication only happens once.
+    private let service = LichessService()
+    private var lastAuthedToken: String?
+
     func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
@@ -101,5 +107,45 @@ final class BundledPuzzleStore {
             return aAbove ? ar < br : ar > br
         }
         return sorted.first
+    }
+
+    /// Always returns a puzzle the user hasn't attempted yet —
+    /// either by reading from the local bundle, or, when the bundle
+    /// for that category is exhausted, by fetching a fresh one from
+    /// Lichess (`/api/puzzle/next?angle=<theme>`). The fetched
+    /// puzzle is added to the pool so future calls don't re-hit
+    /// the API for the same id.
+    ///
+    /// Throws if Lichess refuses (rate limit, network failure) AND
+    /// the bundle was already empty; caller can surface the error.
+    /// Skips API duplicates of already-attempted puzzles by retrying
+    /// up to `maxAPIAttempts` times.
+    func ensureNextUnsolved(in category: PuzzleCategory,
+                            progress: PuzzleProgressStore,
+                            userRating: Int,
+                            token: String?,
+                            maxAPIAttempts: Int = 5) async throws -> LichessPuzzle {
+        if let local = nextUnsolved(in: category,
+                                     progress: progress,
+                                     userRating: userRating) {
+            return local
+        }
+        // Local pool exhausted — keep asking Lichess until we get
+        // an un-attempted one (or hit the retry cap).
+        if lastAuthedToken != token {
+            await service.authenticate(token: token)
+            lastAuthedToken = token
+        }
+        for _ in 0..<maxAPIAttempts {
+            let fresh = try await service.fetchNextPuzzle(angle: category.rawValue)
+            append(fresh, to: category)
+            if !progress.isAttempted(fresh.puzzle.id),
+               (fresh.puzzle.fen?.isEmpty == false) {
+                return fresh
+            }
+        }
+        // Exhausted retries (unlikely; Lichess's pool is huge).
+        // Throw a generic error so the UI shows an inline retry.
+        throw LichessAPIError.invalidResponse
     }
 }

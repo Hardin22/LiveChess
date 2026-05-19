@@ -190,15 +190,24 @@ struct PuzzleHUDView: View {
                 .controlSize(.regular)
             } else if session.status == .solved {
                 // Primary action after a solve: jump straight to the
-                // next unsolved puzzle in the same rail. Built from
-                // the shared `BundledPuzzleStore` so the menu and the
-                // immersive HUD agree on what "next" is.
-                if let next = nextPuzzleInCategory() {
+                // next puzzle in the same rail. Always visible — if
+                // the bundled pool for this category is exhausted,
+                // we fall back to fetching a fresh one from Lichess
+                // via `BundledPuzzleStore.ensureNextUnsolved`. The
+                // user never sees an out-of-puzzles state.
+                if session.categoryContext != nil {
                     Button {
-                        Task { await advance(to: next) }
+                        Task { await advance() }
                     } label: {
-                        Label("Next puzzle", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
+                        HStack {
+                            if isAdvancing {
+                                ProgressView().controlSize(.small).tint(.white)
+                            } else {
+                                Image(systemName: "play.fill")
+                            }
+                            Text(isAdvancing ? "Loading…" : "Next puzzle")
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
@@ -223,32 +232,34 @@ struct PuzzleHUDView: View {
 
     // MARK: - Next puzzle wiring
 
-    /// Looks up the next at-or-above-rating unsolved puzzle in the
-    /// same category the user came from. Returns `nil` for sessions
-    /// without a category context (the Daily Puzzle hero) or when
-    /// every bundled puzzle in the rail has been solved — both cases
-    /// hide the button.
-    private func nextPuzzleInCategory() -> LichessPuzzle? {
-        guard let category = session.categoryContext else { return nil }
+    /// Loads the next puzzle in the same category — from the bundled
+    /// pool when possible, falling back to `/api/puzzle/next?angle=…`
+    /// when the pool is exhausted. Then swaps the active session and
+    /// dismisses + re-opens the immersive space so `ChessSceneView`
+    /// rebuilds against the new starting position.
+    private func advance() async {
+        guard !isAdvancing else { return }
+        guard let category = session.categoryContext else { return }
+        isAdvancing = true
+        defer { isAdvancing = false }
+
         let userRating = appModel.lichess.account?.rating(forPerfKey: "puzzle")
             ?? appModel.lichess.account?.rating(forPerfKey: "rapid")
             ?? 1500
-        return appModel.bundledPuzzles.nextUnsolved(
-            in: category,
-            progress: appModel.puzzleProgress,
-            userRating: userRating
-        )
-    }
 
-    /// Swaps the active session for a fresh `PuzzleSession` bound to
-    /// `puzzle` (same category), then dismisses + re-opens the
-    /// immersive space so `ChessSceneView` rebuilds against the new
-    /// starting position. `pendingReopen` keeps `activeSession` alive
-    /// across the dismiss.
-    private func advance(to puzzle: LichessPuzzle) async {
-        guard !isAdvancing else { return }
-        isAdvancing = true
-        defer { isAdvancing = false }
+        let puzzle: LichessPuzzle
+        do {
+            puzzle = try await appModel.bundledPuzzles.ensureNextUnsolved(
+                in: category,
+                progress: appModel.puzzleProgress,
+                userRating: userRating,
+                token: appModel.lichess.token
+            )
+        } catch {
+            print("[PuzzleHUD] advance fetch failed: \(error)")
+            return
+        }
+
         guard let next = PuzzleSession(puzzle: puzzle) else { return }
         next.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
             progress.recordSolve(puzzleID: id, puzzleRating: r, puzzleRD: rd)

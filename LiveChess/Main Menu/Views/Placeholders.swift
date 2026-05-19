@@ -339,6 +339,7 @@ struct PuzzlesPlaceholderView: View {
             ),
             isLoading: viewModel.loadingCategories.contains(category),
             error: viewModel.errorsByCategory[category],
+            userRating: userRating,
             onLoadMore: {
                 Task {
                     await viewModel.loadMore(
@@ -372,12 +373,14 @@ private struct CategoryBox: View {
     let progress: (solved: Int, total: Int)
     let isLoading: Bool
     let error: String?
+    let userRating: Int
     let onLoadMore: () -> Void
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @State private var isLaunching = false
+    @State private var fetchError: String?
 
     var body: some View {
         // Outer container is a plain VStack — NOT a Button. Nesting
@@ -405,35 +408,16 @@ private struct CategoryBox: View {
                 .font(.title3.weight(.bold))
                 .lineLimit(1)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(progress.solved) of \(progress.total) solved")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                progressBar
-            }
-
-            // Solve next is now its own Button — a single, focused
-            // tap target that visionOS can hover-highlight cleanly.
-            if let next {
-                solveNextButton(next)
+            // Solve button is ALWAYS visible — when the bundled pool
+            // for this category is exhausted, tapping it falls back
+            // to fetching a fresh puzzle from Lichess on the fly
+            // (`/api/puzzle/next?angle=<theme>`). The user never sees
+            // an "out of puzzles" empty state.
+            solveButton(next)
+            if let fetchError {
+                inlineError(fetchError)
             } else if let error {
                 inlineError(error)
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: progress.total == 0
-                          ? "tray"
-                          : "checkmark.seal.fill")
-                        .foregroundStyle(progress.total == 0
-                                         ? .secondary
-                                         : Chess.Palette.bronze)
-                    Text(progress.total == 0
-                         ? "No puzzles bundled in this category."
-                         : "All caught up — nicely done.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
             }
 
             // Show load errors even when a 'next' card is present —
@@ -455,7 +439,7 @@ private struct CategoryBox: View {
     }
 
     @ViewBuilder
-    private func solveNextButton(_ next: LichessPuzzle) -> some View {
+    private func solveButton(_ next: LichessPuzzle?) -> some View {
         Button {
             Task { await launch(next) }
         } label: {
@@ -476,24 +460,32 @@ private struct CategoryBox: View {
                     Text("Solve")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.primary)
-                    HStack(spacing: 6) {
-                        if let r = next.puzzle.rating {
-                            Text("rating \(String(r))")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        if let m = next.puzzle.solution?.count {
-                            Text("·")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            HStack(spacing: 2) {
-                                Image(systemName: "arrow.turn.up.right")
-                                    .font(.caption2)
-                                Text("\(m) move\(m == 1 ? "" : "s")")
+                    if let next {
+                        HStack(spacing: 6) {
+                            if let r = next.puzzle.rating {
+                                Text("rating \(String(r))")
                                     .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
-                            .foregroundStyle(.secondary)
+                            if let m = next.puzzle.solution?.count {
+                                Text("·")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 2) {
+                                    Image(systemName: "arrow.turn.up.right")
+                                        .font(.caption2)
+                                    Text("\(m) move\(m == 1 ? "" : "s")")
+                                        .font(.caption2.monospacedDigit())
+                                }
+                                .foregroundStyle(.secondary)
+                            }
                         }
+                    } else {
+                        Text(isLaunching
+                             ? "Fetching from Lichess…"
+                             : "Tap for a fresh Lichess puzzle")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -514,24 +506,6 @@ private struct CategoryBox: View {
 
     // MARK: - Pieces
 
-    private var progressBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.08))
-                Capsule()
-                    .fill(Chess.Palette.bronze)
-                    .frame(width: geo.size.width * fillFraction)
-            }
-        }
-        .frame(height: 4)
-    }
-
-    private var fillFraction: CGFloat {
-        guard progress.total > 0 else { return 0 }
-        return CGFloat(progress.solved) / CGFloat(progress.total)
-    }
-
     @ViewBuilder
     private func inlineError(_ message: String) -> some View {
         HStack(spacing: 8) {
@@ -548,17 +522,39 @@ private struct CategoryBox: View {
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    /// Launches `puzzle` in the immersive solver. Unconditionally
-    /// dismisses any in-flight immersive space first — this is the
-    /// only reliable way on visionOS to swap the active session,
-    /// because `openImmersiveSpace` is a no-op when one is already
-    /// mounted and `ChessSceneView` reads `activeSession` only at
-    /// scene-build time. `pendingReopen` keeps the new session alive
-    /// across the dismiss → onDisappear cycle.
-    private func launch(_ puzzle: LichessPuzzle) async {
+    /// Launches a puzzle in the immersive solver. When `puzzle` is
+    /// nil (bundled pool exhausted for this category), fetches a
+    /// fresh one from Lichess via `BundledPuzzleStore.ensureNextUnsolved`
+    /// — the user never sees an empty-state.
+    ///
+    /// Always dismisses any in-flight immersive space first — this
+    /// is the only reliable way on visionOS to swap the active
+    /// session, since `openImmersiveSpace` is a no-op when one's
+    /// already mounted and `ChessSceneView` reads `activeSession`
+    /// only at scene-build time.
+    private func launch(_ puzzleOrNil: LichessPuzzle?) async {
         guard !isLaunching else { return }
         isLaunching = true
+        fetchError = nil
         defer { isLaunching = false }
+
+        let puzzle: LichessPuzzle
+        if let local = puzzleOrNil {
+            puzzle = local
+        } else {
+            do {
+                puzzle = try await appModel.bundledPuzzles.ensureNextUnsolved(
+                    in: category,
+                    progress: appModel.puzzleProgress,
+                    userRating: userRating,
+                    token: appModel.lichess.token
+                )
+            } catch {
+                print("[CategoryBox] ensureNextUnsolved failed: \(error)")
+                fetchError = "Couldn’t fetch a puzzle. Tap Solve again."
+                return
+            }
+        }
 
         guard let session = PuzzleSession(puzzle: puzzle) else {
             print("[CategoryBox] PuzzleSession init returned nil for id=\(puzzle.puzzle.id) — invalid FEN or empty solution?")
