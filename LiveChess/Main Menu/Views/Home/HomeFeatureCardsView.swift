@@ -143,7 +143,17 @@ private struct PuzzleLaunchCard: View {
     @State private var isLaunching = false
 
     var body: some View {
-        PuzzleFeatureCard(puzzle: puzzle)
+        // Tick periodically so the lock automatically clears when the
+        // unlock time arrives, without the user having to leave + come
+        // back to the home screen.
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            let locked = appModel.puzzleProgress.isDailyLocked
+            PuzzleFeatureCard(
+                puzzle: puzzle,
+                isLocked: locked,
+                unlockAt: appModel.puzzleProgress.nextDailyUnlock,
+                now: ctx.date
+            )
             .opacity(isLaunching ? 0.6 : 1)
             .overlay {
                 if isLaunching {
@@ -151,15 +161,26 @@ private struct PuzzleLaunchCard: View {
                 }
             }
             .onTapGesture {
-                guard !isLaunching, let p = puzzle else { return }
+                guard !isLaunching, !locked, let p = puzzle else { return }
                 Task { await launch(p) }
             }
+        }
     }
 
     private func launch(_ puzzle: LichessPuzzle) async {
         isLaunching = true
         defer { isLaunching = false }
         guard let session = PuzzleSession(puzzle: puzzle) else { return }
+        session.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
+            progress.recordSolve(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+            // Daily-puzzle home card has no category context — any
+            // completion locks the slot until tomorrow 00:01.
+            progress.markDailyCompleted()
+        }
+        session.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
+            progress.recordFail(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+            progress.markDailyCompleted()
+        }
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
@@ -175,30 +196,43 @@ private struct PuzzleLaunchCard: View {
 // MARK: - Puzzle Feature Card
 struct PuzzleFeatureCard: View {
     let puzzle: LichessPuzzle?
-    
+    /// When `true`, the user has already completed today's daily
+    /// puzzle. Card swaps the CTA + subhead for a "solved for today,
+    /// new puzzle at 00:01" presentation.
+    var isLocked: Bool = false
+    /// When the daily unlocks again (local time). Used to render
+    /// the countdown subtitle.
+    var unlockAt: Date? = nil
+    /// Current wall-clock time as supplied by the parent's
+    /// `TimelineView` so the countdown re-renders without a Timer.
+    var now: Date = .now
+
     var body: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                
-                // Card header row
+
                 HStack {
-                    // Icon with colored background
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Chess.Palette.accent.opacity(0.20))
                             .frame(width: 36, height: 36)
-                        Image(systemName: "puzzlepiece.fill")
+                        Image(systemName: isLocked ? "moon.stars.fill"
+                                                   : "puzzlepiece.fill")
                             .foregroundStyle(Chess.Palette.accent)
                             .font(.callout)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Daily Puzzle")
                             .font(.callout)
                             .fontWeight(.semibold)
-                        
-                        if let rating = puzzle?.puzzle.rating {
-                            Text("Rating: \(rating)")
+
+                        if isLocked {
+                            Text("Solved for today")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if let rating = puzzle?.puzzle.rating {
+                            Text("Rating: \(String(rating))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
@@ -207,31 +241,60 @@ struct PuzzleFeatureCard: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    
+
                     Spacer()
-                    
-                    // Mini chess board preview (decorative)
+
                     MiniChessBoardView()
                         .frame(width: 70, height: 70)
+                        .opacity(isLocked ? 0.45 : 1)
                 }
-                
-                // Stats row
-                HStack(spacing: 8) {
-                    MiniStatTag(label: "Streak", value: "7")
-                    MiniStatTag(label: "Solved", value: "12")
-                    if let themes = puzzle?.puzzle.themes.first {
-                        MiniStatTag(label: "Theme", value: themes.capitalized)
+
+                if isLocked, let unlockAt {
+                    // Single-line subhead replaces the stats row +
+                    // CTA. Tells the user when the next puzzle
+                    // drops; updates every 30s via parent TimelineView.
+                    let remaining = max(0, unlockAt.timeIntervalSince(now))
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.fill")
+                            .foregroundStyle(Chess.Palette.bronze)
+                            .font(.caption)
+                        Text("Next puzzle in \(Self.format(remaining)) — at \(Self.unlockTimeString(unlockAt))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 4)
+                } else {
+                    HStack(spacing: 8) {
+                        MiniStatTag(label: "Streak", value: "7")
+                        MiniStatTag(label: "Solved", value: "12")
+                        if let themes = puzzle?.puzzle.themes.first {
+                            MiniStatTag(label: "Theme", value: themes.capitalized)
+                        }
+                    }
+
+                    FeatureCardButton(
+                        title: "Continue Puzzle",
+                        icon: "play.fill",
+                        color: Chess.Palette.bronze
+                    )
                 }
-                
-                // CTA Button
-                FeatureCardButton(
-                    title: "Continue Puzzle",
-                    icon: "play.fill",
-                    color: Chess.Palette.bronze
-                )
             }
         }
+    }
+
+    private static func format(_ secs: TimeInterval) -> String {
+        let total = Int(secs.rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m"      }
+        return "moments"
+    }
+
+    private static func unlockTimeString(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: date)
     }
 }
 

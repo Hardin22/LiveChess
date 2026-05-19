@@ -5,9 +5,10 @@
 import SwiftUI
 
 struct HomeHeaderView: View {
-    
+
     @Bindable var viewModel: HomeViewModel
-    
+    @Environment(AppModel.self) private var appModel
+
     // Controls the subtle entry animation
     @State private var isVisible = false
     
@@ -26,22 +27,29 @@ struct HomeHeaderView: View {
                 }
 
                 if viewModel.isSignedIn {
-                    HStack(spacing: Chess.Space.xs) {
-                        StatChipView(
-                            icon: "trophy.fill",
-                            value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
-                            label: "rapid",
-                            color: Chess.Palette.bronze
-                        )
-                        if let games = viewModel.displayGamesPlayed, games > 0 {
-                            StatChipView(
-                                icon: "square.grid.3x3.fill",
-                                value: "\(games)",
-                                label: "games",
-                                color: Chess.Palette.bronze
-                            )
+                    // Rating strip: one chip per supported Lichess perf.
+                    // Bullet and Blitz are excluded because the app
+                    // can't play those time controls.
+                    //
+                    // The "puzzle" chip is special — it shows the
+                    // user's LIVE in-app Glicko-2 rating (the one
+                    // that climbs/drops with every solve/fail in our
+                    // app), not the lichess.org server rating. Users
+                    // who've never played puzzles on lichess.org would
+                    // otherwise see "—" forever and never know their
+                    // own progress.
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Chess.Space.xs) {
+                            ForEach(viewModel.displayedRatings) { row in
+                                if row.key == "puzzle" {
+                                    RatingChipView(row: rowWithLocalPuzzleRating(row))
+                                } else {
+                                    RatingChipView(row: row)
+                                }
+                            }
                         }
                     }
+                    .scrollClipDisabled()
                 }
             }
 
@@ -58,6 +66,24 @@ struct HomeHeaderView: View {
             }
         }
     }
+
+    /// Replace the row's Lichess server-side rating with our local
+    /// Glicko-2 rating so the chip reflects the user's in-app
+    /// progress instead of their (possibly empty) lichess.org puzzle
+    /// history.
+    private func rowWithLocalPuzzleRating(
+        _ base: LichessAccount.RatingRow
+    ) -> LichessAccount.RatingRow {
+        LichessAccount.RatingRow(
+            key: base.key,
+            label: base.label,
+            icon: base.icon,
+            rating: appModel.puzzleProgress.puzzleRatingInt,
+            games: (appModel.puzzleProgress.solvedIDs.count
+                    + appModel.puzzleProgress.failedIDs.count),
+            provisional: appModel.puzzleProgress.rating.rd > 110
+        )
+    }
 }
 
 // MARK: - Stat Chip
@@ -67,17 +93,17 @@ struct StatChipView: View {
     let value: String
     let label: String
     let color: Color
-    
+
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.caption)
                 .foregroundStyle(color)
-            
+
             Text(value)
                 .font(.callout)
                 .fontWeight(.semibold)
-            
+
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -91,6 +117,51 @@ struct StatChipView: View {
                 .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
         )
         .hoverEffect(.lift)
+    }
+}
+
+// MARK: - Rating Chip
+// Lichess-perf-specific chip: icon + rating + perf label (and a tiny
+// "?" badge for provisional ratings). Shows "—" when the user has no
+// rating for that perf so the row keeps a stable layout.
+struct RatingChipView: View {
+    let row: LichessAccount.RatingRow
+
+    private var ratingText: String {
+        guard let r = row.rating else { return "—" }
+        return String(r)   // ungrouped — chess convention ("1500" not "1,500")
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: row.icon)
+                .font(.caption)
+                .foregroundStyle(Chess.Palette.bronze)
+
+            Text(ratingText)
+                .font(.callout.monospacedDigit())
+                .fontWeight(.semibold)
+
+            Text(row.label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .hoverEffect(.lift)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        let r = row.rating.map(String.init) ?? "no rating"
+        let prov = row.provisional ? " provisional" : ""
+        return "\(row.label) rating: \(r)\(prov)"
     }
 }
 
