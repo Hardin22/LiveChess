@@ -45,6 +45,14 @@ final class PuzzleSession: MatchSession {
     private(set) var solveIndex: Int = 0
     private(set) var hintLevel: HintLevel = .none
 
+    /// Latched the first time the puzzle's rating outcome is set —
+    /// by a correct full solve, a wrong move, OR the user asking for
+    /// a hint. Lichess's rule is "any assistance = fail", so once we
+    /// fire `onFailedWithRating` because of a hint, no subsequent
+    /// solve gets to re-fire `onSolvedWithRating`. Stops double-
+    /// counting and matches lichess.org behaviour exactly.
+    private var ratingOutcomeRecorded = false
+
     private let rules: any RulesEngine
 
     var moveAppliedHandler: (@MainActor (Move) -> Void)?
@@ -124,7 +132,10 @@ final class PuzzleSession: MatchSession {
             // moves while status is already .failed.
             if status == .solving {
                 status = .failed
-                onFailedWithRating?(puzzle.id, puzzle.rating)
+                if !ratingOutcomeRecorded {
+                    ratingOutcomeRecorded = true
+                    onFailedWithRating?(puzzle.id, puzzle.rating)
+                }
             }
             return
         }
@@ -141,12 +152,22 @@ final class PuzzleSession: MatchSession {
     /// to see the source square (`.source`), again to see the full move
     /// (`.fullMove`). A third press is a no-op so the player can't
     /// auto-reveal further plies of the line.
+    ///
+    /// Rating: the FIRST hint press counts the puzzle as a fail for
+    /// Glicko-2 purposes (Lichess's rule — any assistance burns the
+    /// rating). The user can still complete the puzzle visually; the
+    /// rating outcome is just locked in as −rating regardless of
+    /// whether they go on to play the correct moves.
     func showHint() {
         guard status == .solving, let next = expectedNextMove else { return }
         switch hintLevel {
         case .none:     hintLevel = .source
         case .source:   hintLevel = .fullMove
         case .fullMove: return
+        }
+        if !ratingOutcomeRecorded {
+            ratingOutcomeRecorded = true
+            onFailedWithRating?(puzzle.id, puzzle.rating)
         }
         hintHandler?(hintLevel, next)
     }
@@ -206,7 +227,13 @@ final class PuzzleSession: MatchSession {
         if solveIndex >= solution.count {
             status = .solved
             onSolved?(puzzle.id)
-            onSolvedWithRating?(puzzle.id, puzzle.rating)
+            // If the user already burned the rating on a hint, the
+            // visual solve still counts as gameplay but doesn't
+            // refund rating — Lichess's rule.
+            if !ratingOutcomeRecorded {
+                ratingOutcomeRecorded = true
+                onSolvedWithRating?(puzzle.id, puzzle.rating)
+            }
         }
     }
 }
