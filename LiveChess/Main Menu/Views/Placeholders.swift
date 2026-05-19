@@ -154,25 +154,39 @@ final class PuzzlesViewModel {
         }
     }
 
-    /// Hits `/api/puzzle/next?angle=<theme>` once and appends the
-    /// result to that category's pool. No-op when a previous call
-    /// for the same category is still in flight.
-    func loadMore(category: PuzzleCategory, token: String?) async {
+    /// One press of "Load more" pulls **20 puzzles** in a single
+    /// burst — `/api/puzzle/next?angle=<theme>` returns one per call,
+    /// so we fire 20 sequentially with a short pause between them.
+    /// Results stream into the pool as they arrive so the UI updates
+    /// live, not all-at-once at the end. Stops early on the first
+    /// hard failure (e.g. 429) and surfaces the error inline.
+    func loadMore(category: PuzzleCategory,
+                  token: String?,
+                  batchSize: Int = 20) async {
         guard !loadingCategories.contains(category) else { return }
         loadingCategories.insert(category)
         defer { loadingCategories.remove(category) }
         errorsByCategory[category] = nil
         await service.authenticate(token: token)
-        do {
-            let next = try await service.fetchNextPuzzle(angle: category.rawValue)
-            var current = pools[category, default: []]
-            // Skip if the API hands us a puzzle already in the pool.
-            if !current.contains(where: { $0.puzzle.id == next.puzzle.id }) {
-                current.append(next)
-                pools[category] = current
+
+        for index in 0..<batchSize {
+            if Task.isCancelled { return }
+            do {
+                let next = try await service.fetchNextPuzzle(angle: category.rawValue)
+                var current = pools[category, default: []]
+                if !current.contains(where: { $0.puzzle.id == next.puzzle.id }) {
+                    current.append(next)
+                    pools[category] = current
+                }
+            } catch {
+                errorsByCategory[category] = friendlyMessage(for: error)
+                return
             }
-        } catch {
-            errorsByCategory[category] = friendlyMessage(for: error)
+            // Tiny gap between authenticated requests; Lichess per-
+            // token rate limit comfortably allows this cadence.
+            if index < batchSize - 1 {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         }
     }
 
@@ -314,79 +328,27 @@ struct PuzzlesPlaceholderView: View {
 
     @ViewBuilder
     private func categoryRail(_ category: PuzzleCategory) -> some View {
-        let visible = viewModel.displayedPuzzles(
-            in: category,
-            progress: appModel.puzzleProgress,
-            userRating: userRating
+        CategoryRowCard(
+            category: category,
+            next: viewModel.displayedPuzzles(
+                in: category,
+                progress: appModel.puzzleProgress,
+                userRating: userRating,
+                limit: 1
+            ).first,
+            progress: viewModel.progress(in: category,
+                                         progressStore: appModel.puzzleProgress),
+            isLoading: viewModel.loadingCategories.contains(category),
+            error: viewModel.errorsByCategory[category],
+            onLoadMore: {
+                Task {
+                    await viewModel.loadMore(
+                        category: category,
+                        token: appModel.lichess.token
+                    )
+                }
+            }
         )
-        let isLoading = viewModel.loadingCategories.contains(category)
-        let prog = viewModel.progress(in: category,
-                                      progressStore: appModel.puzzleProgress)
-        let categoryError = viewModel.errorsByCategory[category]
-
-        VStack(alignment: .leading, spacing: 10) {
-            // Header: icon + title + "N solved / total" + "Next up at
-            // 1530" hint so the user understands what the first card
-            // represents (the puzzle picked for their level).
-            HStack(spacing: 12) {
-                CategoryGlyph(category: category, progress: prog)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(category.displayName)
-                        .font(.title3.weight(.semibold))
-                    HStack(spacing: 6) {
-                        if prog.total > 0 {
-                            Text("\(prog.solved) of \(prog.total) solved")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let first = visible.first?.puzzle.rating {
-                            Text("·")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Text("next up at \(first)")
-                                .font(.caption2)
-                                .foregroundStyle(Chess.Palette.bronze)
-                        }
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 2)
-
-            // Horizontal deck. LazyHStack so cards off the right edge
-            // of the scroll viewport don't render until visible.
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 12) {
-                    if let categoryError {
-                        ErrorCard(message: categoryError) {
-                            Task {
-                                await viewModel.loadMore(
-                                    category: category,
-                                    token: appModel.lichess.token
-                                )
-                            }
-                        }
-                    } else if visible.isEmpty && !isLoading {
-                        EmptyCard()
-                    } else {
-                        ForEach(Array(visible.enumerated()), id: \.element.puzzle.id) { idx, p in
-                            PuzzleDeckCard(puzzle: p, isNext: idx == 0)
-                        }
-                    }
-                    LoadMoreCard(isLoading: isLoading) {
-                        Task {
-                            await viewModel.loadMore(
-                                category: category,
-                                token: appModel.lichess.token
-                            )
-                        }
-                    }
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 4)
-            }
-            .scrollClipDisabled()
-        }
     }
 
     private func reload() async {
@@ -395,72 +357,64 @@ struct PuzzlesPlaceholderView: View {
     }
 }
 
-// MARK: - Category glyph (icon + progress arc)
+// MARK: - Category row card (text-only, fast to render)
+//
+// Replaces the horizontal deck of mini-board cards. One row per
+// category, no per-puzzle thumbnails — just the category identity,
+// progress, and a primary "Solve next" call-to-action that launches
+// the immersive solver with the user's next unsolved puzzle. Renders
+// in microseconds; scrolls smoothly even with all 11 sections visible
+// at once on visionOS.
 
-private struct CategoryGlyph: View {
+private struct CategoryRowCard: View {
     let category: PuzzleCategory
+    let next: LichessPuzzle?
     let progress: (solved: Int, total: Int)
-
-    var body: some View {
-        ZStack {
-            // Faded base ring.
-            Circle()
-                .stroke(Chess.Palette.bronze.opacity(0.18), lineWidth: 3)
-                .frame(width: 38, height: 38)
-            // Filled progress arc.
-            if progress.total > 0 {
-                Circle()
-                    .trim(from: 0, to: CGFloat(progress.solved) / CGFloat(progress.total))
-                    .stroke(Chess.Palette.bronze,
-                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: 38, height: 38)
-            }
-            Image(systemName: category.systemImage)
-                .font(.callout)
-                .foregroundStyle(Chess.Palette.bronze)
-        }
-    }
-}
-
-// MARK: - Deck card (the actual position preview)
-
-private struct PuzzleDeckCard: View {
-    let puzzle: LichessPuzzle
-    let isNext: Bool
+    let isLoading: Bool
+    let error: String?
+    let onLoadMore: () -> Void
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @State private var isLaunching = false
 
     var body: some View {
-        Button {
-            Task { await launch() }
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                ZStack(alignment: .topLeading) {
-                    PuzzleMiniBoardView(
-                        fen: puzzle.puzzle.fen ?? "",
-                        size: 132,
-                        lastMove: highlightSquares()
-                    )
-                    if isLaunching {
-                        Rectangle()
-                            .fill(.black.opacity(0.35))
-                        ProgressView().tint(.white)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        HStack(alignment: .center, spacing: 16) {
+            // Category icon in a tinted square — visual identity per
+            // section without the cognitive cost of mini chessboards.
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Chess.Palette.bronze.opacity(0.20))
+                    .frame(width: 56, height: 56)
+                Image(systemName: category.systemImage)
+                    .font(.title2)
+                    .foregroundStyle(Chess.Palette.bronze)
+            }
 
-                // Rating + moves. The previous coloured dot was
-                // dropped — chess ratings are self-explanatory; the
-                // dot was extra cognitive load.
+            // Title + progress line + a thin progress bar so the
+            // user can see at a glance how deep into the category
+            // they've gone.
+            VStack(alignment: .leading, spacing: 6) {
+                Text(category.displayName)
+                    .font(.title3.weight(.semibold))
+
                 HStack(spacing: 6) {
-                    Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
-                        .font(.callout.monospacedDigit().weight(.semibold))
-                    Spacer()
-                    if let moves = puzzle.puzzle.solution?.count {
-                        HStack(spacing: 3) {
+                    Text("\(progress.solved) of \(progress.total) solved")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let nextRating = next?.puzzle.rating {
+                        Text("·")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("next \(nextRating)")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Chess.Palette.bronze)
+                    }
+                    if let moves = next?.puzzle.solution?.count {
+                        Text("·")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 2) {
                             Image(systemName: "arrow.turn.up.right")
                                 .font(.caption2)
                             Text("\(moves)")
@@ -470,59 +424,104 @@ private struct PuzzleDeckCard: View {
                     }
                 }
 
-                // Explicit "Next up" call-to-action on the first card.
-                // Replaces the small overlay badge — much harder to miss.
-                if isNext {
-                    HStack(spacing: 5) {
-                        Image(systemName: "play.fill")
-                            .font(.caption2)
-                        Text("NEXT UP")
-                            .font(.caption2.weight(.bold))
-                    }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Chess.Palette.bronze, in: Capsule())
-                }
+                progressBar
             }
-            .padding(10)
-            .frame(width: 156)
-            .background(.regularMaterial,
-                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(isNext
-                                  ? Chess.Palette.bronze.opacity(0.70)
-                                  : .white.opacity(0.10),
-                                  lineWidth: isNext ? 1.5 : 0.5)
-            )
-            .shadow(color: isNext ? Chess.Palette.bronze.opacity(0.30) : .clear,
-                    radius: isNext ? 8 : 0, x: 0, y: 0)
+
+            Spacer(minLength: 8)
+
+            actionTrailing
         }
-        .buttonStyle(.plain)
-        .hoverEffect(.lift)
-        .disabled(isLaunching)
+        .padding(16)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+        )
     }
 
-    /// Decode the puzzle's lastMove ("e2e4") into board coordinates so
-    /// the mini-board can tint the source/destination squares.
-    private func highlightSquares() -> ((Int, Int), (Int, Int))? {
-        guard let m = puzzle.puzzle.lastMove, m.count >= 4 else { return nil }
-        func square(_ s: Substring) -> (Int, Int)? {
-            guard s.count == 2,
-                  let file = s.first, let rank = s.last else { return nil }
-            let col = Int(file.asciiValue ?? 0) - Int(Character("a").asciiValue!)
-            let r = (rank.wholeNumberValue ?? 0)
-            guard (0...7).contains(col), (1...8).contains(r) else { return nil }
-            return (8 - r, col)
+    // MARK: - Pieces
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(.white.opacity(0.08))
+                Capsule()
+                    .fill(Chess.Palette.bronze)
+                    .frame(width: geo.size.width * fillFraction)
+            }
         }
-        let from = m.prefix(2)
-        let to = m.dropFirst(2).prefix(2)
-        guard let f = square(from), let t = square(to) else { return nil }
-        return (f, t)
+        .frame(height: 4)
     }
 
-    private func launch() async {
+    private var fillFraction: CGFloat {
+        guard progress.total > 0 else { return 0 }
+        return CGFloat(progress.solved) / CGFloat(progress.total)
+    }
+
+    @ViewBuilder
+    private var actionTrailing: some View {
+        if let error {
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: 180, alignment: .trailing)
+                Button("Retry", action: onLoadMore)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        } else if let next {
+            Button {
+                Task { await launch(next) }
+            } label: {
+                HStack(spacing: 6) {
+                    if isLaunching {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else {
+                        Image(systemName: "play.fill")
+                    }
+                    Text("Solve next")
+                        .font(.callout.weight(.semibold))
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background(Chess.Palette.bronze, in: Capsule())
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .hoverEffect(.lift)
+            .disabled(isLaunching)
+        } else {
+            Button {
+                onLoadMore()
+            } label: {
+                HStack(spacing: 6) {
+                    if isLoading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    Text(isLoading ? "Loading…" : "Load")
+                        .font(.callout.weight(.medium))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .disabled(isLoading)
+        }
+    }
+
+    private func launch(_ puzzle: LichessPuzzle) async {
         guard !isLaunching else { return }
         isLaunching = true
         defer { isLaunching = false }
@@ -692,103 +691,6 @@ private struct DailyHeroSkeleton: View {
     }
 }
 
-// MARK: - Load more / empty / error compact cards (for inside a rail)
-
-private struct LoadMoreCard: View {
-    let isLoading: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Chess.Palette.bronze.opacity(0.35),
-                                      style: StrokeStyle(lineWidth: 1.2,
-                                                         dash: [4, 4]))
-                        .frame(width: 132, height: 132)
-                    Image(systemName: isLoading ? "ellipsis" : "arrow.down.circle.fill")
-                        .font(.system(size: 36))
-                        .foregroundStyle(Chess.Palette.bronze)
-                }
-                Text(isLoading ? "Loading…" : "Load more")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .frame(width: 156, height: 196)
-            .background(.thinMaterial,
-                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .hoverEffect(.lift)
-        .disabled(isLoading)
-    }
-}
-
-private struct EmptyCard: View {
-    var body: some View {
-        VStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(.white.opacity(0.04))
-                    .frame(width: 132, height: 132)
-                Image(systemName: "tray")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.secondary)
-            }
-            Text("No puzzles yet")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .frame(width: 156, height: 196)
-        .background(.regularMaterial,
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
-        )
-    }
-}
-
-private struct ErrorCard: View {
-    let message: String
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text("Couldn’t load")
-                    .font(.caption.weight(.semibold))
-            }
-            Text(message)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(4)
-            Spacer(minLength: 0)
-            Button("Retry", action: onRetry)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .padding(12)
-        .frame(width: 220, height: 196, alignment: .topLeading)
-        .background(.orange.opacity(0.06),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.orange.opacity(0.30), lineWidth: 0.6)
-        )
-    }
-}
 
 private struct PuzzlesErrorState: View {
     let message: String
