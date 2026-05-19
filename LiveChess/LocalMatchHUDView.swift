@@ -39,6 +39,10 @@ struct LocalMatchHUDView: View {
     /// the match ends; dismissed by the user tapping "New Game" inside it.
     @State private var showGameOverPopup = false
 
+    @State private var showDrawConfirm = false
+    @State private var showResignConfirm = false
+    @State private var showExitConfirm = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -208,22 +212,46 @@ struct LocalMatchHUDView: View {
             if !coordinator.match.status.isGameOver {
                 HStack(spacing: Chess.Space.xs) {
                     Button {
-                        coordinator.agreeDraw()
+                        showDrawConfirm = true
                     } label: {
                         Label("Draw", systemImage: "circle.lefthalf.filled")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
+                    .confirmationDialog(
+                        "Agree to a draw?",
+                        isPresented: $showDrawConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Agree to draw", role: .destructive) {
+                            coordinator.agreeDraw()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This will end the game in a draw.")
+                    }
 
                     Button(role: .destructive) {
-                        coordinator.resign(side: humanSide ?? .white)
+                        showResignConfirm = true
                     } label: {
                         Label("Resign", systemImage: "flag.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
+                    .confirmationDialog(
+                        "Resign the game?",
+                        isPresented: $showResignConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Resign", role: .destructive) {
+                            coordinator.resign(side: humanSide ?? .white)
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Your opponent will be awarded the win.")
+                    }
                 }
             }
 
@@ -241,9 +269,13 @@ struct LocalMatchHUDView: View {
             environmentPickerButton
 
             Button(role: .destructive) {
-                Task {
-                    appModel.activeSession = nil
-                    await dismissImmersiveSpace()
+                if coordinator.match.status.isGameOver {
+                    Task {
+                        appModel.activeSession = nil
+                        await dismissImmersiveSpace()
+                    }
+                } else {
+                    showExitConfirm = true
                 }
             } label: {
                 Label("Main menu", systemImage: "house.fill")
@@ -251,6 +283,21 @@ struct LocalMatchHUDView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+            .confirmationDialog(
+                "Exit to main menu?",
+                isPresented: $showExitConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Exit", role: .destructive) {
+                    Task {
+                        appModel.activeSession = nil
+                        await dismissImmersiveSpace()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The current game will be lost.")
+            }
         }
     }
 

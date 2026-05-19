@@ -35,6 +35,11 @@ struct OnlineMatchHUDView: View {
     /// granularity matches what lichess.org displays at low time.
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
+    @State private var showDrawConfirm = false
+    @State private var showResignConfirm = false
+    @State private var showAbortConfirm = false
+    @State private var showExitConfirm = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             opponentHeader
@@ -308,7 +313,7 @@ struct OnlineMatchHUDView: View {
                 // when the opponent-gone countdown has elapsed).
                 HStack(spacing: 8) {
                     Button {
-                        Task { await session.offerOrAcceptDraw() }
+                        showDrawConfirm = true
                     } label: {
                         Label("Draw", systemImage: "hand.raised")
                             .frame(maxWidth: .infinity)
@@ -316,6 +321,21 @@ struct OnlineMatchHUDView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                     .disabled(session.pendingDrawOfferFromUs)
+                    .confirmationDialog(
+                        session.pendingDrawOfferFromOpponent
+                            ? "Accept the draw offer?"
+                            : "Offer a draw?",
+                        isPresented: $showDrawConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button(
+                            session.pendingDrawOfferFromOpponent ? "Accept draw" : "Offer draw",
+                            role: .destructive
+                        ) {
+                            Task { await session.offerOrAcceptDraw() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    }
 
                     Button {
                         Task { await session.offerOrAcceptTakeback() }
@@ -330,22 +350,46 @@ struct OnlineMatchHUDView: View {
 
                 if session.canAbort {
                     Button(role: .destructive) {
-                        Task { await session.abort() }
+                        showAbortConfirm = true
                     } label: {
                         Label("Abort game", systemImage: "xmark.circle")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+                    .confirmationDialog(
+                        "Abort the game?",
+                        isPresented: $showAbortConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Abort", role: .destructive) {
+                            Task { await session.abort() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("The game will end with no rating change.")
+                    }
                 } else {
                     Button(role: .destructive) {
-                        Task { await session.resign() }
+                        showResignConfirm = true
                     } label: {
                         Label("Resign", systemImage: "flag.checkered")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+                    .confirmationDialog(
+                        "Resign the game?",
+                        isPresented: $showResignConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Resign", role: .destructive) {
+                            Task { await session.resign() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Your opponent will be awarded the win.")
+                    }
                 }
 
                 if session.canClaimVictory {
