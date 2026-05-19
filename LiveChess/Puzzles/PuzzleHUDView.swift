@@ -157,16 +157,11 @@ struct PuzzleHUDView: View {
 
     private var controls: some View {
         VStack(spacing: Chess.Space.xs) {
-            if session.status == .failed {
-                Button {
-                    session.restart()
-                } label: {
-                    Label("Try again", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            } else if session.status == .solving {
+            // One attempt per puzzle (Lichess-style): wrong move OR
+            // solve both end the puzzle. The only mid-puzzle control
+            // is Hint (which itself counts as a fail and ends the
+            // puzzle for rating purposes). No Try-again / Restart.
+            if session.status == .solving {
                 Button {
                     session.showHint()
                 } label: {
@@ -176,25 +171,10 @@ struct PuzzleHUDView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
                 .disabled(session.hintLevel == .fullMove)
-
-                // Plain bordered (no destructive role) so the button
-                // doesn't render red — matches the rest of the app's
-                // marble / bronze palette.
-                Button {
-                    session.restart()
-                } label: {
-                    Label("Restart", systemImage: "arrow.counterclockwise")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-            } else if session.status == .solved {
-                // Primary action after a solve: jump straight to the
-                // next puzzle in the same rail. Always visible — if
-                // the bundled pool for this category is exhausted,
-                // we fall back to fetching a fresh one from Lichess
-                // via `BundledPuzzleStore.ensureNextUnsolved`. The
-                // user never sees an out-of-puzzles state.
+            } else if session.status == .solved || session.status == .failed {
+                // Category puzzles: jump to the next rail puzzle.
+                // Daily puzzle: locked until tomorrow 00:01 local;
+                // surface a quiet message instead of a button.
                 if session.categoryContext != nil {
                     Button {
                         Task { await advance() }
@@ -213,6 +193,18 @@ struct PuzzleHUDView: View {
                     .controlSize(.large)
                     .tint(Chess.Palette.bronze)
                     .disabled(isAdvancing)
+                } else {
+                    // No category context = Daily Puzzle. Lichess
+                    // ships one new daily puzzle per day; we lock
+                    // until 00:01 local of the next day.
+                    HStack(spacing: 6) {
+                        Image(systemName: "moon.stars")
+                            .foregroundStyle(Chess.Palette.bronze)
+                        Text("New daily puzzle tomorrow at 00:01.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 6)
                 }
             }
 

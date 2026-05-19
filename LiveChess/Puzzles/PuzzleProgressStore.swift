@@ -19,9 +19,10 @@ import Observation
 @Observable
 final class PuzzleProgressStore {
 
-    private static let solvedKey  = "LiveChess.SolvedPuzzles.v1"
-    private static let failedKey  = "LiveChess.FailedPuzzles.v1"
-    private static let glickoKey  = "LiveChess.PuzzleGlicko.v1"
+    private static let solvedKey       = "LiveChess.SolvedPuzzles.v1"
+    private static let failedKey       = "LiveChess.FailedPuzzles.v1"
+    private static let glickoKey       = "LiveChess.PuzzleGlicko.v1"
+    private static let dailyDoneAtKey  = "LiveChess.DailyCompletedAt.v1"
 
     /// Puzzles the user solved correctly (first move right).
     private(set) var solvedIDs: Set<String>
@@ -34,12 +35,17 @@ final class PuzzleProgressStore {
     /// Drives the "+8" / "−12" indicator next to the rating in the
     /// header. `nil` until the user has played at least one puzzle.
     private(set) var lastRatingDelta: Int?
+    /// Wall-clock time the user last completed the daily puzzle
+    /// (solve OR fail; one attempt). The daily slot stays locked
+    /// until 00:01 local on the day AFTER this — `nextDailyUnlock`.
+    private(set) var lastDailyCompletedAt: Date?
 
     init() {
         self.solvedIDs = Self.restoreSet(forKey: Self.solvedKey)
         self.failedIDs = Self.restoreSet(forKey: Self.failedKey)
         self.rating    = Self.restoreRating() ?? .initial
         self.lastRatingDelta = nil
+        self.lastDailyCompletedAt = Self.restoreDate(forKey: Self.dailyDoneAtKey)
     }
 
     // MARK: - Read
@@ -125,14 +131,47 @@ final class PuzzleProgressStore {
         persist(solvedIDs, forKey: Self.solvedKey)
     }
 
+    /// One-shot per day: marks the daily puzzle as attempted (solve
+    /// OR fail). The Puzzles screen renders a "next daily at 00:01"
+    /// countdown until `nextDailyUnlock`.
+    func markDailyCompleted() {
+        let now = Date()
+        lastDailyCompletedAt = now
+        if let data = try? JSONEncoder().encode(now) {
+            UserDefaults.standard.set(data, forKey: Self.dailyDoneAtKey)
+        }
+    }
+
+    /// Local 00:01 on the day AFTER the user finished the daily.
+    /// `nil` when the user hasn't completed one yet (so daily is
+    /// unlocked).
+    var nextDailyUnlock: Date? {
+        guard let last = lastDailyCompletedAt else { return nil }
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone.current
+        let startOfThatDay = calendar.startOfDay(for: last)
+        guard let nextDay = calendar.date(byAdding: .day, value: 1,
+                                          to: startOfThatDay) else { return nil }
+        return calendar.date(byAdding: .minute, value: 1, to: nextDay)
+    }
+
+    /// True when the daily slot is still locked. Once `Date()`
+    /// crosses `nextDailyUnlock`, the slot opens again.
+    var isDailyLocked: Bool {
+        guard let unlock = nextDailyUnlock else { return false }
+        return Date() < unlock
+    }
+
     func resetAll() {
         solvedIDs = []
         failedIDs = []
         rating = .initial
         lastRatingDelta = nil
+        lastDailyCompletedAt = nil
         persist(solvedIDs, forKey: Self.solvedKey)
         persist(failedIDs, forKey: Self.failedKey)
         persistRating()
+        UserDefaults.standard.removeObject(forKey: Self.dailyDoneAtKey)
     }
 
     // MARK: - Persistence
@@ -149,6 +188,13 @@ final class PuzzleProgressStore {
             return nil
         }
         return try? JSONDecoder().decode(Glicko2.Rating.self, from: data)
+    }
+
+    private static func restoreDate(forKey key: String) -> Date? {
+        guard let data = UserDefaults.standard.data(forKey: key) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(Date.self, from: data)
     }
 
     private func persist(_ value: Set<String>, forKey key: String) {

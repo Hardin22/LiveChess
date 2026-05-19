@@ -311,7 +311,9 @@ struct PuzzlesPlaceholderView: View {
 
     @ViewBuilder
     private var dailyHero: some View {
-        if let daily = viewModel.dailyPuzzle {
+        if appModel.puzzleProgress.isDailyLocked {
+            DailyLockedCard(unlockAt: appModel.puzzleProgress.nextDailyUnlock!)
+        } else if let daily = viewModel.dailyPuzzle {
             DailyHeroCard(puzzle: daily)
         } else if viewModel.isLoading {
             DailyHeroSkeleton()
@@ -712,11 +714,15 @@ private struct DailyHeroCard: View {
         isLaunching = true
         defer { isLaunching = false }
         guard let session = PuzzleSession(puzzle: puzzle) else { return }
+        // Daily Puzzle in the Puzzles screen: no category context.
+        // Solve OR fail locks the slot until tomorrow 00:01.
         session.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
             progress.recordSolve(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+            progress.markDailyCompleted()
         }
         session.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
             progress.recordFail(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+            progress.markDailyCompleted()
         }
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
@@ -726,6 +732,68 @@ private struct DailyHeroCard: View {
             appModel.activeSession = nil
             appModel.immersiveSpaceState = .closed
         }
+    }
+}
+
+// Daily Puzzle slot, locked until the next 00:01 local. Rendered
+// in place of `DailyHeroCard` after the user has solved or failed
+// today's daily — one attempt per day, Lichess-style.
+private struct DailyLockedCard: View {
+    let unlockAt: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            content(now: ctx.date)
+        }
+    }
+
+    @ViewBuilder
+    private func content(now: Date) -> some View {
+        let remaining = max(0, unlockAt.timeIntervalSince(now))
+        HStack(alignment: .center, spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Chess.Palette.bronze.opacity(0.22))
+                    .frame(width: 64, height: 64)
+                Image(systemName: "moon.stars.fill")
+                    .font(.title)
+                    .foregroundStyle(Chess.Palette.bronze)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("DAILY PUZZLE")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Chess.Palette.bronze)
+                Text("Solved for today")
+                    .font(.title3.weight(.semibold))
+                Text("Next puzzle in \(Self.format(remaining)) — at \(Self.unlockTimeString(unlockAt))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(18)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Chess.Palette.bronze.opacity(0.28),
+                              lineWidth: 0.8)
+        )
+    }
+
+    private static func format(_ secs: TimeInterval) -> String {
+        let total = Int(secs.rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m"      }
+        return "moments"
+    }
+
+    private static func unlockTimeString(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: date)
     }
 }
 

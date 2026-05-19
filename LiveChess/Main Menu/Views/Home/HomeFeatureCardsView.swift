@@ -162,9 +162,13 @@ private struct PuzzleLaunchCard: View {
         guard let session = PuzzleSession(puzzle: puzzle) else { return }
         session.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
             progress.recordSolve(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+            // Daily-puzzle home card has no category context — any
+            // completion locks the slot until tomorrow 00:01.
+            progress.markDailyCompleted()
         }
         session.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
             progress.recordFail(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+            progress.markDailyCompleted()
         }
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
