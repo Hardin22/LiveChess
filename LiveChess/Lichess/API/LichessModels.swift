@@ -17,6 +17,50 @@ struct LichessAccount: Sendable, Decodable, Equatable {
     func rating(forPerfKey key: String) -> Int? {
         perfs?[key]?.rating
     }
+
+    /// One row of the "your ratings" strip shown on the home screen.
+    /// Bundles the four values the chip needs so views don't have to
+    /// dig into the `perfs` map themselves.
+    struct RatingRow: Sendable, Equatable, Identifiable {
+        let key: String
+        let label: String
+        let icon: String
+        let rating: Int?
+        let games: Int?
+        let provisional: Bool
+        var id: String { key }
+    }
+
+    /// Perfs to surface in the main menu, in display order.
+    /// Bullet/Blitz/UltraBullet intentionally excluded — those time
+    /// controls aren't playable in the app, so showing a rating the
+    /// user can't act on is noise. `daily` isn't a Lichess perf key
+    /// (correspondence covers it); `puzzle` is the user's overall
+    /// puzzle-trainer rating, not the per-puzzle one.
+    static let displayedPerfKeys: [(key: String, label: String, icon: String)] = [
+        ("rapid",          "Rapid",          "hare.fill"),
+        ("classical",      "Classical",      "tortoise.fill"),
+        ("correspondence", "Correspondence", "envelope.fill"),
+        ("puzzle",         "Puzzles",        "puzzlepiece.fill")
+    ]
+
+    /// Concrete rows for the menu strip — one per entry in
+    /// `displayedPerfKeys`, with the user's current values filled in.
+    /// Rows are returned even when a perf is missing (rating `nil`)
+    /// so the layout stays stable — the chip itself renders "—".
+    var displayedRatingRows: [RatingRow] {
+        Self.displayedPerfKeys.map { entry in
+            let perf = perfs?[entry.key]
+            return RatingRow(
+                key: entry.key,
+                label: entry.label,
+                icon: entry.icon,
+                rating: perf?.rating,
+                games: perf?.games,
+                provisional: perf?.isProvisional ?? false
+            )
+        }
+    }
 }
 
 /// Per-perf rating block (one entry per speed/variant: `bullet`, `blitz`,

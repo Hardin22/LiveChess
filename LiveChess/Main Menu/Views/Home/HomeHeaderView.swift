@@ -26,22 +26,19 @@ struct HomeHeaderView: View {
                 }
 
                 if viewModel.isSignedIn {
-                    HStack(spacing: Chess.Space.xs) {
-                        StatChipView(
-                            icon: "trophy.fill",
-                            value: viewModel.displayRating > 0 ? "\(viewModel.displayRating)" : "—",
-                            label: "rapid",
-                            color: Chess.Palette.bronze
-                        )
-                        if let games = viewModel.displayGamesPlayed, games > 0 {
-                            StatChipView(
-                                icon: "square.grid.3x3.fill",
-                                value: "\(games)",
-                                label: "games",
-                                color: Chess.Palette.bronze
-                            )
+                    // Rating strip: one chip per supported Lichess perf
+                    // (Rapid, Classical, Correspondence, Puzzles). Bullet
+                    // and Blitz are deliberately omitted — those time
+                    // controls aren't playable in the app, so a rating
+                    // the user can't act on is just noise.
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Chess.Space.xs) {
+                            ForEach(viewModel.displayedRatings) { row in
+                                RatingChipView(row: row)
+                            }
                         }
                     }
+                    .scrollClipDisabled()
                 }
             }
 
@@ -67,17 +64,17 @@ struct StatChipView: View {
     let value: String
     let label: String
     let color: Color
-    
+
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.caption)
                 .foregroundStyle(color)
-            
+
             Text(value)
                 .font(.callout)
                 .fontWeight(.semibold)
-            
+
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -91,6 +88,51 @@ struct StatChipView: View {
                 .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
         )
         .hoverEffect(.lift)
+    }
+}
+
+// MARK: - Rating Chip
+// Lichess-perf-specific chip: icon + rating + perf label (and a tiny
+// "?" badge for provisional ratings). Shows "—" when the user has no
+// rating for that perf so the row keeps a stable layout.
+struct RatingChipView: View {
+    let row: LichessAccount.RatingRow
+
+    private var ratingText: String {
+        guard let r = row.rating else { return "—" }
+        return row.provisional ? "\(r)?" : "\(r)"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: row.icon)
+                .font(.caption)
+                .foregroundStyle(Chess.Palette.bronze)
+
+            Text(ratingText)
+                .font(.callout.monospacedDigit())
+                .fontWeight(.semibold)
+
+            Text(row.label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .hoverEffect(.lift)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        let r = row.rating.map(String.init) ?? "no rating"
+        let prov = row.provisional ? " provisional" : ""
+        return "\(row.label) rating: \(r)\(prov)"
     }
 }
 

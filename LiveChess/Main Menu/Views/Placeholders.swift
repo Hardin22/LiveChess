@@ -617,12 +617,13 @@ private struct ProfileCardView: View {
     let account: LichessAccount
     @Environment(AppModel.self) private var appModel
 
-    private static let displayedPerfs: [(key: String, label: String)] = [
-        ("bullet", "Bullet"),
-        ("blitz", "Blitz"),
-        ("rapid", "Rapid"),
-        ("classical", "Classical")
-    ]
+    // Single source of truth for which perfs we surface lives on
+    // `LichessAccount.displayedPerfKeys`. Bullet/Blitz are excluded
+    // there because we can't play them in this app, so showing those
+    // ratings would be misleading clutter.
+    private var displayedRows: [LichessAccount.RatingRow] {
+        account.displayedRatingRows
+    }
 
     var body: some View {
         ScrollView {
@@ -651,8 +652,8 @@ private struct ProfileCardView: View {
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
                           spacing: 12) {
-                    ForEach(Self.displayedPerfs, id: \.key) { entry in
-                        ratingChip(label: entry.label, key: entry.key)
+                    ForEach(displayedRows) { row in
+                        ratingChip(row: row)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -676,17 +677,20 @@ private struct ProfileCardView: View {
     }
 
     @ViewBuilder
-    private func ratingChip(label: String, key: String) -> some View {
-        let rating = account.rating(forPerfKey: key)
-        let games = account.perfs?[key]?.games
+    private func ratingChip(row: LichessAccount.RatingRow) -> some View {
         VStack(spacing: 6) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(rating.map { "\($0)" } ?? "—")
+            HStack(spacing: 5) {
+                Image(systemName: row.icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(row.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(ratingText(for: row))
                 .font(.title3.monospacedDigit())
                 .fontWeight(.semibold)
-            Text(games.map { "\($0) games" } ?? " ")
+            Text(row.games.map { "\($0) games" } ?? " ")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -697,6 +701,11 @@ private struct ProfileCardView: View {
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
         )
+    }
+
+    private func ratingText(for row: LichessAccount.RatingRow) -> String {
+        guard let r = row.rating else { return "—" }
+        return row.provisional ? "\(r)?" : "\(r)"
     }
 }
 
