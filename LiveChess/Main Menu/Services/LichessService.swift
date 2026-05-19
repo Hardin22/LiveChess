@@ -91,11 +91,19 @@ final class LichessService {
         try await apiClient.request(endpoint: "/api/puzzle/\(id)", skipAuth: true)
     }
 
-    /// `/api/puzzle/next` — a fresh puzzle. Called unauthenticated to
-    /// avoid the 403 our `board:play` token returns on `puzzle:read`
-    /// endpoints. `angle` filters by Lichess theme (e.g. "mateIn2",
-    /// "endgame", "fork") so the categorised browser can ask for
-    /// puzzles matching the section the user is loading more in.
+    /// `/api/puzzle/next` — a fresh puzzle. We TRY with the bearer
+    /// first: tokens that carry the `puzzle:read` scope (the default
+    /// for new sign-ins) get the per-token rate limit, which is far
+    /// looser than Lichess's per-IP anon limit. That matters in dev
+    /// because the simulator and the developer's machine share an IP
+    /// and chew through the anon quota fast. If the token lacks
+    /// `puzzle:read` (older sign-ins from before that scope was added),
+    /// Lichess returns 403 → we transparently fall back to an anon
+    /// call so the call still succeeds.
+    ///
+    /// `angle` filters by Lichess theme (e.g. "mateIn2", "endgame",
+    /// "fork") so the categorised browser asks for puzzles matching
+    /// the section the user is loading more in.
     func fetchNextPuzzle(angle: String? = nil,
                          difficulty: String? = nil) async throws -> LichessPuzzle {
         var items: [URLQueryItem] = []
@@ -105,10 +113,23 @@ final class LichessService {
         if let difficulty {
             items.append(URLQueryItem(name: "difficulty", value: difficulty))
         }
-        return try await apiClient.request(
-            endpoint: "/api/puzzle/next",
-            queryItems: items.isEmpty ? nil : items,
-            skipAuth: true
-        )
+        let queryItems = items.isEmpty ? nil : items
+
+        do {
+            return try await apiClient.request(
+                endpoint: "/api/puzzle/next",
+                queryItems: queryItems,
+                skipAuth: false
+            )
+        } catch let LichessAPIError.http(status, _) where status == 401 || status == 403 {
+            // Token missing puzzle:read — fall back to anon. User
+            // will be subject to the per-IP rate limit until they
+            // sign out and back in to refresh scope.
+            return try await apiClient.request(
+                endpoint: "/api/puzzle/next",
+                queryItems: queryItems,
+                skipAuth: true
+            )
+        }
     }
 }
