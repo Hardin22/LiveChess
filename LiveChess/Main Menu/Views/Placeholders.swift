@@ -513,42 +513,50 @@ private struct CategoryBox: View {
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    /// Mirrors `PuzzleLaunchCard.launch` but handles the case where
-    /// the immersive space is already open (lobby AR, an in-flight
-    /// game, or a previous puzzle the user didn't exit). In that case
-    /// `openImmersiveSpace` is a no-op and the new puzzle session
-    /// wouldn't take effect — so we dismiss the existing scene first
-    /// and use `pendingReopen` to preserve the new `activeSession`
-    /// across `ChessSceneView.onDisappear`.
+    /// Launches `puzzle` in the immersive solver. Unconditionally
+    /// dismisses any in-flight immersive space first — this is the
+    /// only reliable way on visionOS to swap the active session,
+    /// because `openImmersiveSpace` is a no-op when one is already
+    /// mounted and `ChessSceneView` reads `activeSession` only at
+    /// scene-build time. `pendingReopen` keeps the new session alive
+    /// across the dismiss → onDisappear cycle.
     private func launch(_ puzzle: LichessPuzzle) async {
         guard !isLaunching else { return }
         isLaunching = true
         defer { isLaunching = false }
-        guard let session = PuzzleSession(puzzle: puzzle) else { return }
+
+        guard let session = PuzzleSession(puzzle: puzzle) else {
+            print("[CategoryBox] PuzzleSession init returned nil for id=\(puzzle.puzzle.id) — invalid FEN or empty solution?")
+            return
+        }
         session.onSolved = { [progress = appModel.puzzleProgress] id in
             progress.markSolved(id)
         }
-        // Remember which rail this session came from — the HUD reads
-        // it to power the "Next puzzle" button after a solve.
         session.categoryContext = category
 
-        // Capture the live immersive state BEFORE flipping it to
-        // `.inTransition` — otherwise the dismiss check below always
-        // sees `.inTransition` and never fires.
-        let wasOpen = appModel.immersiveSpaceState == .open
+        print("[CategoryBox] launching id=\(puzzle.puzzle.id) category=\(category.rawValue) currentState=\(appModel.immersiveSpaceState)")
 
+        appModel.pendingReopen = true
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
 
-        if wasOpen {
-            appModel.pendingReopen = true
-            await dismissImmersiveSpace()
-        }
+        // Always dismiss — no-op if nothing is open. This sidesteps
+        // edge cases like `.inTransition` left over from a previous
+        // interrupted flow, where the conditional dismiss-when-open
+        // path would silently skip the teardown.
+        await dismissImmersiveSpace()
+        print("[CategoryBox] dismissed; opening fresh immersive...")
 
         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
         case .opened:
-            break
-        default:
+            print("[CategoryBox] immersive opened OK")
+        case .userCancelled:
+            print("[CategoryBox] open .userCancelled")
+            fallthrough
+        case .error:
+            print("[CategoryBox] open .error")
+            fallthrough
+        @unknown default:
             appModel.activeSession = nil
             appModel.immersiveSpaceState = .closed
             appModel.pendingReopen = false
