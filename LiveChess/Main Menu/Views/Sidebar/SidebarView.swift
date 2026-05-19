@@ -220,11 +220,22 @@ struct SidebarProfileView: View {
                                         .lineLimit(1)
                                 }
                                 HStack(spacing: 4) {
+                                    // Lichess-style green presence dot —
+                                    // ringed with a faint halo so it reads
+                                    // against the bronze sidebar surface.
                                     Circle()
-                                        .fill(Chess.Palette.accent)
+                                        .fill(Color(red: 0.30, green: 0.78, blue: 0.36))
                                         .frame(width: 6, height: 6)
+                                        .shadow(color: Color(red: 0.30, green: 0.78, blue: 0.36).opacity(0.6),
+                                                radius: 2)
                                     if let rating = account.rating(forPerfKey: "rapid") {
-                                        Text("Online · \(rating)")
+                                        // Convert to String before
+                                        // interpolating so the locale's
+                                        // grouping separator (",", "." in
+                                        // EU) doesn't render — chess
+                                        // ratings are conventionally
+                                        // shown ungrouped ("1274").
+                                        Text("Online · \(String(rating))")
                                             .font(Chess.Typography.rowDetail())
                                             .foregroundStyle(.secondary)
                                     } else {

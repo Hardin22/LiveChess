@@ -100,7 +100,7 @@ struct RatingChipView: View {
 
     private var ratingText: String {
         guard let r = row.rating else { return "—" }
-        return "\(r)"
+        return String(r)   // ungrouped — chess convention ("1500" not "1,500")
     }
 
     var body: some View {

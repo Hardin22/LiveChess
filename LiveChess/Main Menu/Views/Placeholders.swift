@@ -938,7 +938,7 @@ private struct ProfileCardView: View {
 
     private func ratingText(for row: LichessAccount.RatingRow) -> String {
         guard let r = row.rating else { return "—" }
-        return "\(r)"
+        return String(r)   // ungrouped — chess convention ("1500" not "1,500")
     }
 }
 
