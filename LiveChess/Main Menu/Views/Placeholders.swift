@@ -197,12 +197,28 @@ final class PuzzlesViewModel {
     /// shifting later entries up into the visible window.
     func displayedPuzzles(in category: PuzzleCategory,
                           progress: PuzzleProgressStore,
+                          userRating: Int,
                           limit: Int = 8) -> [LichessPuzzle] {
-        (pools[category] ?? [])
-            .lazy
+        let unsolved = (pools[category] ?? [])
             .filter { !progress.isSolved($0.puzzle.id) }
-            .prefix(limit)
-            .map { $0 }
+        // Sort rule (per request): each category starts from the
+        // user's current rating and goes UP. Puzzles below the user's
+        // rating still surface, but only after the at-or-above ones
+        // run out — so a 1500-rated user sees 1500, 1550, 1620…
+        // before any 900-rated trainers.
+        let sorted = unsolved.sorted { a, b in
+            let ar = a.puzzle.rating ?? Int.max
+            let br = b.puzzle.rating ?? Int.max
+            let aAbove = ar >= userRating
+            let bAbove = br >= userRating
+            if aAbove != bAbove { return aAbove }       // at-or-above wins
+            if aAbove {
+                return ar < br                          // ascending from user
+            } else {
+                return ar > br                          // closest-to-user first
+            }
+        }
+        return Array(sorted.prefix(limit))
     }
 
     /// Tally of (solved, total) for a category — drives the inline
@@ -224,18 +240,17 @@ final class PuzzlesViewModel {
                                                     from: data)
         else { return }
 
-        // Shuffle each category's pool so different launches surface
-        // a different ordering of unsolved puzzles. Categorisation is
-        // deterministic (bucket priority), but order WITHIN a bucket
-        // doesn't need to be — varying it keeps the rails feeling fresh.
+        // Bucketed in declaration order; per-category ordering is
+        // imposed at display time by `displayedPuzzles(in:userRating:)`
+        // so we don't need to randomise here. Sorting at the display
+        // layer means we can resort whenever the user's rating
+        // changes without rebuilding the pool.
         var bucketed: [PuzzleCategory: [LichessPuzzle]] = [:]
         for info in infos {
             guard let cat = PuzzleCategory.bucket(for: info.themes) else { continue }
             bucketed[cat, default: []].append(LichessPuzzle(puzzle: info))
         }
-        for (cat, list) in bucketed {
-            pools[cat] = list.shuffled()
-        }
+        pools = bucketed
     }
 }
 
@@ -243,9 +258,23 @@ struct PuzzlesPlaceholderView: View {
     @Environment(AppModel.self) private var appModel
     @State private var viewModel = PuzzlesViewModel()
 
+    /// User's puzzle rating drives the per-rail ordering: each
+    /// section starts from the puzzle closest to (and at-or-above)
+    /// this number, then climbs. Falls back to rapid → 1500 when the
+    /// user has no puzzle perf yet.
+    private var userRating: Int {
+        appModel.lichess.account?.rating(forPerfKey: "puzzle")
+            ?? appModel.lichess.account?.rating(forPerfKey: "rapid")
+            ?? 1500
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            // LazyVStack so off-screen rails (rows below the fold)
+            // don't mount their card subtree until scrolled into view.
+            // Without this, 11 rails × 8 cards × Canvas board would
+            // all initialize on first paint and stutter for ~500ms.
+            LazyVStack(alignment: .leading, spacing: 28) {
                 dailyHero
                 ForEach(PuzzleCategory.allCases) { category in
                     categoryRail(category)
@@ -287,7 +316,8 @@ struct PuzzlesPlaceholderView: View {
     private func categoryRail(_ category: PuzzleCategory) -> some View {
         let visible = viewModel.displayedPuzzles(
             in: category,
-            progress: appModel.puzzleProgress
+            progress: appModel.puzzleProgress,
+            userRating: userRating
         )
         let isLoading = viewModel.loadingCategories.contains(category)
         let prog = viewModel.progress(in: category,
@@ -295,25 +325,38 @@ struct PuzzlesPlaceholderView: View {
         let categoryError = viewModel.errorsByCategory[category]
 
         VStack(alignment: .leading, spacing: 10) {
-            // Header: icon + title + progress arc + N solved / N total.
+            // Header: icon + title + "N solved / total" + "Next up at
+            // 1530" hint so the user understands what the first card
+            // represents (the puzzle picked for their level).
             HStack(spacing: 12) {
                 CategoryGlyph(category: category, progress: prog)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(category.displayName)
                         .font(.title3.weight(.semibold))
-                    if prog.total > 0 {
-                        Text("\(prog.solved) of \(prog.total) solved")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        if prog.total > 0 {
+                            Text("\(prog.solved) of \(prog.total) solved")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let first = visible.first?.puzzle.rating {
+                            Text("·")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("next up at \(first)")
+                                .font(.caption2)
+                                .foregroundStyle(Chess.Palette.bronze)
+                        }
                     }
                 }
                 Spacer()
             }
             .padding(.horizontal, 2)
 
-            // Horizontal deck of puzzle cards + a trailing Load more card.
+            // Horizontal deck. LazyHStack so cards off the right edge
+            // of the scroll viewport don't render until visible.
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
+                LazyHStack(alignment: .top, spacing: 12) {
                     if let categoryError {
                         ErrorCard(message: categoryError) {
                             Task {
@@ -401,16 +444,6 @@ private struct PuzzleDeckCard: View {
                         size: 132,
                         lastMove: highlightSquares()
                     )
-                    if isNext {
-                        Text("PLAY NEXT")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Chess.Palette.bronze,
-                                        in: Capsule())
-                            .padding(6)
-                    }
                     if isLaunching {
                         Rectangle()
                             .fill(.black.opacity(0.35))
@@ -419,10 +452,12 @@ private struct PuzzleDeckCard: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+                // Rating + moves. The previous coloured dot was
+                // dropped — chess ratings are self-explanatory; the
+                // dot was extra cognitive load.
                 HStack(spacing: 6) {
-                    DifficultyDot(rating: puzzle.puzzle.rating)
                     Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
-                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .font(.callout.monospacedDigit().weight(.semibold))
                     Spacer()
                     if let moves = puzzle.puzzle.solution?.count {
                         HStack(spacing: 3) {
@@ -434,6 +469,21 @@ private struct PuzzleDeckCard: View {
                         .foregroundStyle(.secondary)
                     }
                 }
+
+                // Explicit "Next up" call-to-action on the first card.
+                // Replaces the small overlay badge — much harder to miss.
+                if isNext {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                            .font(.caption2)
+                        Text("NEXT UP")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Chess.Palette.bronze, in: Capsule())
+                }
             }
             .padding(10)
             .frame(width: 156)
@@ -442,10 +492,12 @@ private struct PuzzleDeckCard: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(isNext
-                                  ? Chess.Palette.bronze.opacity(0.55)
+                                  ? Chess.Palette.bronze.opacity(0.70)
                                   : .white.opacity(0.10),
-                                  lineWidth: isNext ? 1.0 : 0.5)
+                                  lineWidth: isNext ? 1.5 : 0.5)
             )
+            .shadow(color: isNext ? Chess.Palette.bronze.opacity(0.30) : .clear,
+                    radius: isNext ? 8 : 0, x: 0, y: 0)
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
@@ -489,31 +541,6 @@ private struct PuzzleDeckCard: View {
     }
 }
 
-// MARK: - Difficulty dot
-
-private struct DifficultyDot: View {
-    let rating: Int?
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 8, height: 8)
-            .shadow(color: color.opacity(0.6), radius: 1.5)
-    }
-
-    private var color: Color {
-        guard let r = rating else {
-            return .gray
-        }
-        switch r {
-        case ..<1200: return Color(red: 0.30, green: 0.78, blue: 0.36)   // easy — green
-        case ..<1700: return Color(red: 0.95, green: 0.78, blue: 0.30)   // medium — gold
-        case ..<2100: return Color(red: 0.95, green: 0.55, blue: 0.20)   // hard — orange
-        default:      return Color(red: 0.95, green: 0.30, blue: 0.30)   // brutal — red
-        }
-    }
-}
-
 // MARK: - Daily hero
 
 private struct DailyHeroCard: View {
@@ -539,8 +566,7 @@ private struct DailyHeroCard: View {
                     .background(Chess.Palette.bronze.opacity(0.18),
                                 in: Capsule())
 
-                HStack(spacing: 12) {
-                    DifficultyDot(rating: puzzle.puzzle.rating)
+                HStack(spacing: 6) {
                     Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
                         .font(.title2.monospacedDigit().weight(.bold))
                     Text("rating")

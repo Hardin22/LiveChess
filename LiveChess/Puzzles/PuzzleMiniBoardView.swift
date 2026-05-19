@@ -1,51 +1,70 @@
 import SwiftUI
 
-/// Renders a chess position from a FEN string as a compact 8×8 board,
-/// used as the hero visual on puzzle browse cards. Shows the actual
-/// position the user will solve instead of a generic puzzle-piece icon
-/// — that's the distinctive visual cue for the new puzzles UI.
+/// Compact 8×8 chessboard preview, rendered as a single SwiftUI
+/// `Canvas` draw call so the puzzle browser stays smooth even with
+/// dozens of cards on screen at once. (The earlier stacked-rectangles
+/// implementation created ~128 SwiftUI nodes per board × ~88 cards
+/// per first-paint = >11k views, which was the source of the lag.)
 ///
-/// Cheap to render: 64 stacked rectangles + Unicode piece glyphs.
-/// `size` is the OUTER side length in points; each square is `size/8`.
-/// Pieces use Unicode chess symbols so we don't depend on any of the
-/// app's 3D piece assets — the previews stay decoupled from the
-/// renderer.
+/// `size` is the OUTER side length in points. Pass an optional
+/// `lastMove` (the puzzle's set-up move, parsed by `PuzzleDeckCard`)
+/// to gold-tint the source and destination squares.
 struct PuzzleMiniBoardView: View {
 
     let fen: String
     var size: CGFloat = 96
-    /// Optional highlight: from–to squares of the puzzle's opponent
-    /// set-up move ("lastMove" on the puzzle payload). When provided
-    /// we tint those squares so the player can see where the action
-    /// is even before tapping in.
-    var lastMove: (from: (Int, Int), to: (Int, Int))? = nil
+    var lastMove: (from: (row: Int, col: Int), to: (row: Int, col: Int))? = nil
 
     var body: some View {
-        let squareSize = size / 8
         let board = Self.parse(fen)
+        let highlight = lastMove
 
-        VStack(spacing: 0) {
-            ForEach(0..<8, id: \.self) { row in
-                HStack(spacing: 0) {
-                    ForEach(0..<8, id: \.self) { col in
-                        ZStack {
-                            Rectangle()
-                                .fill(Self.squareColor(row: row, col: col))
-                            if isHighlighted(row: row, col: col) {
-                                Rectangle()
-                                    .fill(Color(red: 1.0, green: 0.78, blue: 0.30).opacity(0.55))
-                            }
-                            if let piece = board[row][col] {
-                                Text(Self.glyph(for: piece))
-                                    .font(.system(size: squareSize * 0.78))
-                                    .foregroundStyle(piece.isUppercase
-                                                     ? Color.white
-                                                     : Color.black)
-                                    .shadow(color: .black.opacity(0.35), radius: 0.4)
-                            }
-                        }
-                        .frame(width: squareSize, height: squareSize)
+        Canvas { context, canvasSize in
+            let cell = canvasSize.width / 8
+
+            // 1) Squares + optional from→to highlight.
+            for row in 0..<8 {
+                for col in 0..<8 {
+                    let rect = CGRect(
+                        x: CGFloat(col) * cell,
+                        y: CGFloat(row) * cell,
+                        width: cell, height: cell
+                    )
+                    var fill = Self.squareColor(row: row, col: col)
+                    if let h = highlight,
+                       (h.from.row == row && h.from.col == col) ||
+                       (h.to.row   == row && h.to.col   == col) {
+                        // Warm gold wash over the original square so the
+                        // highlight reads on both light and dark squares.
+                        context.fill(Path(rect), with: .color(fill))
+                        fill = Color(red: 1.0, green: 0.78, blue: 0.30).opacity(0.55)
                     }
+                    context.fill(Path(rect), with: .color(fill))
+                }
+            }
+
+            // 2) Pieces — drawn as Unicode glyphs centred on each
+            //    occupied square. Canvas `draw(Text, at:)` resolves
+            //    once per glyph and is much cheaper than mounting
+            //    a SwiftUI Text per square.
+            let pieceFont = Font.system(size: cell * 0.82,
+                                        weight: .regular,
+                                        design: .default)
+            for row in 0..<8 {
+                for col in 0..<8 {
+                    guard let piece = board[row][col] else { continue }
+                    let glyph = Self.glyph(for: piece)
+                    let textColor: Color = piece.isUppercase ? .white : .black
+                    let resolved = context.resolve(
+                        Text(glyph)
+                            .font(pieceFont)
+                            .foregroundStyle(textColor)
+                    )
+                    let centre = CGPoint(
+                        x: (CGFloat(col) + 0.5) * cell,
+                        y: (CGFloat(row) + 0.5) * cell
+                    )
+                    context.draw(resolved, at: centre, anchor: .center)
                 }
             }
         }
@@ -57,16 +76,9 @@ struct PuzzleMiniBoardView: View {
         )
     }
 
-    private func isHighlighted(row: Int, col: Int) -> Bool {
-        guard let mv = lastMove else { return false }
-        return (mv.from.0 == row && mv.from.1 == col) ||
-               (mv.to.0   == row && mv.to.1   == col)
-    }
-
     // MARK: - FEN parsing
 
-    /// Returns an 8×8 grid of optional ASCII characters (KQRBNPkqrbnp).
-    /// Row 0 is rank 8 (top), row 7 is rank 1, matching the visual.
+    /// 8×8 grid (row 0 = rank 8) of optional ASCII piece chars.
     static func parse(_ fen: String) -> [[Character?]] {
         let empty: [[Character?]] = Array(
             repeating: Array(repeating: nil, count: 8),
@@ -76,7 +88,7 @@ struct PuzzleMiniBoardView: View {
         let ranks = firstField.split(separator: "/").map(String.init)
         guard ranks.count == 8 else { return empty }
 
-        var result: [[Character?]] = empty
+        var result = empty
         for (r, rank) in ranks.enumerated() {
             var col = 0
             for ch in rank {
@@ -91,17 +103,15 @@ struct PuzzleMiniBoardView: View {
         return result
     }
 
-    /// Light/dark wood tones matching the in-app board (`Materials.swift`
-    /// `lightSquare`/`darkSquare` colours, slightly muted for the
-    /// preview so it reads as a thumbnail not the real game board).
+    /// Wood tones that match the in-app board roughly (Materials.swift
+    /// light/dark square colours, muted a touch so the preview reads
+    /// as a thumbnail rather than the real game surface).
     static func squareColor(row: Int, col: Int) -> Color {
         (row + col).isMultiple(of: 2)
-            ? Color(red: 0.93, green: 0.86, blue: 0.71)   // light wood
-            : Color(red: 0.55, green: 0.39, blue: 0.27)   // dark wood
+            ? Color(red: 0.93, green: 0.86, blue: 0.71)
+            : Color(red: 0.55, green: 0.39, blue: 0.27)
     }
 
-    /// Map FEN ASCII to a Unicode chess piece glyph. Returns a space
-    /// for unrecognised input so the layout doesn't tear.
     static func glyph(for c: Character) -> String {
         switch c {
         case "K": return "♔"
