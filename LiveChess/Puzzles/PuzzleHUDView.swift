@@ -10,6 +10,7 @@ struct PuzzleHUDView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openImmersiveSpace)    private var openImmersiveSpace
+    @State private var isAdvancing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.m) {
@@ -156,16 +157,11 @@ struct PuzzleHUDView: View {
 
     private var controls: some View {
         VStack(spacing: Chess.Space.xs) {
-            if session.status == .failed {
-                Button {
-                    session.restart()
-                } label: {
-                    Label("Try again", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            } else if session.status == .solving {
+            // One attempt per puzzle (Lichess-style): wrong move OR
+            // solve both end the puzzle. The only mid-puzzle control
+            // is Hint (which itself counts as a fail and ends the
+            // puzzle for rating purposes). No Try-again / Restart.
+            if session.status == .solving {
                 Button {
                     session.showHint()
                 } label: {
@@ -175,18 +171,41 @@ struct PuzzleHUDView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
                 .disabled(session.hintLevel == .fullMove)
-
-                // Plain bordered (no destructive role) so the button
-                // doesn't render red — matches the rest of the app's
-                // marble / bronze palette.
-                Button {
-                    session.restart()
-                } label: {
-                    Label("Restart", systemImage: "arrow.counterclockwise")
+            } else if session.status == .solved || session.status == .failed {
+                // Category puzzles: jump to the next rail puzzle.
+                // Daily puzzle: locked until tomorrow 00:01 local;
+                // surface a quiet message instead of a button.
+                if session.categoryContext != nil {
+                    Button {
+                        Task { await advance() }
+                    } label: {
+                        HStack {
+                            if isAdvancing {
+                                ProgressView().controlSize(.small).tint(.white)
+                            } else {
+                                Image(systemName: "play.fill")
+                            }
+                            Text(isAdvancing ? "Loading…" : "Next puzzle")
+                        }
                         .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(Chess.Palette.bronze)
+                    .disabled(isAdvancing)
+                } else {
+                    // No category context = Daily Puzzle. Lichess
+                    // ships one new daily puzzle per day; we lock
+                    // until 00:01 local of the next day.
+                    HStack(spacing: 6) {
+                        Image(systemName: "moon.stars")
+                            .foregroundStyle(Chess.Palette.bronze)
+                        Text("New daily puzzle tomorrow at 00:01.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 6)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
             }
 
             Button {
@@ -200,6 +219,59 @@ struct PuzzleHUDView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+        }
+    }
+
+    // MARK: - Next puzzle wiring
+
+    /// Loads the next puzzle in the same category — from the bundled
+    /// pool when possible, falling back to `/api/puzzle/next?angle=…`
+    /// when the pool is exhausted. Then swaps the active session and
+    /// dismisses + re-opens the immersive space so `ChessSceneView`
+    /// rebuilds against the new starting position.
+    private func advance() async {
+        guard !isAdvancing else { return }
+        guard let category = session.categoryContext else { return }
+        isAdvancing = true
+        defer { isAdvancing = false }
+
+        let userRating = appModel.lichess.account?.rating(forPerfKey: "puzzle")
+            ?? appModel.lichess.account?.rating(forPerfKey: "rapid")
+            ?? 1500
+
+        let puzzle: LichessPuzzle
+        do {
+            puzzle = try await appModel.bundledPuzzles.ensureNextUnsolved(
+                in: category,
+                progress: appModel.puzzleProgress,
+                userRating: userRating,
+                token: appModel.lichess.token
+            )
+        } catch {
+            print("[PuzzleHUD] advance fetch failed: \(error)")
+            return
+        }
+
+        guard let next = PuzzleSession(puzzle: puzzle) else { return }
+        next.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
+            progress.recordSolve(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+        }
+        next.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
+            progress.recordFail(puzzleID: id, puzzleRating: r, puzzleRD: rd)
+        }
+        next.categoryContext = session.categoryContext
+
+        appModel.activeSession = .puzzle(next)
+        appModel.pendingReopen = true
+        appModel.immersiveSpaceState = .inTransition
+        await dismissImmersiveSpace()
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened:
+            break
+        default:
+            appModel.activeSession = nil
+            appModel.pendingReopen = false
+            appModel.immersiveSpaceState = .closed
         }
     }
 

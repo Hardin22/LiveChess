@@ -60,6 +60,11 @@ class AppModel {
     /// to it when a session finishes successfully.
     let puzzleProgress = PuzzleProgressStore()
 
+    /// Shared pool of bundled + API-fetched puzzles, so the menu
+    /// browser AND the in-immersive HUD's "Next puzzle" button can
+    /// read from the same source of truth. Loaded on first access.
+    let bundledPuzzles = BundledPuzzleStore()
+
     /// Live count of "players online on lichess.org right now",
     /// pushed over Lichess's lobby WebSocket. The sidebar profile row
     /// displays it next to the green presence dot so the user has the
