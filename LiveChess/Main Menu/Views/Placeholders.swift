@@ -120,6 +120,10 @@ final class PuzzlesViewModel {
     var dailyPuzzle: LichessPuzzle?
     var pools: [PuzzleCategory: [LichessPuzzle]] = [:]
     var loadingCategories: Set<PuzzleCategory> = []
+    /// Per-category error string, surfaced inline below the section's
+    /// puzzle list. Cleared automatically on the next successful fetch
+    /// for that category, or when the user taps Retry.
+    var errorsByCategory: [PuzzleCategory: String] = [:]
     var isLoading = false
     var errorMessage: String?
 
@@ -157,6 +161,7 @@ final class PuzzlesViewModel {
         guard !loadingCategories.contains(category) else { return }
         loadingCategories.insert(category)
         defer { loadingCategories.remove(category) }
+        errorsByCategory[category] = nil
         await service.authenticate(token: token)
         do {
             let next = try await service.fetchNextPuzzle(angle: category.rawValue)
@@ -167,8 +172,24 @@ final class PuzzlesViewModel {
                 pools[category] = current
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorsByCategory[category] = friendlyMessage(for: error)
         }
+    }
+
+    /// Maps URLSession / NSURLError into something the UI can show
+    /// without dumping a 200-character internal description. We
+    /// special-case the most common Lichess failure (HTTP 429) since
+    /// the dev machine + simulator share an IP and the per-IP
+    /// rate limit is the easiest way for users to hit a wall.
+    private func friendlyMessage(for error: Error) -> String {
+        let raw = error.localizedDescription.lowercased()
+        if raw.contains("429") || raw.contains("rate") {
+            return "Lichess is rate-limiting this device. Try again in a few minutes."
+        }
+        if raw.contains("offline") || raw.contains("internet") || raw.contains("network") {
+            return "No internet connection."
+        }
+        return "Couldn’t load a puzzle. Tap Retry."
     }
 
     /// Returns the next `limit` unsolved puzzles in `category`.
@@ -249,20 +270,45 @@ struct PuzzlesPlaceholderView: View {
             progress: appModel.puzzleProgress
         )
         let isLoading = viewModel.loadingCategories.contains(category)
+        let unsolvedCount = (viewModel.pools[category] ?? [])
+            .filter { !appModel.puzzleProgress.isSolved($0.puzzle.id) }
+            .count
+        let solvedCount = (viewModel.pools[category] ?? [])
+            .filter { appModel.puzzleProgress.isSolved($0.puzzle.id) }
+            .count
+        let categoryError = viewModel.errorsByCategory[category]
 
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: category.systemImage)
-                    .foregroundStyle(Chess.Palette.bronze)
+        VStack(alignment: .leading, spacing: 12) {
+            // Header row: icon + title on the left, count badge on the right.
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Chess.Palette.bronze.opacity(0.18))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: category.systemImage)
+                        .font(.callout)
+                        .foregroundStyle(Chess.Palette.bronze)
+                }
                 Text(category.displayName)
                     .font(.title3.weight(.semibold))
+                Spacer()
+                if unsolvedCount > 0 || solvedCount > 0 {
+                    countBadge(unsolved: unsolvedCount, solved: solvedCount)
+                }
             }
 
-            if visible.isEmpty && !isLoading {
-                Text("All caught up — tap Load more for a fresh puzzle.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
+            // Body: puzzles, empty state, or inline error.
+            if let categoryError {
+                inlineError(categoryError, retry: {
+                    Task {
+                        await viewModel.loadMore(
+                            category: category,
+                            token: appModel.lichess.token
+                        )
+                    }
+                })
+            } else if visible.isEmpty {
+                emptyState(isLoading: isLoading)
             } else {
                 VStack(spacing: 10) {
                     ForEach(visible, id: \.puzzle.id) { p in
@@ -271,28 +317,104 @@ struct PuzzlesPlaceholderView: View {
                 }
             }
 
-            Button {
-                Task {
-                    await viewModel.loadMore(
-                        category: category,
-                        token: appModel.lichess.token
-                    )
-                }
-            } label: {
-                HStack {
-                    if isLoading {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
+            // Load more — secondary style, right-aligned so the section
+            // doesn't read as a giant button when puzzles are present.
+            HStack {
+                Spacer()
+                Button {
+                    Task {
+                        await viewModel.loadMore(
+                            category: category,
+                            token: appModel.lichess.token
+                        )
                     }
-                    Text(isLoading ? "Loading…" : "Load more")
+                } label: {
+                    HStack(spacing: 6) {
+                        if isLoading {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.down.circle")
+                        }
+                        Text(isLoading ? "Loading…" : "Load more")
+                            .font(.callout.weight(.medium))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(isLoading)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .disabled(isLoading)
         }
+        .padding(16)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private func emptyState(isLoading: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: isLoading ? "ellipsis.circle" : "tray")
+                .foregroundStyle(.secondary)
+            Text(isLoading
+                 ? "Pulling a fresh puzzle…"
+                 : "No puzzles yet — tap Load more to fetch one.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func inlineError(_ message: String,
+                             retry: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button("Retry", action: retry)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(10)
+        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.orange.opacity(0.25), lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private func countBadge(unsolved: Int, solved: Int) -> some View {
+        HStack(spacing: 6) {
+            if unsolved > 0 {
+                Text("\(unsolved)")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.primary)
+            }
+            if solved > 0 {
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark")
+                        .font(.caption2)
+                    Text("\(solved)")
+                        .font(.caption.monospacedDigit())
+                }
+                .foregroundStyle(Chess.Palette.accent)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
     }
 
     private func reload() async {
