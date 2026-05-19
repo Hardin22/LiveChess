@@ -5,9 +5,10 @@
 import SwiftUI
 
 struct HomeHeaderView: View {
-    
+
     @Bindable var viewModel: HomeViewModel
-    
+    @Environment(AppModel.self) private var appModel
+
     // Controls the subtle entry animation
     @State private var isVisible = false
     
@@ -26,15 +27,25 @@ struct HomeHeaderView: View {
                 }
 
                 if viewModel.isSignedIn {
-                    // Rating strip: one chip per supported Lichess perf
-                    // (Rapid, Classical, Correspondence, Puzzles). Bullet
-                    // and Blitz are deliberately omitted — those time
-                    // controls aren't playable in the app, so a rating
-                    // the user can't act on is just noise.
+                    // Rating strip: one chip per supported Lichess perf.
+                    // Bullet and Blitz are excluded because the app
+                    // can't play those time controls.
+                    //
+                    // The "puzzle" chip is special — it shows the
+                    // user's LIVE in-app Glicko-2 rating (the one
+                    // that climbs/drops with every solve/fail in our
+                    // app), not the lichess.org server rating. Users
+                    // who've never played puzzles on lichess.org would
+                    // otherwise see "—" forever and never know their
+                    // own progress.
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Chess.Space.xs) {
                             ForEach(viewModel.displayedRatings) { row in
-                                RatingChipView(row: row)
+                                if row.key == "puzzle" {
+                                    RatingChipView(row: rowWithLocalPuzzleRating(row))
+                                } else {
+                                    RatingChipView(row: row)
+                                }
                             }
                         }
                     }
@@ -54,6 +65,24 @@ struct HomeHeaderView: View {
                 isVisible = true
             }
         }
+    }
+
+    /// Replace the row's Lichess server-side rating with our local
+    /// Glicko-2 rating so the chip reflects the user's in-app
+    /// progress instead of their (possibly empty) lichess.org puzzle
+    /// history.
+    private func rowWithLocalPuzzleRating(
+        _ base: LichessAccount.RatingRow
+    ) -> LichessAccount.RatingRow {
+        LichessAccount.RatingRow(
+            key: base.key,
+            label: base.label,
+            icon: base.icon,
+            rating: appModel.puzzleProgress.puzzleRatingInt,
+            games: (appModel.puzzleProgress.solvedIDs.count
+                    + appModel.puzzleProgress.failedIDs.count),
+            provisional: appModel.puzzleProgress.rating.rd > 110
+        )
     }
 }
 
