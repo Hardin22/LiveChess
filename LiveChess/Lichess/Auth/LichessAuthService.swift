@@ -52,9 +52,13 @@ final class LichessAuthService: NSObject, ASWebAuthenticationPresentationContext
     /// The recommendation in that error is `com.example://`).
     nonisolated static let defaultRedirectURI = "com.francescoalbano.livechess://oauth/callback"
     /// Minimum scopes for v1: play games, send/accept challenges, read the
-    /// account's preferences (board orientation, autoQueen, etc.). Email
-    /// scope is intentionally omitted to keep the consent screen short.
-    nonisolated static let defaultScope = "board:play challenge:write preference:read"
+    /// account's preferences (board orientation, autoQueen, etc.), and
+    /// pull personalised puzzles via /api/puzzle/next. `puzzle:read` lets
+    /// authenticated puzzle calls escape Lichess's per-IP anon rate
+    /// limit (per-token quotas are much higher) — crucial when the sim
+    /// + dev machine share an IP. Email scope is intentionally omitted
+    /// to keep the consent screen short.
+    nonisolated static let defaultScope = "board:play challenge:write preference:read puzzle:read"
 
     private let clientID: String
     private let redirectURI: String

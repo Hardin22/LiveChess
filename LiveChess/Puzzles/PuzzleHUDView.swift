@@ -169,12 +169,12 @@ struct PuzzleHUDView: View {
                 Button {
                     session.showHint()
                 } label: {
-                    Label(session.hintsShown == 0 ? "Hint" : "Hint again",
-                          systemImage: "lightbulb.fill")
+                    Label(hintLabel, systemImage: hintIcon)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
+                .disabled(session.hintLevel == .fullMove)
 
                 // Plain bordered (no destructive role) so the button
                 // doesn't render red — matches the rest of the app's
@@ -200,6 +200,22 @@ struct PuzzleHUDView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+        }
+    }
+
+    private var hintLabel: String {
+        switch session.hintLevel {
+        case .none:     return "Get a hint"
+        case .source:   return "Show the move"
+        case .fullMove: return "Hint shown"
+        }
+    }
+
+    private var hintIcon: String {
+        switch session.hintLevel {
+        case .none:     return "lightbulb.fill"
+        case .source:   return "arrow.up.right.circle.fill"
+        case .fullMove: return "checkmark.circle.fill"
         }
     }
 }

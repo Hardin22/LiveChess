@@ -11,11 +11,11 @@ import SwiftUI
 ///     highlighted — matches the chess.com / Lichess sidebar look
 ///   * "Your turn — find the best move for [color]" indicator that
 ///     reads as a clear call-to-action while the engine waits
-///   * Hint button (asks `PuzzleSession.showHint()`, which sets a
-///     flag the renderer can use to pulse the source square)
-///   * View solution button — auto-plays the remaining moves with
-///     a half-second beat between each so the player can SEE the
-///     intended line, not just read it.
+///   * Progressive hint button. First press lights up the piece's
+///     source square; second press also lights up the destination
+///     square (different colour) so the player sees from→to for the
+///     CURRENT move only. We deliberately don't auto-play the rest
+///     of the line — one move per ply, never the whole sequence.
 @MainActor
 struct PuzzlePanelView: View {
 
@@ -201,47 +201,66 @@ struct PuzzlePanelView: View {
     private var actionsFooter: some View {
         switch session.status {
         case .solving:
-            HStack(spacing: Chess.Space.m) {
+            VStack(alignment: .leading, spacing: 6) {
                 Button {
                     session.showHint()
                 } label: {
-                    Label("Get a hint", systemImage: "lightbulb.fill")
-                        .font(.callout.weight(.semibold))
+                    HStack(spacing: Chess.Space.xs) {
+                        Image(systemName: hintIcon)
+                        Text(hintLabel)
+                            .font(.callout.weight(.semibold))
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Chess.Palette.info)
+                .foregroundStyle(session.hintLevel == .fullMove
+                                 ? AnyShapeStyle(.secondary)
+                                 : AnyShapeStyle(Chess.Palette.info))
                 .hoverEffect(.highlight)
-                Spacer()
-                Button {
-                    Task { await session.revealSolution() }
-                } label: {
-                    Label("View solution", systemImage: "eye.fill")
-                        .font(.callout.weight(.semibold))
+                .disabled(session.hintLevel == .fullMove)
+
+                if session.hintLevel != .none {
+                    Text(hintCaption)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Chess.Palette.info)
-                .hoverEffect(.highlight)
             }
         case .failed:
-            HStack(spacing: Chess.Space.m) {
-                Button {
-                    session.restart()
-                } label: {
-                    Label("Try again", systemImage: "arrow.clockwise")
-                        .font(.callout.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                Spacer()
-                Button {
-                    Task { await session.revealSolution() }
-                } label: {
-                    Label("Solution", systemImage: "eye.fill")
-                        .font(.callout.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
+            Button {
+                session.restart()
+            } label: {
+                Label("Try again", systemImage: "arrow.clockwise")
+                    .font(.callout.weight(.semibold))
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered)
         case .solved:
             EmptyView()
+        }
+    }
+
+    private var hintLabel: String {
+        switch session.hintLevel {
+        case .none:     return "Get a hint"
+        case .source:   return "Show the move"
+        case .fullMove: return "Hint shown"
+        }
+    }
+
+    private var hintIcon: String {
+        switch session.hintLevel {
+        case .none:     return "lightbulb.fill"
+        case .source:   return "arrow.up.right.circle.fill"
+        case .fullMove: return "checkmark.circle.fill"
+        }
+    }
+
+    private var hintCaption: String {
+        switch session.hintLevel {
+        case .none:     return ""
+        case .source:   return "Tap again to reveal where it goes."
+        case .fullMove: return "Now play the move on the board."
         }
     }
 }

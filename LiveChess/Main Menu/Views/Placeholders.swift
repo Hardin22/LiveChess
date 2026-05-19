@@ -107,53 +107,150 @@ struct LichessGate<Gated: View>: View {
 }
 
 // MARK: - Puzzles
-// Real data: `/api/puzzle/daily` + `/api/puzzle/next`. Both public, so
-// the screen works for guests too.
+// Categorised browser. Bundled starter pack loaded from
+// `LiveChess/Resources/puzzles_starter.json` at init, bucketed by
+// theme into `PuzzleCategory`. Each section also exposes a "Load
+// more" action that hits `/api/puzzle/next?angle=<theme>` and
+// appends results to the in-memory pool for the rest of the session.
+// Daily puzzle is fetched separately from `/api/puzzle/daily`.
 
 @Observable
 @MainActor
 final class PuzzlesViewModel {
     var dailyPuzzle: LichessPuzzle?
-    var recentPuzzles: [LichessPuzzle] = []
+    var pools: [PuzzleCategory: [LichessPuzzle]] = [:]
+    var loadingCategories: Set<PuzzleCategory> = []
+    /// Per-category error string, surfaced inline below the section's
+    /// puzzle list. Cleared automatically on the next successful fetch
+    /// for that category, or when the user taps Retry.
+    var errorsByCategory: [PuzzleCategory: String] = [:]
     var isLoading = false
-    var isLoadingMore = false
     var errorMessage: String?
 
     private let service = LichessService()
-    private var hasLoaded = false
+    private var hasLoadedRemote = false
 
+    init() {
+        // Bucket the bundled starter pack on first construction so
+        // the screen has content the instant the view appears, even
+        // before the daily-puzzle request returns.
+        loadBundledStarterPack()
+    }
+
+    /// Loads the daily puzzle from the network. Called from the
+    /// view's `.task`. Bundled puzzles are already in `pools` by
+    /// the time this runs.
     func load(token: String?) async {
-        guard !hasLoaded else { return }
-        hasLoaded = true
+        guard !hasLoadedRemote else { return }
+        hasLoadedRemote = true
         await service.authenticate(token: token)
         isLoading = true
         defer { isLoading = false }
 
         do {
-            async let daily = service.fetchDailyPuzzle()
-            async let next = service.fetchNextPuzzle()
-            let (d, n) = try await (daily, next)
-            dailyPuzzle = d
-            recentPuzzles = [n]
+            dailyPuzzle = try await service.fetchDailyPuzzle()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func loadMore(token: String?) async {
-        guard !isLoadingMore else { return }
+    /// Hits `/api/puzzle/next?angle=<theme>` once and appends the
+    /// result to that category's pool. No-op when a previous call
+    /// for the same category is still in flight.
+    func loadMore(category: PuzzleCategory, token: String?) async {
+        guard !loadingCategories.contains(category) else { return }
+        loadingCategories.insert(category)
+        defer { loadingCategories.remove(category) }
+        errorsByCategory[category] = nil
         await service.authenticate(token: token)
-        isLoadingMore = true
-        defer { isLoadingMore = false }
         do {
-            let next = try await service.fetchNextPuzzle()
-            // Avoid duplicates if the API hands us the same puzzle back.
-            if !recentPuzzles.contains(where: { $0.puzzle.id == next.puzzle.id }) {
-                recentPuzzles.append(next)
+            let next = try await service.fetchNextPuzzle(angle: category.rawValue)
+            var current = pools[category, default: []]
+            // Skip if the API hands us a puzzle already in the pool.
+            if !current.contains(where: { $0.puzzle.id == next.puzzle.id }) {
+                current.append(next)
+                pools[category] = current
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorsByCategory[category] = friendlyMessage(for: error)
         }
+    }
+
+    /// Maps URLSession / NSURLError into something the UI can show
+    /// without dumping a 200-character internal description. We
+    /// special-case the most common Lichess failure (HTTP 429) since
+    /// the dev machine + simulator share an IP and the per-IP
+    /// rate limit is the easiest way for users to hit a wall.
+    private func friendlyMessage(for error: Error) -> String {
+        let raw = error.localizedDescription.lowercased()
+        if raw.contains("429") || raw.contains("rate") {
+            return "Lichess is rate-limiting this device. Try again in a few minutes."
+        }
+        if raw.contains("offline") || raw.contains("internet") || raw.contains("network") {
+            return "No internet connection."
+        }
+        return "Couldn’t load a puzzle. Tap Retry."
+    }
+
+    /// Returns the next `limit` unsolved puzzles in `category`.
+    /// Solved puzzles fall out automatically as the user clears them,
+    /// shifting later entries up into the visible window.
+    func displayedPuzzles(in category: PuzzleCategory,
+                          progress: PuzzleProgressStore,
+                          userRating: Int,
+                          limit: Int = 8) -> [LichessPuzzle] {
+        let unsolved = (pools[category] ?? [])
+            .filter { !progress.isSolved($0.puzzle.id) }
+        // Sort rule (per request): each category starts from the
+        // user's current rating and goes UP. Puzzles below the user's
+        // rating still surface, but only after the at-or-above ones
+        // run out — so a 1500-rated user sees 1500, 1550, 1620…
+        // before any 900-rated trainers.
+        let sorted = unsolved.sorted { a, b in
+            let ar = a.puzzle.rating ?? Int.max
+            let br = b.puzzle.rating ?? Int.max
+            let aAbove = ar >= userRating
+            let bAbove = br >= userRating
+            if aAbove != bAbove { return aAbove }       // at-or-above wins
+            if aAbove {
+                return ar < br                          // ascending from user
+            } else {
+                return ar > br                          // closest-to-user first
+            }
+        }
+        return Array(sorted.prefix(limit))
+    }
+
+    /// Tally of (solved, total) for a category — drives the inline
+    /// progress chip in the rail header.
+    func progress(in category: PuzzleCategory,
+                  progressStore: PuzzleProgressStore) -> (solved: Int, total: Int) {
+        let all = pools[category] ?? []
+        let solved = all.filter { progressStore.isSolved($0.puzzle.id) }.count
+        return (solved, all.count)
+    }
+
+    // MARK: - Bundled pack
+
+    private func loadBundledStarterPack() {
+        guard let url = Bundle.main.url(forResource: "puzzles_starter",
+                                        withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let infos = try? JSONDecoder().decode([LichessPuzzle.PuzzleInfo].self,
+                                                    from: data)
+        else { return }
+
+        // Bucketed in declaration order; per-category ordering is
+        // imposed at display time by `displayedPuzzles(in:userRating:)`
+        // so we don't need to randomise here. Sorting at the display
+        // layer means we can resort whenever the user's rating
+        // changes without rebuilding the pool.
+        var bucketed: [PuzzleCategory: [LichessPuzzle]] = [:]
+        for info in infos {
+            guard let cat = PuzzleCategory.bucket(for: info.themes) else { continue }
+            bucketed[cat, default: []].append(LichessPuzzle(puzzle: info))
+        }
+        pools = bucketed
     }
 }
 
@@ -161,53 +258,31 @@ struct PuzzlesPlaceholderView: View {
     @Environment(AppModel.self) private var appModel
     @State private var viewModel = PuzzlesViewModel()
 
+    /// User's puzzle rating drives the per-rail ordering: each
+    /// section starts from the puzzle closest to (and at-or-above)
+    /// this number, then climbs. Falls back to rapid → 1500 when the
+    /// user has no puzzle perf yet.
+    private var userRating: Int {
+        appModel.lichess.account?.rating(forPerfKey: "puzzle")
+            ?? appModel.lichess.account?.rating(forPerfKey: "rapid")
+            ?? 1500
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if viewModel.isLoading && viewModel.dailyPuzzle == nil {
-                    VStack(spacing: 12) {
-                        ForEach(0..<3, id: \.self) { _ in PuzzleCardSkeleton() }
-                    }
-                } else if let error = viewModel.errorMessage,
-                          viewModel.dailyPuzzle == nil {
-                    PuzzlesErrorState(message: error) {
-                        Task { await reload() }
-                    }
-                } else {
-                    if let daily = viewModel.dailyPuzzle {
-                        SectionHeader(title: "Daily Puzzle")
-                        PuzzleCard(puzzle: daily, isDaily: true)
-                    }
-
-                    if !viewModel.recentPuzzles.isEmpty {
-                        SectionHeader(title: "More Puzzles")
-                        VStack(spacing: 10) {
-                            ForEach(viewModel.recentPuzzles, id: \.puzzle.id) { p in
-                                PuzzleCard(puzzle: p, isDaily: false)
-                            }
-                        }
-                    }
-
-                    Button {
-                        Task { await viewModel.loadMore(token: appModel.lichess.token) }
-                    } label: {
-                        HStack {
-                            if viewModel.isLoadingMore {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                            Text(viewModel.isLoadingMore ? "Loading…" : "Load another puzzle")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .disabled(viewModel.isLoadingMore)
-                    .padding(.top, 8)
+            // LazyVStack so off-screen rails (rows below the fold)
+            // don't mount their card subtree until scrolled into view.
+            // Without this, 11 rails × 8 cards × Canvas board would
+            // all initialize on first paint and stutter for ~500ms.
+            LazyVStack(alignment: .leading, spacing: 28) {
+                dailyHero
+                ForEach(PuzzleCategory.allCases) { category in
+                    categoryRail(category)
                 }
+                Spacer(minLength: 24)
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassBackgroundEffect()
@@ -220,122 +295,498 @@ struct PuzzlesPlaceholderView: View {
         }
     }
 
+    // MARK: - Daily hero
+
+    @ViewBuilder
+    private var dailyHero: some View {
+        if let daily = viewModel.dailyPuzzle {
+            DailyHeroCard(puzzle: daily)
+        } else if viewModel.isLoading {
+            DailyHeroSkeleton()
+        } else if let error = viewModel.errorMessage {
+            PuzzlesErrorState(message: error) {
+                Task { await reload() }
+            }
+        }
+    }
+
+    // MARK: - Category rail (horizontal deck)
+
+    @ViewBuilder
+    private func categoryRail(_ category: PuzzleCategory) -> some View {
+        let visible = viewModel.displayedPuzzles(
+            in: category,
+            progress: appModel.puzzleProgress,
+            userRating: userRating
+        )
+        let isLoading = viewModel.loadingCategories.contains(category)
+        let prog = viewModel.progress(in: category,
+                                      progressStore: appModel.puzzleProgress)
+        let categoryError = viewModel.errorsByCategory[category]
+
+        VStack(alignment: .leading, spacing: 10) {
+            // Header: icon + title + "N solved / total" + "Next up at
+            // 1530" hint so the user understands what the first card
+            // represents (the puzzle picked for their level).
+            HStack(spacing: 12) {
+                CategoryGlyph(category: category, progress: prog)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(category.displayName)
+                        .font(.title3.weight(.semibold))
+                    HStack(spacing: 6) {
+                        if prog.total > 0 {
+                            Text("\(prog.solved) of \(prog.total) solved")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let first = visible.first?.puzzle.rating {
+                            Text("·")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("next up at \(first)")
+                                .font(.caption2)
+                                .foregroundStyle(Chess.Palette.bronze)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 2)
+
+            // Horizontal deck. LazyHStack so cards off the right edge
+            // of the scroll viewport don't render until visible.
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 12) {
+                    if let categoryError {
+                        ErrorCard(message: categoryError) {
+                            Task {
+                                await viewModel.loadMore(
+                                    category: category,
+                                    token: appModel.lichess.token
+                                )
+                            }
+                        }
+                    } else if visible.isEmpty && !isLoading {
+                        EmptyCard()
+                    } else {
+                        ForEach(Array(visible.enumerated()), id: \.element.puzzle.id) { idx, p in
+                            PuzzleDeckCard(puzzle: p, isNext: idx == 0)
+                        }
+                    }
+                    LoadMoreCard(isLoading: isLoading) {
+                        Task {
+                            await viewModel.loadMore(
+                                category: category,
+                                token: appModel.lichess.token
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 4)
+            }
+            .scrollClipDisabled()
+        }
+    }
+
     private func reload() async {
         viewModel = PuzzlesViewModel()
         await viewModel.load(token: appModel.lichess.token)
     }
 }
 
-private struct PuzzleCard: View {
-    let puzzle: LichessPuzzle
-    let isDaily: Bool
+// MARK: - Category glyph (icon + progress arc)
+
+private struct CategoryGlyph: View {
+    let category: PuzzleCategory
+    let progress: (solved: Int, total: Int)
 
     var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Chess.Palette.bronze.gradient.opacity(0.25))
-                    .frame(width: 56, height: 56)
-                Image(systemName: "puzzlepiece.fill")
-                    .font(.title2)
-                    .foregroundStyle(.purple)
+        ZStack {
+            // Faded base ring.
+            Circle()
+                .stroke(Chess.Palette.bronze.opacity(0.18), lineWidth: 3)
+                .frame(width: 38, height: 38)
+            // Filled progress arc.
+            if progress.total > 0 {
+                Circle()
+                    .trim(from: 0, to: CGFloat(progress.solved) / CGFloat(progress.total))
+                    .stroke(Chess.Palette.bronze,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 38, height: 38)
             }
+            Image(systemName: category.systemImage)
+                .font(.callout)
+                .foregroundStyle(Chess.Palette.bronze)
+        }
+    }
+}
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    if isDaily {
-                        Text("DAILY")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.orange.opacity(0.15), in: Capsule())
+// MARK: - Deck card (the actual position preview)
+
+private struct PuzzleDeckCard: View {
+    let puzzle: LichessPuzzle
+    let isNext: Bool
+
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @State private var isLaunching = false
+
+    var body: some View {
+        Button {
+            Task { await launch() }
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    PuzzleMiniBoardView(
+                        fen: puzzle.puzzle.fen ?? "",
+                        size: 132,
+                        lastMove: highlightSquares()
+                    )
+                    if isLaunching {
+                        Rectangle()
+                            .fill(.black.opacity(0.35))
+                        ProgressView().tint(.white)
                     }
-                    Text("#\(puzzle.puzzle.id)")
-                        .font(.callout)
-                        .fontWeight(.semibold)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                // Rating + moves. The previous coloured dot was
+                // dropped — chess ratings are self-explanatory; the
+                // dot was extra cognitive load.
+                HStack(spacing: 6) {
+                    Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
+                        .font(.callout.monospacedDigit().weight(.semibold))
+                    Spacer()
+                    if let moves = puzzle.puzzle.solution?.count {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.turn.up.right")
+                                .font(.caption2)
+                            Text("\(moves)")
+                                .font(.caption.monospacedDigit())
+                        }
+                        .foregroundStyle(.secondary)
+                    }
                 }
 
-                HStack(spacing: 8) {
-                    if let rating = puzzle.puzzle.rating {
-                        Label("\(rating)", systemImage: "chart.bar.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                // Explicit "Next up" call-to-action on the first card.
+                // Replaces the small overlay badge — much harder to miss.
+                if isNext {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                            .font(.caption2)
+                        Text("NEXT UP")
+                            .font(.caption2.weight(.bold))
                     }
-                    if let plays = puzzle.puzzle.plays {
-                        Label(playsString(plays), systemImage: "person.2.fill")
-                            .font(.caption)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Chess.Palette.bronze, in: Capsule())
+                }
+            }
+            .padding(10)
+            .frame(width: 156)
+            .background(.regularMaterial,
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(isNext
+                                  ? Chess.Palette.bronze.opacity(0.70)
+                                  : .white.opacity(0.10),
+                                  lineWidth: isNext ? 1.5 : 0.5)
+            )
+            .shadow(color: isNext ? Chess.Palette.bronze.opacity(0.30) : .clear,
+                    radius: isNext ? 8 : 0, x: 0, y: 0)
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .disabled(isLaunching)
+    }
+
+    /// Decode the puzzle's lastMove ("e2e4") into board coordinates so
+    /// the mini-board can tint the source/destination squares.
+    private func highlightSquares() -> ((Int, Int), (Int, Int))? {
+        guard let m = puzzle.puzzle.lastMove, m.count >= 4 else { return nil }
+        func square(_ s: Substring) -> (Int, Int)? {
+            guard s.count == 2,
+                  let file = s.first, let rank = s.last else { return nil }
+            let col = Int(file.asciiValue ?? 0) - Int(Character("a").asciiValue!)
+            let r = (rank.wholeNumberValue ?? 0)
+            guard (0...7).contains(col), (1...8).contains(r) else { return nil }
+            return (8 - r, col)
+        }
+        let from = m.prefix(2)
+        let to = m.dropFirst(2).prefix(2)
+        guard let f = square(from), let t = square(to) else { return nil }
+        return (f, t)
+    }
+
+    private func launch() async {
+        guard !isLaunching else { return }
+        isLaunching = true
+        defer { isLaunching = false }
+        guard let session = PuzzleSession(puzzle: puzzle) else { return }
+        session.onSolved = { [progress = appModel.puzzleProgress] id in
+            progress.markSolved(id)
+        }
+        appModel.activeSession = .puzzle(session)
+        appModel.immersiveSpaceState = .inTransition
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened: break
+        default:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+        }
+    }
+}
+
+// MARK: - Daily hero
+
+private struct DailyHeroCard: View {
+    let puzzle: LichessPuzzle
+
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @State private var isLaunching = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 20) {
+            PuzzleMiniBoardView(fen: puzzle.puzzle.fen ?? "",
+                                size: 168,
+                                lastMove: highlightSquares())
+                .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("DAILY PUZZLE")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Chess.Palette.bronze)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Chess.Palette.bronze.opacity(0.18),
+                                in: Capsule())
+
+                HStack(spacing: 6) {
+                    Text(puzzle.puzzle.rating.map { String($0) } ?? "—")
+                        .font(.title2.monospacedDigit().weight(.bold))
+                    Text("rating")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let moves = puzzle.puzzle.solution?.count {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.turn.up.right")
                             .foregroundStyle(.secondary)
-                    }
-                    if let moves = puzzle.puzzle.solution?.count {
-                        Label("\(moves) moves", systemImage: "arrow.right")
-                            .font(.caption)
+                        Text("\(moves) move\(moves == 1 ? "" : "s") to solve")
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 if !puzzle.puzzle.themes.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(puzzle.puzzle.themes.prefix(4), id: \.self) { theme in
+                        ForEach(puzzle.puzzle.themes.prefix(3), id: \.self) { theme in
                             Text(theme)
                                 .font(.caption2)
-                                .padding(.horizontal, 6)
+                                .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
-                                .background(.white.opacity(0.08), in: Capsule())
+                                .background(.white.opacity(0.10), in: Capsule())
                         }
                     }
-                    .padding(.top, 2)
                 }
+
+                Button {
+                    Task { await launch() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isLaunching {
+                            ProgressView().controlSize(.small).tint(.white)
+                        } else {
+                            Image(systemName: "play.fill")
+                        }
+                        Text("Solve in immersive space")
+                            .font(.callout.weight(.semibold))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Chess.Palette.bronze,
+                                in: Capsule())
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.lift)
+                .disabled(isLaunching)
+                .padding(.top, 6)
             }
 
             Spacer()
-
-            Link(destination: URL(string: "https://lichess.org/training/\(puzzle.puzzle.id)")!) {
-                Label("Solve", systemImage: "play.fill")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.purple.opacity(0.25), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .hoverEffect(.lift)
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .padding(20)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Chess.Palette.bronze.opacity(0.30),
+                              lineWidth: 0.8)
         )
     }
 
-    private func playsString(_ plays: Int) -> String {
-        if plays >= 1_000_000 { return String(format: "%.1fM", Double(plays) / 1_000_000) }
-        if plays >= 1_000 { return String(format: "%.1fk", Double(plays) / 1_000) }
-        return "\(plays)"
+    private func highlightSquares() -> ((Int, Int), (Int, Int))? {
+        guard let m = puzzle.puzzle.lastMove, m.count >= 4 else { return nil }
+        func square(_ s: Substring) -> (Int, Int)? {
+            guard s.count == 2,
+                  let file = s.first, let rank = s.last else { return nil }
+            let col = Int(file.asciiValue ?? 0) - Int(Character("a").asciiValue!)
+            let r = (rank.wholeNumberValue ?? 0)
+            guard (0...7).contains(col), (1...8).contains(r) else { return nil }
+            return (8 - r, col)
+        }
+        guard let f = square(m.prefix(2)),
+              let t = square(m.dropFirst(2).prefix(2)) else { return nil }
+        return (f, t)
+    }
+
+    private func launch() async {
+        guard !isLaunching else { return }
+        isLaunching = true
+        defer { isLaunching = false }
+        guard let session = PuzzleSession(puzzle: puzzle) else { return }
+        session.onSolved = { [progress = appModel.puzzleProgress] id in
+            progress.markSolved(id)
+        }
+        appModel.activeSession = .puzzle(session)
+        appModel.immersiveSpaceState = .inTransition
+        switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+        case .opened: break
+        default:
+            appModel.activeSession = nil
+            appModel.immersiveSpaceState = .closed
+        }
     }
 }
 
-private struct PuzzleCardSkeleton: View {
-    @State private var opacity = 0.4
+private struct DailyHeroSkeleton: View {
+    @State private var phase: CGFloat = 0
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 20) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(.white.opacity(0.12)).frame(width: 56, height: 56)
-            VStack(alignment: .leading, spacing: 6) {
-                Capsule().fill(.white.opacity(0.12)).frame(width: 120, height: 12)
-                Capsule().fill(.white.opacity(0.08)).frame(width: 200, height: 10)
-                Capsule().fill(.white.opacity(0.08)).frame(width: 160, height: 10)
+                .fill(.white.opacity(0.10))
+                .frame(width: 168, height: 168)
+            VStack(alignment: .leading, spacing: 10) {
+                Capsule().fill(.white.opacity(0.10)).frame(width: 120, height: 14)
+                Capsule().fill(.white.opacity(0.10)).frame(width: 180, height: 18)
+                Capsule().fill(.white.opacity(0.10)).frame(width: 160, height: 12)
             }
             Spacer()
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .opacity(opacity)
+        .padding(20)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .opacity(0.7 + 0.3 * Double(sin(Double(phase))))
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                opacity = 0.9
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                phase = .pi
             }
         }
+    }
+}
+
+// MARK: - Load more / empty / error compact cards (for inside a rail)
+
+private struct LoadMoreCard: View {
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Chess.Palette.bronze.opacity(0.35),
+                                      style: StrokeStyle(lineWidth: 1.2,
+                                                         dash: [4, 4]))
+                        .frame(width: 132, height: 132)
+                    Image(systemName: isLoading ? "ellipsis" : "arrow.down.circle.fill")
+                        .font(.system(size: 36))
+                        .foregroundStyle(Chess.Palette.bronze)
+                }
+                Text(isLoading ? "Loading…" : "Load more")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(width: 156, height: 196)
+            .background(.thinMaterial,
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+        .disabled(isLoading)
+    }
+}
+
+private struct EmptyCard: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.white.opacity(0.04))
+                    .frame(width: 132, height: 132)
+                Image(systemName: "tray")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.secondary)
+            }
+            Text("No puzzles yet")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(width: 156, height: 196)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct ErrorCard: View {
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Couldn’t load")
+                    .font(.caption.weight(.semibold))
+            }
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+            Spacer(minLength: 0)
+            Button("Retry", action: onRetry)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .frame(width: 220, height: 196, alignment: .topLeading)
+        .background(.orange.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.orange.opacity(0.30), lineWidth: 0.6)
+        )
     }
 }
 
@@ -617,12 +1068,13 @@ private struct ProfileCardView: View {
     let account: LichessAccount
     @Environment(AppModel.self) private var appModel
 
-    private static let displayedPerfs: [(key: String, label: String)] = [
-        ("bullet", "Bullet"),
-        ("blitz", "Blitz"),
-        ("rapid", "Rapid"),
-        ("classical", "Classical")
-    ]
+    // Single source of truth for which perfs we surface lives on
+    // `LichessAccount.displayedPerfKeys`. Bullet/Blitz are excluded
+    // there because we can't play them in this app, so showing those
+    // ratings would be misleading clutter.
+    private var displayedRows: [LichessAccount.RatingRow] {
+        account.displayedRatingRows
+    }
 
     var body: some View {
         ScrollView {
@@ -651,8 +1103,8 @@ private struct ProfileCardView: View {
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
                           spacing: 12) {
-                    ForEach(Self.displayedPerfs, id: \.key) { entry in
-                        ratingChip(label: entry.label, key: entry.key)
+                    ForEach(displayedRows) { row in
+                        ratingChip(row: row)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -676,17 +1128,20 @@ private struct ProfileCardView: View {
     }
 
     @ViewBuilder
-    private func ratingChip(label: String, key: String) -> some View {
-        let rating = account.rating(forPerfKey: key)
-        let games = account.perfs?[key]?.games
+    private func ratingChip(row: LichessAccount.RatingRow) -> some View {
         VStack(spacing: 6) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(rating.map { "\($0)" } ?? "—")
+            HStack(spacing: 5) {
+                Image(systemName: row.icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(row.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(ratingText(for: row))
                 .font(.title3.monospacedDigit())
                 .fontWeight(.semibold)
-            Text(games.map { "\($0) games" } ?? " ")
+            Text(row.games.map { "\($0) games" } ?? " ")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -697,6 +1152,11 @@ private struct ProfileCardView: View {
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
         )
+    }
+
+    private func ratingText(for row: LichessAccount.RatingRow) -> String {
+        guard let r = row.rating else { return "—" }
+        return String(r)   // ungrouped — chess convention ("1500" not "1,500")
     }
 }
 
