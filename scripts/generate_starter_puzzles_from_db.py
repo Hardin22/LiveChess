@@ -169,11 +169,18 @@ def process_row(row: list[str], buckets: dict[str, list[dict]]) -> bool:
     """Returns True if the row was banked into a bucket."""
     if len(row) < 8:
         return False
-    pid, fen, moves_s, rating_s, _rd, _pop, plays_s, themes_s = row[:8]
+    pid, fen, moves_s, rating_s, rd_s, _pop, plays_s, themes_s = row[:8]
     try:
         rating = int(rating_s)
     except (TypeError, ValueError):
         return False
+    # RatingDeviation is the per-puzzle Glicko-2 RD. Lichess uses it
+    # as the opponent RD in the user's rating update (each puzzle's
+    # RD differs based on how many people have played it).
+    try:
+        rating_deviation = int(rd_s)
+    except (TypeError, ValueError):
+        rating_deviation = None
     if not (RATING_MIN <= rating <= RATING_MAX):
         return False
     themes = set(themes_s.split())
@@ -200,14 +207,15 @@ def process_row(row: list[str], buckets: dict[str, list[dict]]) -> bool:
     except (TypeError, ValueError):
         plays = None
     buckets[cat].append({
-        "id":          pid,
-        "fen":         solver_fen,
-        "solution":    moves[1:],
-        "themes":      sorted(themes),
-        "rating":      rating,
-        "plays":       plays,
-        "lastMove":    moves[0],
-        "initialPly":  None,
+        "id":              pid,
+        "fen":             solver_fen,
+        "solution":        moves[1:],
+        "themes":          sorted(themes),
+        "rating":          rating,
+        "ratingDeviation": rating_deviation,
+        "plays":           plays,
+        "lastMove":        moves[0],
+        "initialPly":      None,
     })
     return True
 

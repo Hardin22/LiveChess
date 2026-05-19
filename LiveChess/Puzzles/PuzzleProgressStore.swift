@@ -77,13 +77,16 @@ final class PuzzleProgressStore {
 
     // MARK: - Solve / fail
 
-    func recordSolve(puzzleID: String, puzzleRating: Int?) {
+    func recordSolve(puzzleID: String,
+                     puzzleRating: Int?,
+                     puzzleRD: Int? = nil) {
         guard !isAttempted(puzzleID) else { return }
         let before = puzzleRatingInt
         if let r = puzzleRating {
             rating = Glicko2.update(
                 player: rating,
                 opponentRating: Double(r),
+                opponentRD: Double(puzzleRD ?? 80),
                 score: 1.0
             )
             lastRatingDelta = puzzleRatingInt - before
@@ -93,13 +96,16 @@ final class PuzzleProgressStore {
         persist(solvedIDs, forKey: Self.solvedKey)
     }
 
-    func recordFail(puzzleID: String, puzzleRating: Int?) {
+    func recordFail(puzzleID: String,
+                    puzzleRating: Int?,
+                    puzzleRD: Int? = nil) {
         guard !isAttempted(puzzleID) else { return }
         let before = puzzleRatingInt
         if let r = puzzleRating {
             rating = Glicko2.update(
                 player: rating,
                 opponentRating: Double(r),
+                opponentRD: Double(puzzleRD ?? 80),
                 score: 0.0
             )
             lastRatingDelta = puzzleRatingInt - before

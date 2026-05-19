@@ -250,11 +250,11 @@ struct PuzzleHUDView: View {
         isAdvancing = true
         defer { isAdvancing = false }
         guard let next = PuzzleSession(puzzle: puzzle) else { return }
-        next.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r in
-            progress.recordSolve(puzzleID: id, puzzleRating: r)
+        next.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
+            progress.recordSolve(puzzleID: id, puzzleRating: r, puzzleRD: rd)
         }
-        next.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r in
-            progress.recordFail(puzzleID: id, puzzleRating: r)
+        next.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r, rd in
+            progress.recordFail(puzzleID: id, puzzleRating: r, puzzleRD: rd)
         }
         next.categoryContext = session.categoryContext
 

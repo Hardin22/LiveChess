@@ -67,18 +67,15 @@ final class PuzzleSession: MatchSession {
     /// in `PuzzleProgressStore` and stop surfacing it on the browser.
     var onSolved: (@MainActor (String) -> Void)?
 
-    /// Solve + rating signal — used by the Glicko-2 update path in
-    /// `PuzzleProgressStore.recordSolve`. Separate from `onSolved`
-    /// so older call-sites (which only need the id) still work
-    /// without forced migration.
-    var onSolvedWithRating: (@MainActor (String, Int?) -> Void)?
+    /// Solve + rating signal — passes the puzzle's rating AND its
+    /// rating deviation so `PuzzleProgressStore.recordSolve` can run
+    /// Glicko-2 with the puzzle's actual RD (Lichess's behaviour;
+    /// each puzzle's RD differs depending on play history).
+    var onSolvedWithRating: (@MainActor (String, Int?, Int?) -> Void)?
 
-    /// Fires when the user plays a wrong move and the puzzle
-    /// transitions to `.failed`. Lichess treats a fail as a final
-    /// outcome (you don't get a retry to recover rating), so the
-    /// progress store records it the same way as a solve — just
-    /// with a Glicko-2 score of 0 instead of 1.
-    var onFailedWithRating: (@MainActor (String, Int?) -> Void)?
+    /// Fires when the user plays a wrong move OR uses a hint and
+    /// the puzzle transitions to a failed rating outcome.
+    var onFailedWithRating: (@MainActor (String, Int?, Int?) -> Void)?
 
     /// The PuzzleCategory the session was launched from (e.g.
     /// `.mateIn1`). The in-immersive HUD reads this to power the
@@ -134,7 +131,7 @@ final class PuzzleSession: MatchSession {
                 status = .failed
                 if !ratingOutcomeRecorded {
                     ratingOutcomeRecorded = true
-                    onFailedWithRating?(puzzle.id, puzzle.rating)
+                    onFailedWithRating?(puzzle.id, puzzle.rating, puzzle.ratingDeviation)
                 }
             }
             return
@@ -167,7 +164,7 @@ final class PuzzleSession: MatchSession {
         }
         if !ratingOutcomeRecorded {
             ratingOutcomeRecorded = true
-            onFailedWithRating?(puzzle.id, puzzle.rating)
+            onFailedWithRating?(puzzle.id, puzzle.rating, puzzle.ratingDeviation)
         }
         hintHandler?(hintLevel, next)
     }
@@ -232,7 +229,7 @@ final class PuzzleSession: MatchSession {
             // refund rating — Lichess's rule.
             if !ratingOutcomeRecorded {
                 ratingOutcomeRecorded = true
-                onSolvedWithRating?(puzzle.id, puzzle.rating)
+                onSolvedWithRating?(puzzle.id, puzzle.rating, puzzle.ratingDeviation)
             }
         }
     }

@@ -7,14 +7,18 @@ import Foundation
 /// We apply it as a single-game period each time the user solves
 /// or fails a puzzle. Score is `1.0` for a solve (= win), `0.0`
 /// for a fail (= loss). The puzzle's rating is the "opponent" in
-/// the mini-match; its rating deviation is taken to be small
-/// (default 60) because Lichess's published puzzle ratings are
-/// based on thousands of solver attempts and are well-stabilised.
+/// the mini-match.
 ///
-/// Constants match Lichess:
-///   • Tau (system volatility constraint) = 0.5
+/// Constants match Lichess (sourced from
+/// https://github.com/lichess-org/lila/blob/master/modules/rating —
+/// these differ from the paper defaults):
+///   • τ (volatility constraint) = 0.075 — Lichess uses a much
+///     smaller τ than the paper's 0.5 because puzzle play is
+///     high-frequency; conservative volatility prevents wild
+///     swings from a single bad round.
+///   • Default new-player rating / RD / volatility = 1500 / 500 / 0.09
+///   • Rating clamp: 600–4000 (Lichess's hard floor and ceiling).
 ///   • Conversion factor 173.7178 (Glicko-1 → Glicko-2 scale)
-///   • Default new-player rating / RD / volatility = 1500 / 350 / 0.06
 enum Glicko2 {
 
     /// One player's rating state in Glicko-2.
@@ -23,18 +27,32 @@ enum Glicko2 {
         var rd: Double              // rating deviation
         var volatility: Double      // σ (sigma)
 
-        static let initial = Rating(rating: 1500, rd: 350, volatility: 0.06)
+        /// Lichess new-player defaults — NOT the Glicko-2 paper's
+        /// `1500 / 350 / 0.06`. Larger initial RD (500) lets fresh
+        /// accounts converge to their true rating faster; higher
+        /// initial volatility (0.09) gives the system more headroom
+        /// when results are surprising.
+        static let initial = Rating(rating: 1500, rd: 500, volatility: 0.09)
     }
 
-    static let tau: Double = 0.5
+    /// Volatility constraint τ. Lichess uses 0.075 for puzzles
+    /// (smaller than the paper's 0.5 — keeps volatility from
+    /// inflating across a long puzzle session).
+    static let tau: Double = 0.075
     static let scale: Double = 173.7178
+    /// Lichess hard-clamps puzzle ratings to this range. Below 600
+    /// the rating becomes meaningless (a player who can't beat
+    /// anyone), above 4000 puzzle pools thin out.
+    static let minRating: Double = 600
+    static let maxRating: Double = 4000
 
-    /// Apply one match result to `player`. `opponentRating` and
-    /// `opponentRD` describe the puzzle. `score` is 1 (solve) or 0
-    /// (fail); a draw would be 0.5 but puzzles don't draw.
+    /// Apply one match result to `player`. `opponentRating` /
+    /// `opponentRD` describe the puzzle — pass the puzzle's actual
+    /// published RD when known (Lichess varies it per-puzzle from
+    /// ~40 to ~200). `score` is 1 (solve) or 0 (fail).
     static func update(player: Rating,
                        opponentRating: Double,
-                       opponentRD: Double = 60,
+                       opponentRD: Double = 80,
                        score: Double) -> Rating {
         // Step 1 — convert to Glicko-2 scale.
         let mu = (player.rating - 1500) / scale
@@ -66,10 +84,12 @@ enum Glicko2 {
         // Step 7 — new rating.
         let newMu = mu + newPhi * newPhi * gJ * (score - E)
 
-        // Step 8 — back to Glicko-1 scale.
+        // Step 8 — back to Glicko-1 scale, clamped to Lichess's
+        // playable rating range.
+        let rawRating = scale * newMu + 1500
         return Rating(
-            rating: scale * newMu + 1500,
-            rd:     scale * newPhi,
+            rating:     min(max(rawRating, minRating), maxRating),
+            rd:         scale * newPhi,
             volatility: newSigma
         )
     }
