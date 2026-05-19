@@ -1203,10 +1203,9 @@ private struct ProfileCardView: View {
 /// not missing settings UI.
 struct SettingsPlaceholderView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
 
     enum Section: String, CaseIterable, Identifiable {
-        case account, gameplay, boardAndPieces, environment, review, about
+        case account, gameplay, boardAndPieces, environment, legal, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -1214,7 +1213,7 @@ struct SettingsPlaceholderView: View {
             case .gameplay:       return "Gameplay"
             case .boardAndPieces: return "Board & Pieces"
             case .environment:    return "Environment"
-            case .review:         return "Game Review"
+            case .legal:          return "Legal"
             case .about:          return "About"
             }
         }
@@ -1224,7 +1223,7 @@ struct SettingsPlaceholderView: View {
             case .gameplay:       return "flag.checkered"
             case .boardAndPieces: return "checkerboard.rectangle"
             case .environment:    return "mountain.2.fill"
-            case .review:         return "magnifyingglass.circle.fill"
+            case .legal:          return "hand.raised.fill"
             case .about:          return "info.circle.fill"
             }
         }
@@ -1234,13 +1233,16 @@ struct SettingsPlaceholderView: View {
             case .gameplay:       return "Default color, Stockfish strength, and thinking time."
             case .boardAndPieces: return "Piece set and board surface for the 3D scene."
             case .environment:    return "Where the board lives when you open an immersive match."
-            case .review:         return "How Chess+ classifies your moves after a game."
+            case .legal:          return "Privacy Policy and Terms of Service."
             case .about:          return "Version, credits, and the platforms we build on."
             }
         }
     }
 
     @State private var selection: Section = .account
+    @State private var presentedLegal: LegalDocument?
+    @State private var settingsPreviewSide: Side = .white
+    @State private var settingsPreviewKind: PieceKind = .king
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -1259,6 +1261,9 @@ struct SettingsPlaceholderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $presentedLegal) { doc in
+            LegalDocumentSheet(document: doc)
+        }
     }
 
     // MARK: - Section rail (left column)
@@ -1280,11 +1285,20 @@ struct SettingsPlaceholderView: View {
     @ViewBuilder
     private func sectionRow(_ sec: Section) -> some View {
         let isSelected = sec == selection
-        Button { selection = sec } label: {
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                selection = sec
+            }
+        } label: {
             HStack(spacing: Chess.Space.s) {
                 Image(systemName: sec.systemImage)
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Chess.Palette.bronze)
-                    .frame(width: 22)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous)
+                            .fill(isSelected ? Chess.Palette.bronze.opacity(0.18) : .white.opacity(0.07))
+                    )
                 Text(sec.title)
                     .font(.callout.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
@@ -1296,7 +1310,16 @@ struct SettingsPlaceholderView: View {
             .background(
                 RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
                     .fill(isSelected
-                          ? AnyShapeStyle(Chess.Palette.cream.opacity(0.18))
+                          ? AnyShapeStyle(
+                              LinearGradient(
+                                  colors: [
+                                      Chess.Palette.cream.opacity(0.24),
+                                      Chess.Palette.bronze.opacity(0.10)
+                                  ],
+                                  startPoint: .topLeading,
+                                  endPoint: .bottomTrailing
+                              )
+                          )
                           : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
@@ -1305,7 +1328,9 @@ struct SettingsPlaceholderView: View {
                                   ? Chess.Palette.bronze.opacity(0.45)
                                   : .white.opacity(0.08),
                                   lineWidth: isSelected ? 1 : 0.5)
+                    .allowsHitTesting(false)
             )
+            .contentShape(RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
@@ -1322,7 +1347,7 @@ struct SettingsPlaceholderView: View {
             case .gameplay:       gameplayPane(appModel: appModel)
             case .boardAndPieces: boardAndPiecesPane
             case .environment:    environmentPane(appModel: appModel)
-            case .review:         reviewPane
+            case .legal:          legalPane
             case .about:          aboutPane
             }
         }
@@ -1330,13 +1355,26 @@ struct SettingsPlaceholderView: View {
     }
 
     private func paneHeader(_ sec: Section) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(sec.title)
-                .font(.system(.largeTitle, design: .serif).weight(.semibold))
-                .foregroundStyle(Chess.Palette.accent)
-            Text(sec.subtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: Chess.Space.m) {
+            Image(systemName: sec.systemImage)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Chess.Palette.bronze)
+                .frame(width: 52, height: 52)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+                        .strokeBorder(Chess.Palette.bronze.opacity(0.28), lineWidth: 0.75)
+                        .allowsHitTesting(false)
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(sec.title)
+                    .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                    .foregroundStyle(Chess.Palette.accent)
+                Text(sec.subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1350,8 +1388,15 @@ struct SettingsPlaceholderView: View {
                 if appModel.lichess.isSignedIn {
                     HStack(spacing: Chess.Space.s) {
                         Image(systemName: "person.crop.circle.badge.checkmark")
-                            .font(.title)
+                            .font(.title2.weight(.semibold))
                             .foregroundStyle(Chess.Palette.bronze)
+                            .frame(width: 48, height: 48)
+                            .background(.thinMaterial, in: Circle())
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(Chess.Palette.bronze.opacity(0.28), lineWidth: 0.75)
+                                    .allowsHitTesting(false)
+                            )
                         VStack(alignment: .leading, spacing: 2) {
                             Text(appModel.lichess.account?.username ?? "Signed in")
                                 .font(.title3.weight(.semibold))
@@ -1360,10 +1405,11 @@ struct SettingsPlaceholderView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        ChessChip("Online", icon: "checkmark.circle.fill", tint: Chess.Palette.bronze)
                     }
                     Divider().overlay(Chess.Palette.bronze.opacity(0.25))
                     if let perfs = appModel.lichess.account?.perfs {
-                        let popular = ["rapid", "blitz", "bullet", "classical"]
+                        let popular = ["rapid", "classical"]
                             .compactMap { key -> (String, Int)? in
                                 guard let r = perfs[key]?.rating else { return nil }
                                 return (key.capitalized, r)
@@ -1375,18 +1421,7 @@ struct SettingsPlaceholderView: View {
                                     .foregroundStyle(.secondary)
                                 HStack(spacing: Chess.Space.s) {
                                     ForEach(popular, id: \.0) { (label, rating) in
-                                        VStack(spacing: 2) {
-                                            Text("\(rating)")
-                                                .font(.title3.weight(.semibold))
-                                                .foregroundStyle(Chess.Palette.bronze)
-                                            Text(label)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, Chess.Space.s)
-                                        .background(.thinMaterial,
-                                                    in: RoundedRectangle(cornerRadius: Chess.Radius.chip))
+                                        ratingTile(label: label, rating: rating)
                                     }
                                 }
                             }
@@ -1404,8 +1439,10 @@ struct SettingsPlaceholderView: View {
                     VStack(alignment: .leading, spacing: Chess.Space.s) {
                         HStack(spacing: Chess.Space.s) {
                             Image(systemName: "person.crop.circle.badge.questionmark")
-                                .font(.title)
+                                .font(.title2.weight(.semibold))
                                 .foregroundStyle(.secondary)
+                                .frame(width: 48, height: 48)
+                                .background(.thinMaterial, in: Circle())
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Not signed in")
                                     .font(.title3.weight(.semibold))
@@ -1437,9 +1474,11 @@ struct SettingsPlaceholderView: View {
             VStack(alignment: .leading, spacing: Chess.Space.m) {
                 // Default color
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Default color")
-                        .font(Chess.Typography.eyebrow())
-                        .foregroundStyle(.secondary)
+                    settingsControlHeader(
+                        title: "Default color",
+                        value: colorLabel(appModel.matchSettings.humanColor),
+                        icon: "circle.lefthalf.filled"
+                    )
                     Picker("Default color", selection: Binding(
                         get: { appModel.matchSettings.humanColor },
                         set: { appModel.matchSettings.humanColor = $0 }
@@ -1455,15 +1494,11 @@ struct SettingsPlaceholderView: View {
 
                 // Default Stockfish skill (0–20)
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Stockfish skill")
-                            .font(Chess.Typography.eyebrow())
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(appModel.matchSettings.aiSettings.skillLevel) / \(AISettings.maxSkillLevel)")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(Chess.Palette.bronze)
-                    }
+                    settingsControlHeader(
+                        title: "Stockfish skill",
+                        value: "\(appModel.matchSettings.aiSettings.skillLevel) / \(AISettings.maxSkillLevel)",
+                        icon: "brain.head.profile"
+                    )
                     Slider(
                         value: Binding(
                             get: { Double(appModel.matchSettings.aiSettings.skillLevel) },
@@ -1483,15 +1518,11 @@ struct SettingsPlaceholderView: View {
                 // Default thinking time
                 VStack(alignment: .leading, spacing: 6) {
                     let seconds = thinkingTimeSeconds(appModel.matchSettings.aiSettings.thinkingTime)
-                    HStack {
-                        Text("Thinking time")
-                            .font(Chess.Typography.eyebrow())
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(String(format: "%.1f", seconds))s per move")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(Chess.Palette.bronze)
-                    }
+                    settingsControlHeader(
+                        title: "Thinking time",
+                        value: "\(String(format: "%.1f", seconds))s per move",
+                        icon: "timer"
+                    )
                     Slider(
                         value: Binding(
                             get: { seconds },
@@ -1512,34 +1543,506 @@ struct SettingsPlaceholderView: View {
 
     @ViewBuilder
     private var boardAndPiecesPane: some View {
-        ChessCard(.standard) {
-            VStack(alignment: .leading, spacing: Chess.Space.m) {
-                HStack(spacing: Chess.Space.s) {
-                    Image(systemName: "paintbrush.fill")
-                        .font(.title)
-                        .foregroundStyle(Chess.Palette.bronze)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(appModel.pieceCustomization.current.preset.displayName)
-                            .font(.title3.weight(.semibold))
-                        Text("Current piece set")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Chess.Space.m) {
+            ChessCard(.standard) {
+                VStack(alignment: .leading, spacing: Chess.Space.m) {
+                    HStack(alignment: .top, spacing: Chess.Space.s) {
+                        Image(systemName: "paintbrush.fill")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(Chess.Palette.bronze)
+                            .frame(width: 48, height: 48)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+                                    .strokeBorder(Chess.Palette.bronze.opacity(0.28), lineWidth: 0.75)
+                                    .allowsHitTesting(false)
+                            )
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(appModel.pieceCustomization.current.preset.displayName)
+                                .font(.title3.weight(.semibold))
+                            Text("Compare the default set with the custom set before choosing.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        previewSelectorControls
                     }
+
+                    Divider().overlay(Chess.Palette.bronze.opacity(0.25))
+
+                    HStack(alignment: .top, spacing: Chess.Space.s) {
+                        comparisonPreviewTile(
+                            title: "Default",
+                            subtitle: PieceMaterial.default.preset.displayName,
+                            material: .default
+                        )
+                        comparisonPreviewTile(
+                            title: "Custom",
+                            subtitle: appModel.pieceCustomization.current.preset.displayName,
+                            material: appModel.pieceCustomization.current
+                        )
+                    }
+                }
+            }
+
+            settingsSubcard(title: "Piece material", icon: "circle.grid.2x2.fill") {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(minimum: 190), spacing: Chess.Space.s),
+                        GridItem(.flexible(minimum: 190), spacing: Chess.Space.s)
+                    ],
+                    spacing: Chess.Space.s
+                ) {
+                    ForEach(PieceMaterial.Preset.allCases) { preset in
+                        settingsPresetButton(preset)
+                    }
+                }
+
+                if appModel.pieceCustomization.current.preset == .wood {
+                    Divider().overlay(Chess.Palette.bronze.opacity(0.20))
+                    HStack(alignment: .top, spacing: Chess.Space.s) {
+                        woodPicker(
+                            title: "White pieces",
+                            selected: appModel.pieceCustomization.current.whitePieceWood,
+                            onPick: { appModel.pieceCustomization.current.whitePieceWood = $0 }
+                        )
+                        woodPicker(
+                            title: "Black pieces",
+                            selected: appModel.pieceCustomization.current.blackPieceWood,
+                            onPick: { appModel.pieceCustomization.current.blackPieceWood = $0 }
+                        )
+                    }
+                }
+            }
+
+            settingsSubcard(title: "Piece colours", icon: "eyedropper.full") {
+                HStack(alignment: .top, spacing: Chess.Space.s) {
+                    settingsColorPicker(
+                        title: "White pieces",
+                        binding: pieceColorBinding(\.whiteColor)
+                    )
+                    settingsColorPicker(
+                        title: "Black pieces",
+                        binding: pieceColorBinding(\.blackColor)
+                    )
+                }
+            }
+
+            settingsSubcard(title: "Board surface", icon: "checkerboard.rectangle") {
+                HStack(alignment: .top, spacing: Chess.Space.m) {
+                    BoardPreviewView(material: appModel.pieceCustomization.current)
+                        .frame(width: 170, height: 170)
+                        .padding(Chess.Space.s)
+                        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: Chess.Space.s) {
+                        boardSurfaceControls
+                        Divider().overlay(Chess.Palette.bronze.opacity(0.20))
+                        HStack(alignment: .top, spacing: Chess.Space.s) {
+                            settingsColorPicker(
+                                title: "Light squares",
+                                binding: pieceColorBinding(\.lightSquareColor)
+                            )
+                            settingsColorPicker(
+                                title: "Dark squares",
+                                binding: pieceColorBinding(\.darkSquareColor)
+                            )
+                            settingsColorPicker(
+                                title: "Frame",
+                                binding: pieceColorBinding(\.frameColor)
+                            )
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    appModel.pieceCustomization.resetToDefault()
+                } label: {
+                    Label("Reset to default", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var previewSelectorControls: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            HStack(spacing: 6) {
+                previewSideButton(.white)
+                previewSideButton(.black)
+            }
+            Menu {
+                ForEach(PieceKind.allCases, id: \.self) { kind in
+                    Button(pieceKindName(kind)) {
+                        settingsPreviewKind = kind
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(pieceKindName(settingsPreviewKind))
+                        .font(.callout.weight(.semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.bold))
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, Chess.Space.s)
+                .frame(width: 230, height: 36)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+            }
+        }
+    }
+
+    private func comparisonPreviewTile(title: String, subtitle: String, material: PieceMaterial) -> some View {
+        VStack(alignment: .leading, spacing: Chess.Space.s) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                    Text("\(subtitle) · \(pieceSideName(settingsPreviewSide))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+            PiecePreviewView(
+                material: material,
+                previewSide: $settingsPreviewSide,
+                previewKind: $settingsPreviewKind
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+        }
+        .padding(Chess.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+                .allowsHitTesting(false)
+        )
+    }
+
+    private func previewSideButton(_ side: Side) -> some View {
+        let isSelected = settingsPreviewSide == side
+        let color: Color = {
+            switch side {
+            case .white:
+                return appModel.pieceCustomization.current.whiteColor.swiftUI
+            case .black:
+                return appModel.pieceCustomization.current.blackColor.swiftUI
+            }
+        }()
+
+        return Button {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                settingsPreviewSide = side
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 14, height: 14)
+                    .overlay(Circle().strokeBorder(.white.opacity(0.45), lineWidth: 0.5))
+                Text(pieceSideName(side))
+                    .font(.caption.weight(isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption2.weight(.bold))
+                }
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .frame(width: 112, height: 36)
+            .background(isSelected ? Chess.Palette.bronze.opacity(0.24) : .white.opacity(0.07), in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous)
+                    .strokeBorder(isSelected ? Chess.Palette.bronze.opacity(0.55) : .white.opacity(0.09), lineWidth: isSelected ? 1 : 0.5)
+                    .allowsHitTesting(false)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+    }
+
+    private func settingsSubcard<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ChessCard(.standard) {
+            VStack(alignment: .leading, spacing: Chess.Space.s) {
+                HStack(spacing: Chess.Space.s) {
+                    Image(systemName: icon)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Chess.Palette.bronze)
+                        .frame(width: 34, height: 34)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+                    Text(title)
+                        .font(Chess.Typography.sectionTitle())
                     Spacer()
                 }
-                Text("Piece materials, board surface, and per-side colours have their own dedicated window so you can preview the 3D set live as you tweak it.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Button {
-                    openWindow(id: LiveChessApp.piecesWindowID)
-                } label: {
-                    Label("Open customizer", systemImage: "rectangle.expand.vertical")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Chess.Palette.bronze)
-                .controlSize(.large)
+                content()
             }
+        }
+    }
+
+    private func settingsPresetButton(_ preset: PieceMaterial.Preset) -> some View {
+        let current = appModel.pieceCustomization.current
+        let isSelected = current.preset == preset
+
+        return Button {
+            var next = current
+            let pair = preset.defaultPair
+            next.preset = preset
+            next.whiteColor = pair.white
+            next.blackColor = pair.black
+            appModel.pieceCustomization.current = next
+        } label: {
+            HStack(spacing: Chess.Space.s) {
+                presetSwatch(preset)
+                    .frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preset.displayName)
+                        .font(.callout.weight(isSelected ? .semibold : .regular))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(materialHint(for: preset))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Chess.Palette.bronze)
+                }
+            }
+            .padding(Chess.Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? .white.opacity(0.095) : .white.opacity(0.035), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+                    .strokeBorder(isSelected ? Chess.Palette.bronze.opacity(0.35) : .white.opacity(0.08), lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
+    }
+
+    private func settingsColorPicker(title: String, binding: Binding<Color>) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            HStack(spacing: 8) {
+                ColorPicker("", selection: binding, supportsOpacity: false)
+                    .labelsHidden()
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(binding.wrappedValue)
+                    .frame(height: 30)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(.white.opacity(0.25), lineWidth: 0.5)
+                            .allowsHitTesting(false)
+                    )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Chess.Space.s)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+    }
+
+    private var boardSurfaceControls: some View {
+        VStack(alignment: .leading, spacing: Chess.Space.s) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Squares")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                boardMaterialPicker(
+                    selected: appModel.pieceCustomization.current.squareMaterial,
+                    onPick: { appModel.pieceCustomization.current.squareMaterial = $0 }
+                )
+                if appModel.pieceCustomization.current.squareMaterial == .wood {
+                    HStack(alignment: .top, spacing: Chess.Space.s) {
+                        woodPicker(
+                            title: "Light wood",
+                            selected: appModel.pieceCustomization.current.lightSquareWood,
+                            onPick: { appModel.pieceCustomization.current.lightSquareWood = $0 }
+                        )
+                        woodPicker(
+                            title: "Dark wood",
+                            selected: appModel.pieceCustomization.current.darkSquareWood,
+                            onPick: { appModel.pieceCustomization.current.darkSquareWood = $0 }
+                        )
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Frame")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                boardMaterialPicker(
+                    selected: appModel.pieceCustomization.current.frameMaterial,
+                    onPick: { appModel.pieceCustomization.current.frameMaterial = $0 }
+                )
+                if appModel.pieceCustomization.current.frameMaterial == .wood {
+                    woodPicker(
+                        title: "Frame wood",
+                        selected: appModel.pieceCustomization.current.frameWood,
+                        onPick: { appModel.pieceCustomization.current.frameWood = $0 }
+                    )
+                }
+            }
+        }
+    }
+
+    private func boardMaterialPicker(
+        selected: BoardMaterial,
+        onPick: @escaping (BoardMaterial) -> Void
+    ) -> some View {
+        HStack(spacing: 6) {
+            ForEach(BoardMaterial.allCases) { material in
+                let isSelected = material == selected
+                Button {
+                    onPick(material)
+                } label: {
+                    HStack(spacing: 4) {
+                        if isSelected {
+                            Image(systemName: "checkmark")
+                                .font(.caption2.weight(.bold))
+                        }
+                        Text(material.displayName)
+                            .font(.caption.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                    }
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 10)
+                    .background(isSelected ? Chess.Palette.bronze.opacity(0.22) : .white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous)
+                            .strokeBorder(isSelected ? Chess.Palette.bronze.opacity(0.42) : .white.opacity(0.08), lineWidth: 0.5)
+                            .allowsHitTesting(false)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func woodPicker(
+        title: String,
+        selected: WoodType,
+        onPick: @escaping (WoodType) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(WoodType.allCases) { wood in
+                    let isSelected = wood == selected
+                    Button {
+                        onPick(wood)
+                    } label: {
+                        Text(wood.displayName)
+                            .font(.caption2.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 9)
+                            .background(isSelected ? Chess.Palette.bronze.opacity(0.22) : .white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous)
+                                    .strokeBorder(isSelected ? Chess.Palette.bronze.opacity(0.42) : .white.opacity(0.08), lineWidth: 0.5)
+                                    .allowsHitTesting(false)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func pieceColorBinding(_ keyPath: WritableKeyPath<PieceMaterial, PieceColor>) -> Binding<Color> {
+        Binding(
+            get: { appModel.pieceCustomization.current[keyPath: keyPath].swiftUI },
+            set: { appModel.pieceCustomization.current[keyPath: keyPath] = PieceColor($0) }
+        )
+    }
+
+    private func presetSwatch(_ preset: PieceMaterial.Preset) -> some View {
+        Circle()
+            .fill(presetFill(preset))
+            .overlay(Circle().strokeBorder(.white.opacity(0.30), lineWidth: 0.5))
+            .overlay(
+                Circle()
+                    .trim(from: 0.55, to: 0.86)
+                    .stroke(.white.opacity(0.45), lineWidth: 1.1)
+                    .padding(2)
+            )
+    }
+
+    private func presetFill(_ preset: PieceMaterial.Preset) -> AnyShapeStyle {
+        switch preset {
+        case .plasticMatte:
+            return AnyShapeStyle(Color(red: 0.92, green: 0.92, blue: 0.92))
+        case .plasticGlossy:
+            return AnyShapeStyle(LinearGradient(colors: [Color.white, Color(white: 0.78)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .lacquered:
+            return AnyShapeStyle(LinearGradient(colors: [Color(red: 0.78, green: 0.16, blue: 0.18), Color(red: 0.45, green: 0.05, blue: 0.07)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .polishedMetal:
+            return AnyShapeStyle(LinearGradient(colors: [Color(white: 0.95), Color(white: 0.55)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .brushedMetal:
+            return AnyShapeStyle(Color(white: 0.70))
+        case .ceramic:
+            return AnyShapeStyle(LinearGradient(colors: [Color(red: 0.97, green: 0.96, blue: 0.93), Color(red: 0.85, green: 0.83, blue: 0.78)], startPoint: .top, endPoint: .bottom))
+        case .pearl:
+            return AnyShapeStyle(AngularGradient(colors: [.pink.opacity(0.6), .cyan.opacity(0.4), .white, .yellow.opacity(0.5), .pink.opacity(0.6)], center: .center))
+        case .glass:
+            return AnyShapeStyle(LinearGradient(colors: [Color.cyan.opacity(0.35), Color.blue.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .wood:
+            return AnyShapeStyle(LinearGradient(colors: [Color(red: 0.55, green: 0.36, blue: 0.18), Color(red: 0.32, green: 0.18, blue: 0.08)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .marble:
+            return AnyShapeStyle(LinearGradient(colors: [Color(white: 0.96), Color(white: 0.78)], startPoint: .top, endPoint: .bottom))
+        }
+    }
+
+    private func materialHint(for preset: PieceMaterial.Preset) -> String {
+        switch preset {
+        case .plasticMatte: return "Soft, low shine"
+        case .plasticGlossy: return "Classic glossy set"
+        case .lacquered: return "Deep polished finish"
+        case .polishedMetal: return "Bright reflective metal"
+        case .brushedMetal: return "Muted satin metal"
+        case .ceramic: return "Smooth porcelain look"
+        case .pearl: return "Subtle iridescent sheen"
+        case .glass: return "Transparent tinted glass"
+        case .wood: return "Natural textured wood"
+        case .marble: return "Stone with veining"
+        }
+    }
+
+    private func pieceKindName(_ kind: PieceKind) -> String {
+        switch kind {
+        case .pawn: return "Pawn"
+        case .knight: return "Knight"
+        case .bishop: return "Bishop"
+        case .rook: return "Rook"
+        case .queen: return "Queen"
+        case .king: return "King"
+        }
+    }
+
+    private func pieceSideName(_ side: Side) -> String {
+        switch side {
+        case .white: return "White"
+        case .black: return "Black"
         }
     }
 
@@ -1567,22 +2070,39 @@ struct SettingsPlaceholderView: View {
         return Button { appModel.selectedEnvironment = env } label: {
             HStack(spacing: Chess.Space.s) {
                 Image(systemName: env.systemImage)
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Chess.Palette.bronze)
-                    .frame(width: 22)
-                Text(env.displayName)
-                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .frame(width: 34, height: 34)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(env.displayName)
+                        .font(.callout.weight(isSelected ? .semibold : .regular))
+                    Text(environmentSubtitle(env))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
                         .foregroundStyle(Chess.Palette.bronze)
                 }
             }
-            .padding(.vertical, 10).padding(.horizontal, Chess.Space.s)
+            .padding(.vertical, 11).padding(.horizontal, Chess.Space.s)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
                     .fill(isSelected
-                          ? AnyShapeStyle(Chess.Palette.cream.opacity(0.18))
+                          ? AnyShapeStyle(
+                              LinearGradient(
+                                  colors: [
+                                      Chess.Palette.cream.opacity(0.22),
+                                      Chess.Palette.bronze.opacity(0.09)
+                                  ],
+                                  startPoint: .topLeading,
+                                  endPoint: .bottomTrailing
+                              )
+                          )
                           : AnyShapeStyle(.thinMaterial))
             )
             .overlay(
@@ -1591,36 +2111,76 @@ struct SettingsPlaceholderView: View {
                                   ? Chess.Palette.bronze.opacity(0.45)
                                   : .white.opacity(0.08),
                                   lineWidth: isSelected ? 1 : 0.5)
+                    .allowsHitTesting(false)
             )
+            .contentShape(RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
     }
 
-    // MARK: Pane — Game Review
+    // MARK: Pane — Legal
 
     @ViewBuilder
-    private var reviewPane: some View {
+    private var legalPane: some View {
         ChessCard(.standard) {
-            VStack(alignment: .leading, spacing: Chess.Space.s) {
-                settingRow("Eval source",
-                           value: "Lichess cloud, with local Stockfish 18 fallback at depth 15",
-                           icon: "cpu")
-                settingRow("Labelling",
-                           value: "chess.com-style buckets (Excellent / Good / Inaccuracy / Mistake / Blunder)",
-                           icon: "tag.fill")
-                settingRow("Win% formula",
-                           value: "chess.com sigmoid: 50 + 50·(2/(1+e^(-0.004·cp)) − 1)",
-                           icon: "function")
-                settingRow("Mate detection",
-                           value: "Catches ~97% of forced mates at depth 15 (vs ~93% at depth 10)",
-                           icon: "crown.fill")
-                Text("These are baked-in defaults today. A tunable depth + label-style toggle is on the roadmap.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 4)
+            VStack(spacing: 0) {
+                legalRow(
+                    title: "Privacy Policy",
+                    subtitle: "What data Chess+ collects and how it's used.",
+                    icon: "hand.raised.fill"
+                ) { presentedLegal = .privacy }
+
+                Divider().overlay(.white.opacity(0.08))
+                    .padding(.vertical, 2)
+
+                legalRow(
+                    title: "Terms & Conditions",
+                    subtitle: "The rules for using Chess+ and our services.",
+                    icon: "doc.text.fill"
+                ) { presentedLegal = .terms }
             }
         }
+    }
+
+    private func legalRow(
+        title: String,
+        subtitle: String,
+        icon: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: Chess.Space.s) {
+                Image(systemName: icon)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Chess.Palette.bronze)
+                    .frame(width: 36, height: 36)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous)
+                            .strokeBorder(Chess.Palette.bronze.opacity(0.22), lineWidth: 0.5)
+                            .allowsHitTesting(false)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, Chess.Space.s)
+            .padding(.horizontal, Chess.Space.s)
+            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
     }
 
     // MARK: Pane — About
@@ -1634,36 +2194,119 @@ struct SettingsPlaceholderView: View {
                     settingRow("Platform", value: "visionOS — built on RealityKit + Stockfish", icon: "visionpro")
                 }
             }
-            ChessCard(.standard) {
-                VStack(alignment: .leading, spacing: Chess.Space.s) {
-                    Text("BUILT ON")
-                        .font(Chess.Typography.eyebrow())
-                        .foregroundStyle(.secondary)
-                    aboutLink("Lichess",
-                              subtitle: "Open-source chess platform powering online play.",
-                              url: "https://lichess.org",
-                              icon: "globe")
-                    aboutLink("chess.com",
-                              subtitle: "Reference benchmark for move classification.",
-                              url: "https://www.chess.com",
-                              icon: "checkerboard.rectangle")
-                    aboutLink("Stockfish",
-                              subtitle: "The open-source engine that powers analysis.",
-                              url: "https://stockfishchess.org",
-                              icon: "cpu")
-                }
-            }
         }
     }
 
     // MARK: Helpers
 
+    private func ratingTile(label: String, rating: Int) -> some View {
+        VStack(spacing: 4) {
+            Text("\(rating)")
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Chess.Palette.bronze)
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Chess.Space.s)
+        .background(
+            LinearGradient(
+                colors: [.white.opacity(0.13), Chess.Palette.cream.opacity(0.08)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+                .allowsHitTesting(false)
+        )
+    }
+
+    private func settingsControlHeader(title: String, value: String, icon: String) -> some View {
+        HStack(spacing: Chess.Space.s) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Chess.Palette.bronze)
+                .frame(width: 26, height: 26)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
+            Text(title)
+                .font(Chess.Typography.eyebrow())
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(Chess.Palette.bronze)
+        }
+    }
+
+    private func colorLabel(_ color: MatchSettings.HumanColor) -> String {
+        switch color {
+        case .white: return "White"
+        case .black: return "Black"
+        case .random: return "Random"
+        }
+    }
+
+    private func materialSwatch(_ color: Color, size: CGFloat = 28, isSelected: Bool = false) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: size, height: size)
+            .overlay(
+                Circle()
+                    .strokeBorder(isSelected ? Chess.Palette.bronze.opacity(0.85) : .white.opacity(0.42), lineWidth: isSelected ? 2 : 1)
+                    .allowsHitTesting(false)
+            )
+            .overlay {
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: max(8, size * 0.42), weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.35), radius: 2, x: 0, y: 1)
+                }
+            }
+            .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 3)
+    }
+
+    private func materialPreviewTile(title: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(color)
+                .frame(height: 22)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(.white.opacity(0.28), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                )
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Chess.Space.s)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+    }
+
+    private func environmentSubtitle(_ env: SceneEnvironment) -> String {
+        switch env {
+        case .ar: return "Passthrough with table placement"
+        case .dwarvenHall: return "Warm stone hall with dramatic lighting"
+        case .balcony: return "Open-air board with a softer scene"
+        case .auditoriumStage: return "Presentation stage for focused play"
+        }
+    }
+
     private func settingRow(_ title: String, value: String, icon: String) -> some View {
         HStack(alignment: .top, spacing: Chess.Space.s) {
             Image(systemName: icon)
-                .font(.callout)
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(Chess.Palette.bronze.opacity(0.85))
-                .frame(width: 22)
+                .frame(width: 34, height: 34)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.callout.weight(.medium))
@@ -1673,15 +2316,23 @@ struct SettingsPlaceholderView: View {
             }
             Spacer(minLength: 0)
         }
+        .padding(Chess.Space.s)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+                .allowsHitTesting(false)
+        )
     }
 
     private func aboutLink(_ title: String, subtitle: String, url: String, icon: String) -> some View {
         Link(destination: URL(string: url)!) {
             HStack(spacing: Chess.Space.s) {
                 Image(systemName: icon)
-                    .font(.callout)
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Chess.Palette.bronze.opacity(0.85))
-                    .frame(width: 22)
+                    .frame(width: 34, height: 34)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.callout.weight(.medium))
@@ -1695,6 +2346,9 @@ struct SettingsPlaceholderView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+            .padding(Chess.Space.s)
+            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
@@ -1711,6 +2365,243 @@ struct SettingsPlaceholderView: View {
         let build   = bundle.infoDictionary?["CFBundleVersion"] as? String ?? "—"
         return "\(version) (build \(build))"
     }
+}
+
+// MARK: - Legal documents
+
+/// Which legal document is being shown in the modal sheet.
+enum LegalDocument: String, Identifiable {
+    case privacy, terms
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .privacy: return "Privacy Policy"
+        case .terms:   return "Terms & Conditions"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .privacy: return "hand.raised.fill"
+        case .terms:   return "doc.text.fill"
+        }
+    }
+
+    var lastUpdated: String {
+        // Update when the body copy below changes.
+        "Last updated: May 19, 2026"
+    }
+}
+
+/// Modal sheet that presents the privacy / terms body copy.
+///
+/// The bodies live in `LegalDocument.body(_:)` as plain Markdown-free
+/// text broken into `(heading, paragraph)` pairs so we can render them
+/// with consistent typography. Translate to actual approved legal copy
+/// before App Store submission — what's here is a reasonable starting
+/// point that reflects how the app currently works (Lichess auth,
+/// Stockfish locally, no analytics).
+private struct LegalDocumentSheet: View {
+    let document: LegalDocument
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Chess.Space.l) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: Chess.Space.s) {
+                            Image(systemName: document.icon)
+                                .font(.title2)
+                                .foregroundStyle(Chess.Palette.bronze)
+                            Text(document.title)
+                                .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                        }
+                        Text(document.lastUpdated)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(Array(LegalContent.sections(for: document).enumerated()), id: \.offset) { _, section in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(section.heading)
+                                .font(.headline)
+                                .foregroundStyle(Chess.Palette.accent)
+                            Text(section.body)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(Chess.Space.l)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .scrollIndicators(.hidden)
+            .navigationTitle(document.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(minWidth: 520, minHeight: 520)
+    }
+}
+
+/// Static body copy for the legal documents. Replace these strings with
+/// the approved copy from your lawyer / App Store submission. The
+/// structure ([Section]) lets us add a new section without touching the
+/// sheet view.
+private enum LegalContent {
+    struct Section {
+        let heading: String
+        let body: String
+    }
+
+    static func sections(for doc: LegalDocument) -> [Section] {
+        switch doc {
+        case .privacy: return privacy
+        case .terms:   return terms
+        }
+    }
+
+    private static let privacy: [Section] = [
+        Section(
+            heading: "Overview",
+            body: """
+            Chess+ is designed to keep your data on your device. We do not run our own analytics, advertising, or tracking. The only data that leaves your Apple Vision Pro is what you explicitly send to a third-party service (such as Lichess) when you choose to sign in or play an online game.
+            """
+        ),
+        Section(
+            heading: "Information we collect",
+            body: """
+            • Local preferences. Your gameplay defaults (preferred color, Stockfish skill, thinking time), board and piece selections, and chosen environment are stored locally on your device.
+
+            • Lichess account. If you sign in with Lichess, an OAuth access token issued by Lichess is stored in the system keychain. We use it only to talk to Lichess on your behalf.
+
+            • Match data. Games you play locally never leave your device. Games you play on Lichess live in your Lichess account under their terms.
+            """
+        ),
+        Section(
+            heading: "What we don't do",
+            body: """
+            • No advertising. Chess+ does not show ads and does not share data with advertisers.
+
+            • No tracking. We do not use third-party analytics SDKs or fingerprinting.
+
+            • No selling. We do not sell or rent any data to third parties.
+            """
+        ),
+        Section(
+            heading: "Third-party services",
+            body: """
+            When you choose to connect to them, the following services receive data directly from your device under their own privacy policies:
+
+            • Lichess (lichess.org) — authentication, online play, profile, and cloud game analysis.
+
+            • Apple — App Store, in-app purchase, and basic crash diagnostics, governed by Apple's privacy policy.
+
+            Stockfish runs locally on your device and does not send moves anywhere.
+            """
+        ),
+        Section(
+            heading: "Children",
+            body: """
+            Chess+ is not directed at children under 13. If you believe a child has provided personal data through Chess+, contact us and we will delete it.
+            """
+        ),
+        Section(
+            heading: "Your rights",
+            body: """
+            You can sign out of Lichess from Settings → Account at any time. This removes the stored access token from the keychain on this device. To delete your Lichess account itself, use lichess.org.
+            """
+        ),
+        Section(
+            heading: "Changes",
+            body: """
+            If we change this policy, we will update the "Last updated" date above and present the new version the next time you open this screen.
+            """
+        ),
+        Section(
+            heading: "Contact",
+            body: """
+            Questions about privacy? Email privacy@chessplus.app.
+            """
+        )
+    ]
+
+    private static let terms: [Section] = [
+        Section(
+            heading: "Acceptance",
+            body: """
+            By installing or using Chess+ ("the App") on Apple Vision Pro you agree to these Terms. If you do not agree, do not use the App.
+            """
+        ),
+        Section(
+            heading: "License",
+            body: """
+            We grant you a personal, non-transferable, revocable license to use Chess+ for your own non-commercial chess play, study, and analysis on devices you own or control, subject to these Terms and to Apple's Licensed Application End User License Agreement.
+            """
+        ),
+        Section(
+            heading: "Acceptable use",
+            body: """
+            You agree not to:
+
+            • Reverse-engineer, decompile, or extract source code from the App, except where local law expressly permits it.
+
+            • Use the App to harass other players or to circumvent Lichess's anti-cheat or fair-play policies.
+
+            • Use any automation to cheat in online games, including running engines on positions during rated play.
+            """
+        ),
+        Section(
+            heading: "Third-party services",
+            body: """
+            Online play and analysis rely on Lichess. Your use of those features is also governed by lichess.org's Terms of Service and Privacy Policy. We are not responsible for outages, bans, or changes to Lichess's APIs.
+            """
+        ),
+        Section(
+            heading: "Open-source components",
+            body: """
+            Chess+ ships with the Stockfish engine (GPL-3.0) and integrates with the Lichess API. The corresponding licenses and notices are available from the App's About section.
+            """
+        ),
+        Section(
+            heading: "Disclaimer",
+            body: """
+            The App is provided "as is" without warranties of any kind. Engine evaluations, accuracy scores, and move classifications are heuristics — they may be wrong, especially in complex tactical positions, and should not be treated as authoritative.
+            """
+        ),
+        Section(
+            heading: "Limitation of liability",
+            body: """
+            To the maximum extent permitted by law, Chess+ and its authors are not liable for any indirect, incidental, or consequential damages arising from your use of the App.
+            """
+        ),
+        Section(
+            heading: "Termination",
+            body: """
+            You may stop using Chess+ at any time by deleting it. We may suspend or terminate access if you breach these Terms.
+            """
+        ),
+        Section(
+            heading: "Changes",
+            body: """
+            We may update these Terms. Continued use of the App after an update means you accept the new Terms.
+            """
+        ),
+        Section(
+            heading: "Contact",
+            body: """
+            Questions about these Terms? Email legal@chessplus.app.
+            """
+        )
+    ]
 }
 
 struct NotificationsPlaceholderView: View {

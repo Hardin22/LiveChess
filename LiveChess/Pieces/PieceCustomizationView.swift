@@ -27,38 +27,34 @@ struct PieceCustomizationView: View {
     var body: some View {
         @Bindable var customization = appModel.pieceCustomization
 
-        // Single-column ScrollView — visionOS sheets size to content
-        // intrinsic width, and a two-column HStack made the sheet
-        // squeeze both columns. One vertical scroll keeps the layout
-        // predictable at any sheet width.
         NavigationStack {
             ScrollView {
-                VStack(spacing: Chess.Space.m) {
+                VStack(spacing: Chess.Space.l) {
                     previewHeader(customization: customization)
 
-                    ChessCard(.standard) {
-                        VStack(alignment: .leading, spacing: Chess.Space.s) {
-                            ChessSectionHeader("Material")
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(minimum: 320), spacing: Chess.Space.m),
+                            GridItem(.flexible(minimum: 320), spacing: Chess.Space.m)
+                        ],
+                        alignment: .center,
+                        spacing: Chess.Space.m
+                    ) {
+                        settingsPanel(title: "Material", icon: "circle.grid.2x2.fill") {
                             presetSection(customization: customization)
                             if customization.current.preset == .wood {
-                                Divider().padding(.top, Chess.Space.xs)
+                                Divider().padding(.vertical, Chess.Space.xs)
                                 pieceWoodSection(customization: customization)
                             }
                         }
-                    }
 
-                    ChessCard(.standard) {
-                        VStack(alignment: .leading, spacing: Chess.Space.s) {
-                            ChessSectionHeader("Tint")
+                        settingsPanel(title: "Tint", icon: "eyedropper.full") {
                             colorSection(customization: customization)
                         }
                     }
 
-                    ChessCard(.standard) {
-                        VStack(alignment: .leading, spacing: Chess.Space.s) {
-                            ChessSectionHeader("Board")
-                            boardSection(customization: customization)
-                        }
+                    settingsPanel(title: "Board", icon: "checkerboard.rectangle") {
+                        boardSection(customization: customization)
                     }
 
                     Button {
@@ -71,10 +67,9 @@ struct PieceCustomizationView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
-                    .padding(.top, Chess.Space.s)
                 }
                 .padding(Chess.Space.l)
-                .frame(maxWidth: 1080)
+                .frame(maxWidth: 1120)
             }
             .scrollIndicators(.hidden)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -90,59 +85,151 @@ struct PieceCustomizationView: View {
         }
     }
 
-    /// Top-of-sheet preview block — uses PiecePreviewView directly
-    /// (which already brings its own 320 pt frame + .thinMaterial
-    /// backdrop), with .clipped() so the 3-D king can't escape the
-    /// card's bounds, then the inline side / piece-kind controls
-    /// on a single row beneath. No outer ZStack and no second frame
-    /// — the previous wrapping was fighting PiecePreviewView's own
-    /// sizing and letting the piece overflow up past the sheet's
-    /// title bar.
     @ViewBuilder
     private func previewHeader(customization: PieceCustomization) -> some View {
-        VStack(spacing: Chess.Space.s) {
-            PiecePreviewView(
-                material: customization.current,
-                previewSide: $previewSide,
-                previewKind: $previewKind
-            )
-            .clipped()
-            .clipShape(
-                RoundedRectangle(cornerRadius: Chess.Radius.card,
-                                 style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Chess.Radius.card,
-                                 style: .continuous)
-                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-            )
-
-            HStack(spacing: Chess.Space.m) {
-                Picker("", selection: $previewSide) {
-                    Text("White").tag(Side.white)
-                    Text("Black").tag(Side.black)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 240)
-
-                Menu {
-                    ForEach(PieceKind.allCases, id: \.self) { kind in
-                        Button(displayName(for: kind)) { previewKind = kind }
+        ChessCard(.hero) {
+            HStack(alignment: .top, spacing: Chess.Space.l) {
+                VStack(alignment: .leading, spacing: Chess.Space.s) {
+                    HStack {
+                        ChessSectionHeader(
+                            "Live preview",
+                            subtitle: "Rotate, compare sides, and switch piece shape."
+                        )
+                        Spacer(minLength: 0)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(displayName(for: previewKind))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.caption)
-                    }
-                    .frame(minWidth: 100)
+
+                    PiecePreviewView(
+                        material: customization.current,
+                        previewSide: $previewSide,
+                        previewKind: $previewKind
+                    )
+                    .clipped()
+                    .clipShape(
+                        RoundedRectangle(cornerRadius: Chess.Radius.card,
+                                         style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Chess.Radius.card,
+                                         style: .continuous)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                            .allowsHitTesting(false)
+                    )
                 }
-                .menuStyle(.button)
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                Spacer()
+                .frame(maxWidth: .infinity)
+
+                VStack(alignment: .leading, spacing: Chess.Space.m) {
+                    controlGroup(title: "Side") {
+                        Picker("Side", selection: $previewSide) {
+                            Text("White").tag(Side.white)
+                            Text("Black").tag(Side.black)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+
+                    controlGroup(title: "Piece") {
+                        Menu {
+                            ForEach(PieceKind.allCases, id: \.self) { kind in
+                                Button(displayName(for: kind)) { previewKind = kind }
+                            }
+                        } label: {
+                            HStack {
+                                Text(displayName(for: previewKind))
+                                Spacer()
+                                Image(systemName: "chevron.down")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .padding(.horizontal, Chess.Space.s)
+                            .frame(height: 44)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.row))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    VStack(alignment: .leading, spacing: Chess.Space.s) {
+                        Text("Current style")
+                            .font(Chess.Typography.eyebrow())
+                            .foregroundStyle(.secondary)
+                        summaryRow("Material", value: customization.current.preset.displayName, icon: "sparkles")
+                        summarySwatches(material: customization.current)
+                    }
+                    .padding(Chess.Space.s)
+                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: Chess.Radius.row))
+                }
+                .frame(width: 300)
+            }
+        }
+    }
+
+    private func controlGroup<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(Chess.Typography.eyebrow())
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func summaryRow(_ title: String, value: String, icon: String) -> some View {
+        HStack(spacing: Chess.Space.s) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Chess.Palette.bronze)
+                .frame(width: 26, height: 26)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func summarySwatches(material: PieceMaterial) -> some View {
+        HStack(spacing: Chess.Space.s) {
+            colorSwatch("White", material.whiteColor.swiftUI)
+            colorSwatch("Black", material.blackColor.swiftUI)
+        }
+    }
+
+    private func colorSwatch(_ label: String, _ color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 18, height: 18)
+                .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 0.5))
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func settingsPanel<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ChessCard(.standard) {
+            VStack(alignment: .leading, spacing: Chess.Space.s) {
+                HStack(spacing: Chess.Space.s) {
+                    Image(systemName: icon)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Chess.Palette.bronze)
+                        .frame(width: 32, height: 32)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip))
+                    Text(title)
+                        .font(Chess.Typography.sectionTitle())
+                    Spacer()
+                }
+                content()
             }
         }
     }
@@ -192,11 +279,13 @@ struct PieceCustomizationView: View {
 
     @ViewBuilder
     private func presetSection(customization: PieceCustomization) -> some View {
-        // Vertical settings-list (like Apple Settings rows) instead
-        // of a cramped 3-col grid. Each row owns a full line so the
-        // text never wraps and the visual swatch on the left gives
-        // an at-a-glance preview of the material.
-        VStack(spacing: 6) {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(minimum: 150), spacing: Chess.Space.s),
+                GridItem(.flexible(minimum: 150), spacing: Chess.Space.s)
+            ],
+            spacing: Chess.Space.s
+        ) {
             ForEach(PieceMaterial.Preset.allCases) { preset in
                 presetRow(preset, customization: customization)
             }
@@ -215,19 +304,25 @@ struct PieceCustomizationView: View {
             HStack(spacing: Chess.Space.s) {
                 MaterialSwatch(preset: preset)
                     .frame(width: 28, height: 28)
-                Text(preset.displayName)
-                    .font(.callout.weight(isSelected ? .semibold : .regular))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.callout.weight(.semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(preset.displayName)
+                        .font(.callout.weight(isSelected ? .semibold : .regular))
                         .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(materialHint(for: preset))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Chess.Palette.bronze)
                 }
             }
             .padding(.horizontal, Chess.Space.s)
-            .padding(.vertical, 10)
+            .padding(.vertical, Chess.Space.s)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Chess.Radius.row,
@@ -247,6 +342,21 @@ struct PieceCustomizationView: View {
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+    }
+
+    private func materialHint(for preset: PieceMaterial.Preset) -> String {
+        switch preset {
+        case .plasticMatte: return "Soft, low shine"
+        case .plasticGlossy: return "Classic glossy set"
+        case .lacquered: return "Deep polished finish"
+        case .polishedMetal: return "Bright reflective metal"
+        case .brushedMetal: return "Muted satin metal"
+        case .ceramic: return "Smooth porcelain look"
+        case .pearl: return "Subtle iridescent sheen"
+        case .glass: return "Transparent tinted glass"
+        case .wood: return "Natural textured wood"
+        case .marble: return "Stone with veining"
+        }
     }
 }
 

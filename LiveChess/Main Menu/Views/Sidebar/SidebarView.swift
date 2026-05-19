@@ -162,10 +162,7 @@ struct SidebarProfileView: View {
                         Text("Guest")
                             .font(.callout)
                             .fontWeight(.medium)
-                        Text("Tap to sign in with Lichess")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        connectionStatusLine(isOnline: false, detail: "Tap to sign in with Lichess")
                     }
                 }
             }
@@ -281,6 +278,19 @@ struct SidebarProfileView: View {
             }
             .buttonStyle(.plain)
             .hoverEffect(.lift)
+        }
+    }
+
+    private func connectionStatusLine(isOnline: Bool, detail: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isOnline ? Color.green : Color.gray)
+                .frame(width: 6, height: 6)
+                .shadow(color: isOnline ? .green.opacity(0.55) : .clear, radius: 4, x: 0, y: 0)
+            Text(detail)
+                .font(Chess.Typography.rowDetail())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 
