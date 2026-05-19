@@ -292,7 +292,7 @@ struct PuzzlesPlaceholderView: View {
                             .background(.thinMaterial, in: Capsule())
                     }
                 }
-                Text("Glicko-2 · \(progress.solvedIDs.count) solved · \(progress.failedIDs.count) failed")
+                Text("\(progress.solvedIDs.count) solved · \(progress.failedIDs.count) failed")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
