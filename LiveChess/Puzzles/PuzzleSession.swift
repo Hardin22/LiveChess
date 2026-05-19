@@ -59,6 +59,19 @@ final class PuzzleSession: MatchSession {
     /// in `PuzzleProgressStore` and stop surfacing it on the browser.
     var onSolved: (@MainActor (String) -> Void)?
 
+    /// Solve + rating signal — used by the Glicko-2 update path in
+    /// `PuzzleProgressStore.recordSolve`. Separate from `onSolved`
+    /// so older call-sites (which only need the id) still work
+    /// without forced migration.
+    var onSolvedWithRating: (@MainActor (String, Int?) -> Void)?
+
+    /// Fires when the user plays a wrong move and the puzzle
+    /// transitions to `.failed`. Lichess treats a fail as a final
+    /// outcome (you don't get a retry to recover rating), so the
+    /// progress store records it the same way as a solve — just
+    /// with a Glicko-2 score of 0 instead of 1.
+    var onFailedWithRating: (@MainActor (String, Int?) -> Void)?
+
     /// The PuzzleCategory the session was launched from (e.g.
     /// `.mateIn1`). The in-immersive HUD reads this to power the
     /// "Next puzzle" button — it asks `BundledPuzzleStore` for the
@@ -105,7 +118,14 @@ final class PuzzleSession: MatchSession {
               move.to == expected.to,
               move.promotion == expected.promotion else {
             // Wrong move — flag as failed; HUD shows "Try again".
-            status = .failed
+            // Fire onFailedWithRating once so PuzzleProgressStore
+            // can apply the Glicko-2 'lost vs. puzzle' update.
+            // Guarded against repeat firing on subsequent invalid
+            // moves while status is already .failed.
+            if status == .solving {
+                status = .failed
+                onFailedWithRating?(puzzle.id, puzzle.rating)
+            }
             return
         }
         applyValidated(move)
@@ -186,6 +206,7 @@ final class PuzzleSession: MatchSession {
         if solveIndex >= solution.count {
             status = .solved
             onSolved?(puzzle.id)
+            onSolvedWithRating?(puzzle.id, puzzle.rating)
         }
     }
 }

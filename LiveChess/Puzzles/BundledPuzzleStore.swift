@@ -73,25 +73,26 @@ final class BundledPuzzleStore {
         pools[category] = list
     }
 
-    /// Total and solved tally for a category.
+    /// Total and "attempted" (solved OR failed) tally. Lichess
+    /// considers a failed puzzle as done — wrong first move and
+    /// it leaves the rotation. We mirror that here.
     func progress(in category: PuzzleCategory,
                   progressStore: PuzzleProgressStore) -> (solved: Int, total: Int) {
         let all = pools[category] ?? []
-        let solved = all.filter { progressStore.isSolved($0.puzzle.id) }.count
+        let solved = all.filter { progressStore.isAttempted($0.puzzle.id) }.count
         return (solved, all.count)
     }
 
-    /// Returns the next unsolved puzzle the user should attempt in
-    /// `category` — sorted by rating starting from the user's
-    /// rating ascending, with below-user-rating puzzles as the tail.
-    /// Mirrors `PuzzlesViewModel.displayedPuzzles(in:progress:userRating:limit:)`
-    /// so the menu's "next up" and the HUD's "next puzzle" agree.
+    /// Returns the next un-attempted puzzle the user should face in
+    /// `category` — solved AND failed puzzles are skipped (matches
+    /// lichess.org behaviour: one shot per puzzle, then it's gone).
+    /// Sorted by rating ascending starting from `userRating`.
     func nextUnsolved(in category: PuzzleCategory,
                       progress: PuzzleProgressStore,
                       userRating: Int) -> LichessPuzzle? {
-        let unsolved = (pools[category] ?? [])
-            .filter { !progress.isSolved($0.puzzle.id) }
-        let sorted = unsolved.sorted { a, b in
+        let unattempted = (pools[category] ?? [])
+            .filter { !progress.isAttempted($0.puzzle.id) }
+        let sorted = unattempted.sorted { a, b in
             let ar = a.puzzle.rating ?? Int.max
             let br = b.puzzle.rating ?? Int.max
             let aAbove = ar >= userRating

@@ -160,8 +160,11 @@ private struct PuzzleLaunchCard: View {
         isLaunching = true
         defer { isLaunching = false }
         guard let session = PuzzleSession(puzzle: puzzle) else { return }
-        session.onSolved = { [progress = appModel.puzzleProgress] id in
-            progress.markSolved(id)
+        session.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r in
+            progress.recordSolve(puzzleID: id, puzzleRating: r)
+        }
+        session.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r in
+            progress.recordFail(puzzleID: id, puzzleRating: r)
         }
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition

@@ -220,6 +220,7 @@ struct PuzzlesPlaceholderView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
+                ratingHeader
                 dailyHero
                 LazyVGrid(columns: Self.gridColumns,
                           alignment: .leading,
@@ -238,11 +239,72 @@ struct PuzzlesPlaceholderView: View {
         .navigationTitle("Puzzles")
         .task {
             appModel.bundledPuzzles.loadIfNeeded()
+            // Seed Glicko-2 from the user's Lichess puzzle rating
+            // once, on first visit. After that the local rating
+            // evolves independently from in-app solves/fails.
+            let perf = appModel.lichess.account?.perfs?["puzzle"]
+            appModel.puzzleProgress.seedFromLichess(
+                rating: perf?.rating,
+                rd: perf?.rd
+            )
             await viewModel.load(token: appModel.lichess.token)
         }
         .refreshable {
             await reload()
         }
+    }
+
+    /// Hero rating panel — the user's live Glicko-2 puzzle rating,
+    /// updated after every solve/fail. Delta chip on the right shows
+    /// the last result's effect (e.g. "+8" after a solve, "−12"
+    /// after a fail). Same algorithm Lichess uses, so the number
+    /// behaves identically to lichess.org's puzzle rating.
+    @ViewBuilder
+    private var ratingHeader: some View {
+        let progress = appModel.puzzleProgress
+        HStack(alignment: .center, spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Chess.Palette.bronze.opacity(0.22))
+                    .frame(width: 56, height: 56)
+                Image(systemName: "puzzlepiece.fill")
+                    .font(.title2)
+                    .foregroundStyle(Chess.Palette.bronze)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Puzzle rating")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(String(progress.puzzleRatingInt))
+                        .font(.system(size: 36,
+                                      weight: .bold,
+                                      design: .rounded))
+                        .monospacedDigit()
+                    if let delta = progress.lastRatingDelta, delta != 0 {
+                        Text(delta > 0 ? "+\(delta)" : "\(delta)")
+                            .font(.callout.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(delta > 0
+                                             ? Color(red: 0.30, green: 0.78, blue: 0.36)
+                                             : Color(red: 0.95, green: 0.40, blue: 0.30))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.thinMaterial, in: Capsule())
+                    }
+                }
+                Text("Glicko-2 · \(progress.solvedIDs.count) solved · \(progress.failedIDs.count) failed")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(18)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Chess.Palette.bronze.opacity(0.28), lineWidth: 0.8)
+        )
     }
 
     // MARK: - Daily hero
@@ -529,8 +591,14 @@ private struct CategoryBox: View {
             print("[CategoryBox] PuzzleSession init returned nil for id=\(puzzle.puzzle.id) — invalid FEN or empty solution?")
             return
         }
-        session.onSolved = { [progress = appModel.puzzleProgress] id in
-            progress.markSolved(id)
+        // Glicko-2 path: record both solve and fail with the puzzle's
+        // rating so the user's local rating evolves the same way it
+        // would on lichess.org (where wrong first move = lose rating).
+        session.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r in
+            progress.recordSolve(puzzleID: id, puzzleRating: r)
+        }
+        session.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r in
+            progress.recordFail(puzzleID: id, puzzleRating: r)
         }
         session.categoryContext = category
 
@@ -675,8 +743,11 @@ private struct DailyHeroCard: View {
         isLaunching = true
         defer { isLaunching = false }
         guard let session = PuzzleSession(puzzle: puzzle) else { return }
-        session.onSolved = { [progress = appModel.puzzleProgress] id in
-            progress.markSolved(id)
+        session.onSolvedWithRating = { [progress = appModel.puzzleProgress] id, r in
+            progress.recordSolve(puzzleID: id, puzzleRating: r)
+        }
+        session.onFailedWithRating = { [progress = appModel.puzzleProgress] id, r in
+            progress.recordFail(puzzleID: id, puzzleRating: r)
         }
         appModel.activeSession = .puzzle(session)
         appModel.immersiveSpaceState = .inTransition
