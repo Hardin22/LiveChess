@@ -54,6 +54,12 @@ class AppModel {
     /// materials.
     let pieceCustomization = PieceCustomization()
 
+    /// Persisted record of which puzzles the user has already solved.
+    /// The Puzzles browser reads this to hide solved puzzles and
+    /// surface the next unsolved one; `PuzzleSession.onSolved` writes
+    /// to it when a session finishes successfully.
+    let puzzleProgress = PuzzleProgressStore()
+
     /// The match the immersive scene should render. Set by the lobby
     /// (or the Lichess controller when an online game starts) immediately
     /// before opening the immersive space, then read by `ChessSceneView`

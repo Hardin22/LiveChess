@@ -93,9 +93,15 @@ final class LichessService {
 
     /// `/api/puzzle/next` — a fresh puzzle. Called unauthenticated to
     /// avoid the 403 our `board:play` token returns on `puzzle:read`
-    /// endpoints.
-    func fetchNextPuzzle(difficulty: String? = nil) async throws -> LichessPuzzle {
+    /// endpoints. `angle` filters by Lichess theme (e.g. "mateIn2",
+    /// "endgame", "fork") so the categorised browser can ask for
+    /// puzzles matching the section the user is loading more in.
+    func fetchNextPuzzle(angle: String? = nil,
+                         difficulty: String? = nil) async throws -> LichessPuzzle {
         var items: [URLQueryItem] = []
+        if let angle {
+            items.append(URLQueryItem(name: "angle", value: angle))
+        }
         if let difficulty {
             items.append(URLQueryItem(name: "difficulty", value: difficulty))
         }

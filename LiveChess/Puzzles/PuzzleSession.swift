@@ -54,6 +54,10 @@ final class PuzzleSession: MatchSession {
     /// and/or destination square. Set by `ChessSceneView` once at
     /// scene-build time.
     var hintHandler: (@MainActor (HintLevel, Move) -> Void)?
+    /// Fires exactly once, when the puzzle transitions to `.solved`.
+    /// Carries the puzzle's Lichess id so the launcher can record it
+    /// in `PuzzleProgressStore` and stop surfacing it on the browser.
+    var onSolved: (@MainActor (String) -> Void)?
 
     /// Returns `nil` if the puzzle payload is missing the fields the
     /// session needs (FEN + at least one solution move).
@@ -174,6 +178,7 @@ final class PuzzleSession: MatchSession {
     private func checkSolved() {
         if solveIndex >= solution.count {
             status = .solved
+            onSolved?(puzzle.id)
         }
     }
 }
