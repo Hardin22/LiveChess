@@ -14,6 +14,8 @@ struct MovesPanelView: View {
 
     @Bindable var coordinator: MatchCoordinator
     @Environment(AppModel.self) private var appModel
+    @State private var showDrawConfirm = false
+    @State private var showResignConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.s) {
@@ -138,7 +140,7 @@ struct MovesPanelView: View {
         let gameOver = coordinator.match.status.isGameOver
         HStack(spacing: Chess.Space.m) {
             Button {
-                coordinator.agreeDraw()
+                showDrawConfirm = true
             } label: {
                 Label("Draw", systemImage: "circle.lefthalf.filled")
                     .font(.callout)
@@ -147,9 +149,21 @@ struct MovesPanelView: View {
             .foregroundStyle(.secondary)
             .hoverEffect(.highlight)
             .disabled(gameOver)
+            .confirmationDialog(
+                "Agree to a draw?",
+                isPresented: $showDrawConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Agree to draw", role: .destructive) {
+                    coordinator.agreeDraw()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will end the game in a draw.")
+            }
 
             Button(role: .destructive) {
-                coordinator.resign(side: humanSide)
+                showResignConfirm = true
             } label: {
                 Label("Resign", systemImage: "flag.fill")
                     .font(.callout)
@@ -158,6 +172,18 @@ struct MovesPanelView: View {
             .foregroundStyle(.red)
             .hoverEffect(.highlight)
             .disabled(gameOver)
+            .confirmationDialog(
+                "Resign the game?",
+                isPresented: $showResignConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Resign", role: .destructive) {
+                    coordinator.resign(side: humanSide)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your opponent will be awarded the win.")
+            }
             Spacer()
         }
     }

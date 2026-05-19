@@ -1098,6 +1098,7 @@ struct ProfilePlaceholderView: View {
 private struct ProfileCardView: View {
     let account: LichessAccount
     @Environment(AppModel.self) private var appModel
+    @State private var showSignOutConfirm = false
 
     // Single source of truth for which perfs we surface lives on
     // `LichessAccount.displayedPerfKeys`. Bullet/Blitz are excluded
@@ -1141,7 +1142,7 @@ private struct ProfileCardView: View {
                 .padding(.horizontal, 24)
 
                 Button(role: .destructive) {
-                    Task { await appModel.lichess.signOut() }
+                    showSignOutConfirm = true
                 } label: {
                     Label("Sign out of Lichess", systemImage: "rectangle.portrait.and.arrow.right")
                         .frame(maxWidth: 280)
@@ -1149,6 +1150,18 @@ private struct ProfileCardView: View {
                 .controlSize(.large)
                 .buttonStyle(.bordered)
                 .padding(.top, 12)
+                .confirmationDialog(
+                    "Sign out of Lichess?",
+                    isPresented: $showSignOutConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Sign out", role: .destructive) {
+                        Task { await appModel.lichess.signOut() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("You'll need to sign in again to play rated games or sync puzzles.")
+                }
 
                 Spacer(minLength: 24)
             }

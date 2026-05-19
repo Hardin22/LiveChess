@@ -11,6 +11,7 @@ struct PuzzleHUDView: View {
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.openImmersiveSpace)    private var openImmersiveSpace
     @State private var isAdvancing = false
+    @State private var showExitConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.m) {
@@ -209,9 +210,13 @@ struct PuzzleHUDView: View {
             }
 
             Button {
-                Task {
-                    appModel.activeSession = nil
-                    await dismissImmersiveSpace()
+                if session.status == .solving {
+                    showExitConfirm = true
+                } else {
+                    Task {
+                        appModel.activeSession = nil
+                        await dismissImmersiveSpace()
+                    }
                 }
             } label: {
                 Label("Exit puzzle", systemImage: "house.fill")
@@ -219,6 +224,21 @@ struct PuzzleHUDView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+            .confirmationDialog(
+                "Exit the puzzle?",
+                isPresented: $showExitConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Exit", role: .destructive) {
+                    Task {
+                        appModel.activeSession = nil
+                        await dismissImmersiveSpace()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your progress on this puzzle will be lost.")
+            }
         }
     }
 

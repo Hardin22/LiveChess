@@ -10,6 +10,7 @@ struct ReviewHUDView: View {
     @Bindable var session: ReviewSession
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @State private var showExitConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.m) {
@@ -200,17 +201,29 @@ struct ReviewHUDView: View {
 
     private var exitButton: some View {
         Button(role: .destructive) {
-            Task {
-                session.tearDown()
-                appModel.activeSession = nil
-                await dismissImmersiveSpace()
-            }
+            showExitConfirm = true
         } label: {
             Label("Exit review", systemImage: "house.fill")
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.bordered)
         .controlSize(.regular)
+        .confirmationDialog(
+            "Exit the review?",
+            isPresented: $showExitConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Exit", role: .destructive) {
+                Task {
+                    session.tearDown()
+                    appModel.activeSession = nil
+                    await dismissImmersiveSpace()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Return to the main menu.")
+        }
     }
 
     // MARK: - Helpers
