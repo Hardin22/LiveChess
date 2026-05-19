@@ -25,6 +25,16 @@ final class PuzzleSession: MatchSession {
         case failed
     }
 
+    /// Progressive hint disclosure. The user presses Hint once to see
+    /// WHICH piece moves (`.source`), and a second time to see WHERE
+    /// it goes (`.fullMove`). Auto-resets to `.none` on each correct
+    /// move so each puzzle ply starts fresh.
+    enum HintLevel: Sendable, Equatable {
+        case none
+        case source     // source square highlighted
+        case fullMove   // source + destination highlighted
+    }
+
     let puzzle: LichessPuzzle.PuzzleInfo
     let humanSide: Side
     let startPosition: Position
@@ -33,16 +43,46 @@ final class PuzzleSession: MatchSession {
     private(set) var match: Match
     private(set) var status: Status = .solving
     private(set) var solveIndex: Int = 0
-    private(set) var hintsShown: Int = 0
+    private(set) var hintLevel: HintLevel = .none
+
+    /// Latched the first time the puzzle's rating outcome is set —
+    /// by a correct full solve, a wrong move, OR the user asking for
+    /// a hint. Lichess's rule is "any assistance = fail", so once we
+    /// fire `onFailedWithRating` because of a hint, no subsequent
+    /// solve gets to re-fire `onSolvedWithRating`. Stops double-
+    /// counting and matches lichess.org behaviour exactly.
+    private var ratingOutcomeRecorded = false
 
     private let rules: any RulesEngine
 
     var moveAppliedHandler: (@MainActor (Move) -> Void)?
     var matchResetHandler: (@MainActor () -> Void)?
-    /// Fires when the user presses Hint. Carries the source square
-    /// of the move the puzzle expects next so the renderer can
-    /// pulse it. Set by `ChessSceneView` once at scene-build time.
-    var hintHandler: (@MainActor (Square) -> Void)?
+    /// Fires when the hint state advances. Carries the new level plus
+    /// the expected next move so the renderer can light the source
+    /// and/or destination square. Set by `ChessSceneView` once at
+    /// scene-build time.
+    var hintHandler: (@MainActor (HintLevel, Move) -> Void)?
+    /// Fires exactly once, when the puzzle transitions to `.solved`.
+    /// Carries the puzzle's Lichess id so the launcher can record it
+    /// in `PuzzleProgressStore` and stop surfacing it on the browser.
+    var onSolved: (@MainActor (String) -> Void)?
+
+    /// Solve + rating signal — passes the puzzle's rating AND its
+    /// rating deviation so `PuzzleProgressStore.recordSolve` can run
+    /// Glicko-2 with the puzzle's actual RD (Lichess's behaviour;
+    /// each puzzle's RD differs depending on play history).
+    var onSolvedWithRating: (@MainActor (String, Int?, Int?) -> Void)?
+
+    /// Fires when the user plays a wrong move OR uses a hint and
+    /// the puzzle transitions to a failed rating outcome.
+    var onFailedWithRating: (@MainActor (String, Int?, Int?) -> Void)?
+
+    /// The PuzzleCategory the session was launched from (e.g.
+    /// `.mateIn1`). The in-immersive HUD reads this to power the
+    /// "Next puzzle" button — it asks `BundledPuzzleStore` for the
+    /// next unsolved puzzle in the same category. `nil` when launched
+    /// from a context without a category (e.g. the Daily Puzzle hero).
+    var categoryContext: PuzzleCategory?
 
     /// Returns `nil` if the puzzle payload is missing the fields the
     /// session needs (FEN + at least one solution move).
@@ -83,44 +123,69 @@ final class PuzzleSession: MatchSession {
               move.to == expected.to,
               move.promotion == expected.promotion else {
             // Wrong move — flag as failed; HUD shows "Try again".
-            status = .failed
+            // Fire onFailedWithRating once so PuzzleProgressStore
+            // can apply the Glicko-2 'lost vs. puzzle' update.
+            // Guarded against repeat firing on subsequent invalid
+            // moves while status is already .failed.
+            if status == .solving {
+                status = .failed
+                if !ratingOutcomeRecorded {
+                    ratingOutcomeRecorded = true
+                    onFailedWithRating?(puzzle.id, puzzle.rating, puzzle.ratingDeviation)
+                }
+            }
             return
         }
         applyValidated(move)
         solveIndex += 1
+        resetHint()
         await playOpponentReplyIfAny()
         checkSolved()
     }
 
-    // MARK: - Hint / restart / solution reveal
+    // MARK: - Hint / restart
 
+    /// Advances the hint disclosure by one step. The user presses once
+    /// to see the source square (`.source`), again to see the full move
+    /// (`.fullMove`). A third press is a no-op so the player can't
+    /// auto-reveal further plies of the line.
+    ///
+    /// Rating: the FIRST hint press counts the puzzle as a fail for
+    /// Glicko-2 purposes (Lichess's rule — any assistance burns the
+    /// rating). The user can still complete the puzzle visually; the
+    /// rating outcome is just locked in as −rating regardless of
+    /// whether they go on to play the correct moves.
     func showHint() {
-        hintsShown += 1
-        if let square = hintSourceSquare {
-            hintHandler?(square)
+        guard status == .solving, let next = expectedNextMove else { return }
+        switch hintLevel {
+        case .none:     hintLevel = .source
+        case .source:   hintLevel = .fullMove
+        case .fullMove: return
         }
+        if !ratingOutcomeRecorded {
+            ratingOutcomeRecorded = true
+            onFailedWithRating?(puzzle.id, puzzle.rating, puzzle.ratingDeviation)
+        }
+        hintHandler?(hintLevel, next)
     }
 
-    /// Auto-plays the remaining solution from the current state. Used
-    /// by the HUD's "View solution" button when the user wants to see
-    /// the rest of the line instead of solving it themselves. Marks
-    /// the puzzle as solved at the end so the success badge surfaces.
-    func revealSolution() async {
-        guard status == .solving, solveIndex < solution.count else { return }
-        while solveIndex < solution.count {
-            try? await Task.sleep(for: .milliseconds(550))
-            if status != .solving { return }
-            applyValidated(solution[solveIndex])
-            solveIndex += 1
-        }
-        status = .solved
+    /// Clears any visible hint overlay and resets the disclosure stage.
+    /// Called automatically when the user makes a correct move, when
+    /// the puzzle restarts, and after an opponent reply. The renderer
+    /// receives `(.none, move)` so it knows to remove the overlay.
+    func resetHint() {
+        guard hintLevel != .none else { return }
+        let move = expectedNextMove
+            ?? solution[max(0, min(solveIndex, solution.count - 1))]
+        hintLevel = .none
+        hintHandler?(.none, move)
     }
 
-    /// Source square of the next expected user move; the HUD highlights
-    /// it (or the renderer pulses it) when the player asks for a hint.
-    var hintSourceSquare: Square? {
+    /// The move the puzzle is waiting for the user to play. `nil` once
+    /// the line is complete.
+    var expectedNextMove: Move? {
         guard status == .solving, solveIndex < solution.count else { return nil }
-        return solution[solveIndex].from
+        return solution[solveIndex]
     }
 
     /// Reset back to the puzzle's starting position. Called by the HUD
@@ -129,7 +194,7 @@ final class PuzzleSession: MatchSession {
         match.reset(to: startPosition, status: .ongoing)
         status = .solving
         solveIndex = 0
-        hintsShown = 0
+        resetHint()
         matchResetHandler?()
     }
 
@@ -152,11 +217,20 @@ final class PuzzleSession: MatchSession {
         try? await Task.sleep(for: .milliseconds(550))
         applyValidated(solution[solveIndex])
         solveIndex += 1
+        resetHint()
     }
 
     private func checkSolved() {
         if solveIndex >= solution.count {
             status = .solved
+            onSolved?(puzzle.id)
+            // If the user already burned the rating on a hint, the
+            // visual solve still counts as gameplay but doesn't
+            // refund rating — Lichess's rule.
+            if !ratingOutcomeRecorded {
+                ratingOutcomeRecorded = true
+                onSolvedWithRating?(puzzle.id, puzzle.rating, puzzle.ratingDeviation)
+            }
         }
     }
 }

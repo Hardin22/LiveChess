@@ -115,14 +115,23 @@ struct ChessSceneView: View {
                 )
             }
 
-            // Puzzle-specific renderer hook: pulse the source square
-            // of the next expected move when the player asks for a
-            // hint. Wired here once at scene build (PuzzleSession's
-            // hintHandler is set to a closure that defers to the
-            // renderer's pulseHintSquare).
+            // Puzzle-specific renderer hook: progressive hint disclosure.
+            // Stage 1 (`.source`) pulses just the piece's square. Stage 2
+            // (`.fullMove`) lights up the destination too, in a distinct
+            // colour, so the user reads from→to. `.none` clears any
+            // overlay (used when the player makes a correct move or
+            // restarts).
             if case .puzzle(let puzzle) = active {
-                puzzle.hintHandler = { [weak renderer] square in
-                    renderer?.pulseHintSquare(square)
+                puzzle.hintHandler = { [weak renderer] level, move in
+                    guard let renderer else { return }
+                    switch level {
+                    case .none:
+                        renderer.clearHintOverlay()
+                    case .source:
+                        renderer.pulseHintSquare(move.from)
+                    case .fullMove:
+                        renderer.pulseHintMove(from: move.from, to: move.to)
+                    }
                 }
             }
 

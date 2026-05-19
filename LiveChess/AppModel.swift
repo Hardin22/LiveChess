@@ -54,6 +54,24 @@ class AppModel {
     /// materials.
     let pieceCustomization = PieceCustomization()
 
+    /// Persisted record of which puzzles the user has already solved.
+    /// The Puzzles browser reads this to hide solved puzzles and
+    /// surface the next unsolved one; `PuzzleSession.onSolved` writes
+    /// to it when a session finishes successfully.
+    let puzzleProgress = PuzzleProgressStore()
+
+    /// Shared pool of bundled + API-fetched puzzles, so the menu
+    /// browser AND the in-immersive HUD's "Next puzzle" button can
+    /// read from the same source of truth. Loaded on first access.
+    let bundledPuzzles = BundledPuzzleStore()
+
+    /// Live count of "players online on lichess.org right now",
+    /// pushed over Lichess's lobby WebSocket. The sidebar profile row
+    /// displays it next to the green presence dot so the user has the
+    /// same at-a-glance status the lichess.org footer carries.
+    /// `start()` is called once from `ContentView.task`.
+    let onlineCount = LichessOnlineCountTracker()
+
     /// The match the immersive scene should render. Set by the lobby
     /// (or the Lichess controller when an online game starts) immediately
     /// before opening the immersive space, then read by `ChessSceneView`

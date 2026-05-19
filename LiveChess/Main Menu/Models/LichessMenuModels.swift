@@ -167,6 +167,14 @@ struct LichessPuzzle: Decodable, Sendable {
     struct PuzzleInfo: Decodable, Sendable {
         let id: String
         let rating: Int?
+        /// Puzzle's Glicko-2 rating deviation as published by Lichess.
+        /// We feed this into the user's rating update as the
+        /// opponent RD — matches `lila/modules/rating` behaviour
+        /// (puzzle RD varies per-puzzle, ~40 for popular puzzles
+        /// up to ~200 for rarely-played ones). Optional because
+        /// the live `/api/puzzle/*` endpoints don't always return
+        /// it; bundled JSON does.
+        let ratingDeviation: Int?
         let themes: [String]
         let plays: Int?
         let solution: [String]?

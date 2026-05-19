@@ -83,6 +83,16 @@ enum ChessMaterials {
         return m
     }
 
+    /// Cyan-teal overlay for the DESTINATION square of a puzzle hint.
+    /// Visually distinct from the gold source pulse so the user reads
+    /// the from→to direction at a glance.
+    static func hintDestinationMarkerMaterial() -> UnlitMaterial {
+        var m = UnlitMaterial()
+        m.color = .init(tint: UIColor(red: 0.30, green: 0.85, blue: 1.00, alpha: 1.0))
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.80))
+        return m
+    }
+
     /// Tinted overlay used during review to colour the source +
     /// destination squares of the move at the current ply by its
     /// classification. Colours match the HUD's `qualityColor` palette
