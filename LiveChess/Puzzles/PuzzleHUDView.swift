@@ -209,37 +209,55 @@ struct PuzzleHUDView: View {
                 }
             }
 
-            Button {
-                if session.status == .solving {
-                    showExitConfirm = true
-                } else {
-                    Task {
-                        appModel.activeSession = nil
-                        await dismissImmersiveSpace()
+            // Inline confirmation rather than `.confirmationDialog`: this
+            // HUD lives inside a RealityView attachment in an
+            // ImmersiveSpace, where system presentations have no scene to
+            // present into and silently never appear. Swap the button for
+            // a confirm row in place.
+            if showExitConfirm {
+                VStack(alignment: .leading, spacing: Chess.Space.xs) {
+                    Text("Exit the puzzle?")
+                        .font(.callout.weight(.semibold))
+                    Text("Your progress on this puzzle will be lost.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: Chess.Space.s) {
+                        Button("Cancel") { showExitConfirm = false }
+                            .buttonStyle(.bordered)
+                            .frame(maxWidth: .infinity)
+                        Button("Exit", role: .destructive) {
+                            Task {
+                                appModel.activeSession = nil
+                                await dismissImmersiveSpace()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
                     }
                 }
-            } label: {
-                Label("Exit puzzle", systemImage: "house.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .confirmationDialog(
-                "Exit the puzzle?",
-                isPresented: $showExitConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Exit", role: .destructive) {
-                    Task {
-                        appModel.activeSession = nil
-                        await dismissImmersiveSpace()
+                .padding(Chess.Space.s)
+                .background(.thinMaterial,
+                            in: RoundedRectangle(cornerRadius: Chess.Radius.row))
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else {
+                Button {
+                    if session.status == .solving {
+                        showExitConfirm = true
+                    } else {
+                        Task {
+                            appModel.activeSession = nil
+                            await dismissImmersiveSpace()
+                        }
                     }
+                } label: {
+                    Label("Exit puzzle", systemImage: "house.fill")
+                        .frame(maxWidth: .infinity)
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Your progress on this puzzle will be lost.")
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
         }
+        .animation(.snappy, value: showExitConfirm)
     }
 
     // MARK: - Next puzzle wiring

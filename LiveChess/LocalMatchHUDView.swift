@@ -39,9 +39,11 @@ struct LocalMatchHUDView: View {
     /// the match ends; dismissed by the user tapping "New Game" inside it.
     @State private var showGameOverPopup = false
 
-    @State private var showDrawConfirm = false
-    @State private var showResignConfirm = false
-    @State private var showExitConfirm = false
+    // Single pending confirmation, rendered inline by `confirmPanel`.
+    // `.confirmationDialog` can't present from an immersive-space
+    // attachment, so we swap in an in-place row instead.
+    private enum PendingConfirm: Equatable { case draw, resign, exit }
+    @State private var pendingConfirm: PendingConfirm?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -212,46 +214,22 @@ struct LocalMatchHUDView: View {
             if !coordinator.match.status.isGameOver {
                 HStack(spacing: Chess.Space.xs) {
                     Button {
-                        showDrawConfirm = true
+                        pendingConfirm = .draw
                     } label: {
                         Label("Draw", systemImage: "circle.lefthalf.filled")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
-                    .confirmationDialog(
-                        "Agree to a draw?",
-                        isPresented: $showDrawConfirm,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Agree to draw", role: .destructive) {
-                            coordinator.agreeDraw()
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("This will end the game in a draw.")
-                    }
 
                     Button(role: .destructive) {
-                        showResignConfirm = true
+                        pendingConfirm = .resign
                     } label: {
                         Label("Resign", systemImage: "flag.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
-                    .confirmationDialog(
-                        "Resign the game?",
-                        isPresented: $showResignConfirm,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Resign", role: .destructive) {
-                            coordinator.resign(side: humanSide ?? .white)
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("Your opponent will be awarded the win.")
-                    }
                 }
             }
 
@@ -275,7 +253,7 @@ struct LocalMatchHUDView: View {
                         await dismissImmersiveSpace()
                     }
                 } else {
-                    showExitConfirm = true
+                    pendingConfirm = .exit
                 }
             } label: {
                 Label("Main menu", systemImage: "house.fill")
@@ -283,21 +261,52 @@ struct LocalMatchHUDView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
-            .confirmationDialog(
-                "Exit to main menu?",
-                isPresented: $showExitConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Exit", role: .destructive) {
+
+            if let pendingConfirm {
+                confirmPanel(for: pendingConfirm)
+            }
+        }
+        .animation(.snappy, value: pendingConfirm)
+    }
+
+    @ViewBuilder
+    private func confirmPanel(for action: PendingConfirm) -> some View {
+        switch action {
+        case .draw:
+            InlineConfirm(
+                title: "Agree to a draw?",
+                message: "This will end the game in a draw.",
+                confirmTitle: "Agree to draw",
+                onConfirm: {
+                    coordinator.agreeDraw()
+                    pendingConfirm = nil
+                },
+                onCancel: { pendingConfirm = nil }
+            )
+        case .resign:
+            InlineConfirm(
+                title: "Resign the game?",
+                message: "Your opponent will be awarded the win.",
+                confirmTitle: "Resign",
+                onConfirm: {
+                    coordinator.resign(side: humanSide ?? .white)
+                    pendingConfirm = nil
+                },
+                onCancel: { pendingConfirm = nil }
+            )
+        case .exit:
+            InlineConfirm(
+                title: "Exit to main menu?",
+                message: "The current game will be lost.",
+                confirmTitle: "Exit",
+                onConfirm: {
                     Task {
                         appModel.activeSession = nil
                         await dismissImmersiveSpace()
                     }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("The current game will be lost.")
-            }
+                },
+                onCancel: { pendingConfirm = nil }
+            )
         }
     }
 

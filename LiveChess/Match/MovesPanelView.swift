@@ -14,8 +14,11 @@ struct MovesPanelView: View {
 
     @Bindable var coordinator: MatchCoordinator
     @Environment(AppModel.self) private var appModel
-    @State private var showDrawConfirm = false
-    @State private var showResignConfirm = false
+    // Single pending confirmation, rendered inline below the footer.
+    // `.confirmationDialog` can't present from an immersive-space
+    // attachment, so we swap in an in-place row instead.
+    private enum PendingConfirm: Equatable { case draw, resign }
+    @State private var pendingConfirm: PendingConfirm?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chess.Space.s) {
@@ -138,53 +141,59 @@ struct MovesPanelView: View {
             return .black
         }()
         let gameOver = coordinator.match.status.isGameOver
-        HStack(spacing: Chess.Space.m) {
-            Button {
-                showDrawConfirm = true
-            } label: {
-                Label("Draw", systemImage: "circle.lefthalf.filled")
-                    .font(.callout)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .hoverEffect(.highlight)
-            .disabled(gameOver)
-            .confirmationDialog(
-                "Agree to a draw?",
-                isPresented: $showDrawConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Agree to draw", role: .destructive) {
-                    coordinator.agreeDraw()
+        VStack(alignment: .leading, spacing: Chess.Space.s) {
+            HStack(spacing: Chess.Space.m) {
+                Button {
+                    pendingConfirm = .draw
+                } label: {
+                    Label("Draw", systemImage: "circle.lefthalf.filled")
+                        .font(.callout)
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This will end the game in a draw.")
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .hoverEffect(.highlight)
+                .disabled(gameOver)
+
+                Button(role: .destructive) {
+                    pendingConfirm = .resign
+                } label: {
+                    Label("Resign", systemImage: "flag.fill")
+                        .font(.callout)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+                .hoverEffect(.highlight)
+                .disabled(gameOver)
+                Spacer()
             }
 
-            Button(role: .destructive) {
-                showResignConfirm = true
-            } label: {
-                Label("Resign", systemImage: "flag.fill")
-                    .font(.callout)
+            switch pendingConfirm {
+            case .draw:
+                InlineConfirm(
+                    title: "Agree to a draw?",
+                    message: "This will end the game in a draw.",
+                    confirmTitle: "Agree to draw",
+                    onConfirm: {
+                        coordinator.agreeDraw()
+                        pendingConfirm = nil
+                    },
+                    onCancel: { pendingConfirm = nil }
+                )
+            case .resign:
+                InlineConfirm(
+                    title: "Resign the game?",
+                    message: "Your opponent will be awarded the win.",
+                    confirmTitle: "Resign",
+                    onConfirm: {
+                        coordinator.resign(side: humanSide)
+                        pendingConfirm = nil
+                    },
+                    onCancel: { pendingConfirm = nil }
+                )
+            case .none:
+                EmptyView()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.red)
-            .hoverEffect(.highlight)
-            .disabled(gameOver)
-            .confirmationDialog(
-                "Resign the game?",
-                isPresented: $showResignConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Resign", role: .destructive) {
-                    coordinator.resign(side: humanSide)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Your opponent will be awarded the win.")
-            }
-            Spacer()
         }
+        .animation(.snappy, value: pendingConfirm)
     }
 }

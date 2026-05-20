@@ -32,6 +32,7 @@ struct ReviewHUDView: View {
             RoundedRectangle(cornerRadius: Chess.Radius.card, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
         )
+        .animation(.snappy, value: showExitConfirm)
         .onAppear { session.startAnalysisIfNeeded() }
     }
 
@@ -199,30 +200,48 @@ struct ReviewHUDView: View {
                     in: RoundedRectangle(cornerRadius: Chess.Radius.row))
     }
 
+    // Inline confirmation rather than `.confirmationDialog`: this HUD
+    // lives inside a RealityView attachment in an ImmersiveSpace, where
+    // system presentations (dialogs/alerts/sheets) have no scene to
+    // present into and silently never appear. So we swap the button for
+    // a confirm row in place.
+    @ViewBuilder
     private var exitButton: some View {
-        Button(role: .destructive) {
-            showExitConfirm = true
-        } label: {
-            Label("Exit review", systemImage: "house.fill")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.regular)
-        .confirmationDialog(
-            "Exit the review?",
-            isPresented: $showExitConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Exit", role: .destructive) {
-                Task {
-                    session.tearDown()
-                    appModel.activeSession = nil
-                    await dismissImmersiveSpace()
+        if showExitConfirm {
+            VStack(alignment: .leading, spacing: Chess.Space.xs) {
+                Text("Exit the review?")
+                    .font(.callout.weight(.semibold))
+                Text("Return to the main menu.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: Chess.Space.s) {
+                    Button("Cancel") { showExitConfirm = false }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                    Button("Exit", role: .destructive) {
+                        Task {
+                            session.tearDown()
+                            appModel.activeSession = nil
+                            await dismissImmersiveSpace()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .frame(maxWidth: .infinity)
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Return to the main menu.")
+            .padding(Chess.Space.s)
+            .background(.thinMaterial,
+                        in: RoundedRectangle(cornerRadius: Chess.Radius.row))
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        } else {
+            Button(role: .destructive) {
+                showExitConfirm = true
+            } label: {
+                Label("Exit review", systemImage: "house.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
         }
     }
 

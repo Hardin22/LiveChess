@@ -35,10 +35,11 @@ struct OnlineMatchHUDView: View {
     /// granularity matches what lichess.org displays at low time.
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
-    @State private var showDrawConfirm = false
-    @State private var showResignConfirm = false
-    @State private var showAbortConfirm = false
-    @State private var showExitConfirm = false
+    // Single pending confirmation, rendered inline by `confirmPanel`.
+    // `.confirmationDialog` can't present from an immersive-space
+    // attachment, so we swap in an in-place row instead.
+    private enum PendingConfirm: Equatable { case draw, abort, resign }
+    @State private var pendingConfirm: PendingConfirm?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -313,7 +314,7 @@ struct OnlineMatchHUDView: View {
                 // when the opponent-gone countdown has elapsed).
                 HStack(spacing: 8) {
                     Button {
-                        showDrawConfirm = true
+                        pendingConfirm = .draw
                     } label: {
                         Label("Draw", systemImage: "hand.raised")
                             .frame(maxWidth: .infinity)
@@ -321,21 +322,6 @@ struct OnlineMatchHUDView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                     .disabled(session.pendingDrawOfferFromUs)
-                    .confirmationDialog(
-                        session.pendingDrawOfferFromOpponent
-                            ? "Accept the draw offer?"
-                            : "Offer a draw?",
-                        isPresented: $showDrawConfirm,
-                        titleVisibility: .visible
-                    ) {
-                        Button(
-                            session.pendingDrawOfferFromOpponent ? "Accept draw" : "Offer draw",
-                            role: .destructive
-                        ) {
-                            Task { await session.offerOrAcceptDraw() }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    }
 
                     Button {
                         Task { await session.offerOrAcceptTakeback() }
@@ -350,46 +336,22 @@ struct OnlineMatchHUDView: View {
 
                 if session.canAbort {
                     Button(role: .destructive) {
-                        showAbortConfirm = true
+                        pendingConfirm = .abort
                     } label: {
                         Label("Abort game", systemImage: "xmark.circle")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .confirmationDialog(
-                        "Abort the game?",
-                        isPresented: $showAbortConfirm,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Abort", role: .destructive) {
-                            Task { await session.abort() }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("The game will end with no rating change.")
-                    }
                 } else {
                     Button(role: .destructive) {
-                        showResignConfirm = true
+                        pendingConfirm = .resign
                     } label: {
                         Label("Resign", systemImage: "flag.checkered")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .confirmationDialog(
-                        "Resign the game?",
-                        isPresented: $showResignConfirm,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Resign", role: .destructive) {
-                            Task { await session.resign() }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("Your opponent will be awarded the win.")
-                    }
                 }
 
                 if session.canClaimVictory {
@@ -468,6 +430,51 @@ struct OnlineMatchHUDView: View {
             .menuStyle(.button)
             .buttonStyle(.bordered)
             .controlSize(.regular)
+
+            if let pendingConfirm {
+                confirmPanel(for: pendingConfirm)
+            }
+        }
+        .animation(.snappy, value: pendingConfirm)
+    }
+
+    @ViewBuilder
+    private func confirmPanel(for action: PendingConfirm) -> some View {
+        switch action {
+        case .draw:
+            InlineConfirm(
+                title: session.pendingDrawOfferFromOpponent
+                    ? "Accept the draw offer?" : "Offer a draw?",
+                confirmTitle: session.pendingDrawOfferFromOpponent
+                    ? "Accept draw" : "Offer draw",
+                onConfirm: {
+                    Task { await session.offerOrAcceptDraw() }
+                    pendingConfirm = nil
+                },
+                onCancel: { pendingConfirm = nil }
+            )
+        case .abort:
+            InlineConfirm(
+                title: "Abort the game?",
+                message: "The game will end with no rating change.",
+                confirmTitle: "Abort",
+                onConfirm: {
+                    Task { await session.abort() }
+                    pendingConfirm = nil
+                },
+                onCancel: { pendingConfirm = nil }
+            )
+        case .resign:
+            InlineConfirm(
+                title: "Resign the game?",
+                message: "Your opponent will be awarded the win.",
+                confirmTitle: "Resign",
+                onConfirm: {
+                    Task { await session.resign() }
+                    pendingConfirm = nil
+                },
+                onCancel: { pendingConfirm = nil }
+            )
         }
     }
 
