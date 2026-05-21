@@ -7,6 +7,8 @@
 
 import SwiftUI
 
+private let environmentStorageKey = "LiveChess.SelectedEnvironment.v1"
+
 /// Maintains app-wide state
 @MainActor
 @Observable
@@ -27,7 +29,19 @@ class AppModel {
     ///
     /// Switching at runtime requires the immersive scene to rebuild —
     /// the picker flow dismisses + re-opens the immersive space.
-    var selectedEnvironment: SceneEnvironment = .ar
+    ///
+    /// Persisted to `UserDefaults` so the Settings choice survives
+    /// launches and stays in sync with the lobby's environment picker
+    /// (both surfaces read/write this same property).
+    var selectedEnvironment: SceneEnvironment =
+        SceneEnvironment(rawValue: UserDefaults.standard.string(forKey: environmentStorageKey) ?? "")
+        ?? .ar
+    {
+        didSet {
+            UserDefaults.standard.set(selectedEnvironment.rawValue,
+                                      forKey: environmentStorageKey)
+        }
+    }
 
     /// Convenience for the immersion-style switch in `LiveChessApp`.
     var virtualEnvironmentEnabled: Bool {

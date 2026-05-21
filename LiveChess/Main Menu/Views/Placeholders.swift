@@ -2069,40 +2069,39 @@ struct SettingsPlaceholderView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Divider().overlay(Chess.Palette.bronze.opacity(0.25))
-                VStack(spacing: 6) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: Chess.Space.s),
+                        GridItem(.flexible(), spacing: Chess.Space.s)
+                    ],
+                    spacing: Chess.Space.s
+                ) {
                     ForEach(SceneEnvironment.allCases) { env in
-                        environmentRow(env, appModel: appModel)
+                        environmentTile(env, appModel: appModel)
                     }
                 }
             }
         }
     }
 
-    private func environmentRow(_ env: SceneEnvironment, appModel: AppModel) -> some View {
+    private func environmentTile(_ env: SceneEnvironment, appModel: AppModel) -> some View {
         let isSelected = appModel.selectedEnvironment == env
         return Button { appModel.selectedEnvironment = env } label: {
-            HStack(spacing: Chess.Space.s) {
+            VStack(spacing: 4) {
                 Image(systemName: env.systemImage)
-                    .font(.callout.weight(.semibold))
+                    .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(Chess.Palette.bronze)
-                    .frame(width: 34, height: 34)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Chess.Radius.chip, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(env.displayName)
-                        .font(.callout.weight(isSelected ? .semibold : .regular))
-                    Text(environmentSubtitle(env))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Chess.Palette.bronze)
-                }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(env.displayName)
+                    .font(.caption2.weight(isSelected ? .semibold : .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .padding(.vertical, 11).padding(.horizontal, Chess.Space.s)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 10)
+            .padding(.horizontal, Chess.Space.xs)
+            .frame(maxWidth: .infinity)
+            .frame(height: 88)
             .background(
                 RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
                     .fill(isSelected
@@ -2121,15 +2120,25 @@ struct SettingsPlaceholderView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous)
                     .strokeBorder(isSelected
-                                  ? Chess.Palette.bronze.opacity(0.45)
+                                  ? Chess.Palette.bronze.opacity(0.55)
                                   : .white.opacity(0.08),
-                                  lineWidth: isSelected ? 1 : 0.5)
+                                  lineWidth: isSelected ? 1.2 : 0.5)
                     .allowsHitTesting(false)
             )
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(Chess.Palette.bronze)
+                        .padding(Chess.Space.xs)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: Chess.Radius.row, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverEffect(.lift)
+        .accessibilityLabel(Text(env.displayName))
+        .accessibilityHint(Text(environmentSubtitle(env)))
     }
 
     // MARK: Pane — Legal
