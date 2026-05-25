@@ -37,6 +37,7 @@ struct ChessSceneView: View {
     @State private var placementController: PlacementController?
 
     @State private var dragOriginPosition: SIMD3<Float>?      // board placement
+    @State private var boardRotationOrigin: simd_quatf?        // board rotation
     @State private var pieceDrag: PieceDragState?              // piece drag
 
     var body: some View {
@@ -93,9 +94,25 @@ struct ChessSceneView: View {
 
             // Wire renderer hooks via the shared MatchSession protocol so
             // both `MatchCoordinator` and `LichessMatchSession` drive the
-            // same animation pipeline.
-            session.moveAppliedHandler = { [weak renderer] move in
+            // same animation pipeline. The handler also routes the move
+            // through the SFX player — capture is detected from the
+            // pre-move snapshot (the position one step before the
+            // session's current one), and check/checkmate trump capture
+            // so the warning cue lands when it matters.
+            session.moveAppliedHandler = { [weak renderer, weak session] move in
                 renderer?.animateMove(move)
+                guard let session else { return }
+                let positions = session.match.positions
+                let wasCapture: Bool = {
+                    if move.isEnPassant { return true }
+                    guard positions.count >= 2 else { return false }
+                    return positions[positions.count - 2][move.to] != nil
+                }()
+                ChessSoundPlayer.shared.play(
+                    forMove: move,
+                    wasCapture: wasCapture,
+                    status: session.match.status
+                )
             }
             // matchResetHandler fires on local "Nuova partita" (resets to
             // standard start), on Lichess `gameFull` (resets to game's
@@ -514,14 +531,24 @@ struct ChessSceneView: View {
                 if value.entity.components[ChessPieceComponent.self] != nil {
                     onPieceDragChanged(value)
                 } else if value.entity.name == BoardSurface.frameName {
-                    onBoardPlacementChanged(value)
+                    // Frame drag is gated on an explicit HUD mode so a
+                    // stray pinch on the board's edge can't move it.
+                    switch placementController?.dragMode {
+                    case .move:   onBoardPlacementChanged(value)
+                    case .rotate: onBoardRotationChanged(value)
+                    case .none:   break
+                    }
                 }
             }
             .onEnded { value in
                 if value.entity.components[ChessPieceComponent.self] != nil {
                     onPieceDragEnded(value)
                 } else if value.entity.name == BoardSurface.frameName {
-                    onBoardPlacementEnded(value)
+                    switch placementController?.dragMode {
+                    case .move:   onBoardPlacementEnded(value)
+                    case .rotate: onBoardRotationEnded()
+                    case .none:   break
+                    }
                 }
             }
     }
@@ -657,6 +684,55 @@ struct ChessSceneView: View {
 
     private func onBoardPlacementEnded(_ value: EntityTargetValue<DragGesture.Value>) {
         dragOriginPosition = nil
+    }
+
+    // MARK: - Board rotation drag
+
+    /// Single-hand drag while the HUD's Rotate toggle is armed: the
+    /// vector from the board's centre to the pinch point at gesture
+    /// start defines a reference angle in the XZ plane; the same vector
+    /// at every update yields a current angle. The delta is applied as
+    /// a yaw (Y-axis) rotation on top of the rotation captured at
+    /// gesture start. The sign is negated because RealityKit's +Y
+    /// rotation is counterclockwise viewed from above, while a drag
+    /// from +X toward +Z (toward the user) reads as a clockwise sweep.
+    ///
+    /// A small minimum radius guards against numerically wild swings
+    /// when the user pinches very near the board centre (where small
+    /// translations span huge angular changes).
+    private func onBoardRotationChanged(_ value: EntityTargetValue<DragGesture.Value>) {
+        guard let root = sceneRoot(containing: value.entity) else { return }
+        let startScene = value.convert(value.startLocation3D, from: .local, to: .scene)
+        let nowScene = value.convert(value.location3D, from: .local, to: .scene)
+        let center = root.position(relativeTo: nil)
+
+        let startVec = SIMD2<Float>(
+            Float(startScene.x) - center.x,
+            Float(startScene.z) - center.z
+        )
+        let nowVec = SIMD2<Float>(
+            Float(nowScene.x) - center.x,
+            Float(nowScene.z) - center.z
+        )
+        let minRadius: Float = 0.05
+        guard simd_length(startVec) > minRadius,
+              simd_length(nowVec)   > minRadius else { return }
+
+        let startAngle = atan2(startVec.y, startVec.x)
+        let nowAngle   = atan2(nowVec.y,   nowVec.x)
+        let delta = nowAngle - startAngle
+
+        if boardRotationOrigin == nil {
+            boardRotationOrigin = root.transform.rotation
+        }
+        guard let origin = boardRotationOrigin else { return }
+
+        let yaw = simd_quatf(angle: -delta, axis: SIMD3<Float>(0, 1, 0))
+        root.transform.rotation = yaw * origin
+    }
+
+    private func onBoardRotationEnded() {
+        boardRotationOrigin = nil
     }
 
     private func sceneRoot(containing entity: Entity) -> Entity? {

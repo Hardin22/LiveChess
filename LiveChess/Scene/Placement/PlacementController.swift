@@ -27,6 +27,17 @@ import ARKit
 @Observable
 final class PlacementController {
 
+    /// Active mode for a single-hand drag on the board frame. The HUD
+    /// surfaces this as two toggle buttons (Move | Rotate); both default
+    /// to off (`dragMode == nil`) so a stray pinch on the frame can't
+    /// move the board unintentionally. Tapping a button arms its mode;
+    /// tapping the active button again disarms it.
+    enum DragMode: String, CaseIterable, Sendable, Identifiable {
+        case move
+        case rotate
+        var id: String { rawValue }
+    }
+
     enum State: Sendable, Equatable {
         /// Immersive just opened; ARKit session being brought up.
         case starting
@@ -45,6 +56,11 @@ final class PlacementController {
     }
 
     private(set) var state: State = .starting
+
+    /// Whether a single-hand frame drag currently translates, rotates,
+    /// or is ignored. `nil` is the safe default: the user has to opt
+    /// in via the HUD before a stray pinch can move the board.
+    var dragMode: DragMode? = nil
 
     /// Optional one-line message the scene's helper attachment shows
     /// floating above the board. `nil` hides the attachment.

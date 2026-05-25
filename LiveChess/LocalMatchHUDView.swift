@@ -234,14 +234,7 @@ struct LocalMatchHUDView: View {
             }
 
             if let placement {
-                Button {
-                    placement.reposition()
-                } label: {
-                    Label("Move board", systemImage: "viewfinder")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                placementControls(placement)
             }
 
             environmentPickerButton
@@ -267,6 +260,64 @@ struct LocalMatchHUDView: View {
             }
         }
         .animation(.snappy, value: pendingConfirm)
+    }
+
+    /// Move | Rotate toggle pair + Reposition button. Each toggle is
+    /// independently deselectable — tap an armed mode again to disarm
+    /// it and lock the board against accidental drags. Default is
+    /// "neither armed", so the user has to opt in before a stray pinch
+    /// on the frame can move the board.
+    @ViewBuilder
+    private func placementControls(_ placement: PlacementController) -> some View {
+        HStack(spacing: Chess.Space.xs) {
+            placementModeButton(
+                placement: placement,
+                mode: .move,
+                title: "Move",
+                icon: "arrow.up.and.down.and.arrow.left.and.right"
+            )
+            placementModeButton(
+                placement: placement,
+                mode: .rotate,
+                title: "Rotate",
+                icon: "arrow.triangle.2.circlepath"
+            )
+        }
+
+        Button {
+            placement.reposition()
+        } label: {
+            Label("Reposition", systemImage: "viewfinder")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+    }
+
+    /// One half of the Move|Rotate toggle pair. Modelled as a `Toggle`
+    /// with `.toggleStyle(.button)` so the pressed/unpressed visual is
+    /// handled by the system — the button capsule fills with the
+    /// accent tint when armed, returns to the translucent glass look
+    /// when disarmed. The custom binding gives the pair tri-state
+    /// behaviour (Move on / Rotate on / neither): turning a toggle on
+    /// arms its mode, turning it off (or arming the other) sets
+    /// `dragMode` back to `nil`.
+    @ViewBuilder
+    private func placementModeButton(
+        placement: PlacementController,
+        mode: PlacementController.DragMode,
+        title: String,
+        icon: String
+    ) -> some View {
+        Toggle(isOn: Binding(
+            get: { placement.dragMode == mode },
+            set: { isOn in placement.dragMode = isOn ? mode : nil }
+        )) {
+            Label(title, systemImage: icon)
+                .frame(maxWidth: .infinity)
+        }
+        .toggleStyle(.button)
+        .controlSize(.regular)
     }
 
     @ViewBuilder

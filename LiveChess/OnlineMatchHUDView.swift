@@ -388,18 +388,12 @@ struct OnlineMatchHUDView: View {
                 .controlSize(.large)
             }
 
-            // "Move board" is available across both states (live + over).
-            // In the over state it doesn't matter much, but it's harmless
-            // and keeps the affordance discoverable.
+            // Move | Rotate toggles + Reposition. Toggles default to
+            // off so a stray pinch can't drag the board mid-game; the
+            // user has to arm a mode first. Reposition re-runs ARKit
+            // table detection and is always available.
             if let placement {
-                Button {
-                    placement.reposition()
-                } label: {
-                    Label("Move board", systemImage: "viewfinder")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                placementControls(placement)
             }
 
             // Pick the immersive backdrop: AR passthrough or one of
@@ -436,6 +430,59 @@ struct OnlineMatchHUDView: View {
             }
         }
         .animation(.snappy, value: pendingConfirm)
+    }
+
+    /// Move | Rotate toggle pair + Reposition button. Each toggle is
+    /// independently deselectable — tap an armed mode again to disarm
+    /// it and lock the board against accidental drags.
+    @ViewBuilder
+    private func placementControls(_ placement: PlacementController) -> some View {
+        HStack(spacing: Chess.Space.xs) {
+            placementModeButton(
+                placement: placement,
+                mode: .move,
+                title: "Move",
+                icon: "arrow.up.and.down.and.arrow.left.and.right"
+            )
+            placementModeButton(
+                placement: placement,
+                mode: .rotate,
+                title: "Rotate",
+                icon: "arrow.triangle.2.circlepath"
+            )
+        }
+
+        Button {
+            placement.reposition()
+        } label: {
+            Label("Reposition", systemImage: "viewfinder")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+    }
+
+    /// One half of the Move|Rotate toggle pair. `Toggle.button` style
+    /// drives the pressed/unpressed visual natively. Binding routes
+    /// on/off through `dragMode` so arming one mode disarms the other
+    /// and the default "neither armed" state is reachable by tapping
+    /// the active button again.
+    @ViewBuilder
+    private func placementModeButton(
+        placement: PlacementController,
+        mode: PlacementController.DragMode,
+        title: String,
+        icon: String
+    ) -> some View {
+        Toggle(isOn: Binding(
+            get: { placement.dragMode == mode },
+            set: { isOn in placement.dragMode = isOn ? mode : nil }
+        )) {
+            Label(title, systemImage: icon)
+                .frame(maxWidth: .infinity)
+        }
+        .toggleStyle(.button)
+        .controlSize(.regular)
     }
 
     @ViewBuilder
